@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   BellRing,
   Boxes,
+  Cog,
   GitBranch,
   LayoutDashboard,
   Moon,
@@ -57,6 +58,7 @@ const NAV = [
   { to: "/requests", label: "Requests", icon: Network },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/alerts", label: "Alerts", icon: BellRing },
+  { to: "/settings", label: "Settings", icon: Cog },
 ];
 
 function ThemeToggle() {
