@@ -34,11 +34,12 @@ export function PageTitle({ title, sub }: { title: string; sub?: string }) {
   );
 }
 
-type Status = "up" | "degraded" | "down";
+type Status = "up" | "degraded" | "down" | "stopped";
 const STATUS: Record<Status, { dot: string; text: string; label: string; ring: string }> = {
   up: { dot: "bg-ok", text: "text-ok", label: "Operational", ring: "ring-ok/30" },
   degraded: { dot: "bg-warn", text: "text-warn", label: "Degraded", ring: "ring-warn/30" },
   down: { dot: "bg-err", text: "text-err", label: "Down", ring: "ring-err/30" },
+  stopped: { dot: "bg-faint", text: "text-faint", label: "Stopped", ring: "ring-border" },
 };
 
 export function StatusDot({ status, pulse = false }: { status: Status; pulse?: boolean }) {

@@ -96,6 +96,8 @@ services:
       DATA_DIR: /data
       OTLP_ENDPOINT: http://jaeger:4318
       DOCKER_SOCKET: /var/run/docker.sock
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-https://backwork.dev}
     volumes:
       - backwork-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro

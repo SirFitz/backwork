@@ -31,12 +31,12 @@ export async function loader(_args: LoaderFunctionArgs) {
 }
 
 type SortKey = "service" | "status" | "cpuCores" | "memBytes" | "restarts" | "logRate" | "errorRate";
-const STATUS_RANK = { down: 0, degraded: 1, up: 2 };
+const STATUS_RANK = { down: 0, degraded: 1, up: 2, stopped: 3 };
 
 export default function Containers() {
   const d = useLoaderData<typeof loader>();
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "down" | "degraded" | "up">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "down" | "degraded" | "up" | "stopped">("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "logRate", dir: -1 });
 
   const rows = useMemo(() => {
@@ -71,6 +71,7 @@ export default function Containers() {
     down: d.health.filter((h) => h.status === "down").length,
     degraded: d.health.filter((h) => h.status === "degraded").length,
     up: d.health.filter((h) => h.status === "up").length,
+    stopped: d.health.filter((h) => h.status === "stopped").length,
   }), [d.health]);
 
   return (
@@ -88,7 +89,7 @@ export default function Containers() {
           />
         </div>
         <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-2xs">
-          {(["all", "down", "degraded", "up"] as const).map((k) => (
+          {(["all", "down", "degraded", "up", "stopped"] as const).map((k) => (
             <button
               key={k}
               onClick={() => setStatusFilter(k)}

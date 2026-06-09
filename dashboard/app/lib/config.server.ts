@@ -3,6 +3,10 @@ export const config = {
   vmUrl: process.env.VM_URL || "http://victoriametrics:8428",
   jaegerUrl: process.env.JAEGER_URL || "http://jaeger:16686",
   dataDir: process.env.DATA_DIR || "/data",
+  // bearer token external agents present to the ingest proxy
+  ingestToken: process.env.INGEST_TOKEN || "",
+  // public base URL, used by the agent install script
+  publicUrl: process.env.PUBLIC_URL || "https://backwork.dev",
 };
 
 const DEFAULT_TIMEOUT = 8000;

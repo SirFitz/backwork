@@ -44,7 +44,7 @@ function Vital({ label, value, tone }: { label: string; value: string; tone?: st
 export default function Overview() {
   const d = useLoaderData<typeof loader>();
   const s = d.summary;
-  const attention = d.health.filter((h) => h.status !== "up");
+  const attention = d.health.filter((h) => h.status === "down" || h.status === "degraded");
   const errToneOk = s.errorRate < 0.2;
 
   return (
@@ -54,10 +54,10 @@ export default function Overview() {
       {/* host vitals strip */}
       <Card>
         <div className="flex flex-wrap items-center divide-x divide-border">
-          <Vital label="Containers" value={`${s.containersRunning}/${s.containersTotal}`} tone={s.containersRunning === s.containersTotal ? "text-ok" : "text-warn"} />
-          <Vital label="Services" value={String(s.services)} />
+          <Vital label="Active services" value={String(s.servicesActive)} />
           <Vital label="Down" value={String(s.servicesDown)} tone={s.servicesDown > 0 ? "text-err" : "text-muted"} />
           <Vital label="Degraded" value={String(s.servicesDegraded)} tone={s.servicesDegraded > 0 ? "text-warn" : "text-muted"} />
+          <Vital label="Stopped" value={String(s.servicesStopped)} tone="text-faint" />
           <Vital label="CPU" value={`${fmtCores(s.cpuCores)} cores`} />
           <Vital label="Memory" value={fmtBytes(s.memBytes)} />
           <Vital label="Logs" value={`${fmtNum(s.logRate, 1)}/s`} />
