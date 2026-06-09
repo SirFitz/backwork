@@ -108,15 +108,26 @@ export async function countOverTime(
   return points;
 }
 
-/** Instant metric query grouped by `service` → { service: value }. */
+/** Grouped metric query → { service: latest value }.
+ *  Uses query_range, not the instant endpoint: Loki returns nothing for a
+ *  grouped `sum by (...)(rate(...))` on the instant API, but works over a range. */
 export async function rateByService(query: string): Promise<Record<string, number>> {
-  const res = await fetchJson<{ data: { result: Array<{ metric: Record<string, string>; value: [number, string] }> } }>(
-    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(query)}`
+  const end = Date.now();
+  const start = end - 10 * 60 * 1000;
+  const params = new URLSearchParams({
+    query,
+    start: String(Math.floor(start / 1000)),
+    end: String(Math.floor(end / 1000)),
+    step: "120",
+  });
+  const res = await fetchJson<{ data: { result: Array<{ metric: Record<string, string>; values: [number, string][] }> } }>(
+    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`
   );
   const out: Record<string, number> = {};
   for (const r of res.data.result || []) {
     const k = r.metric.service || "unknown";
-    out[k] = Number(r.value[1]);
+    const vals = r.values || [];
+    out[k] = vals.length ? Number(vals[vals.length - 1][1]) : 0;
   }
   return out;
 }
