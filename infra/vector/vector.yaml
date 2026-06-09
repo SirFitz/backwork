@@ -44,14 +44,9 @@ transforms:
       if lvl != null {
         # pino/bunyan use numeric levels (10=trace..60=fatal); map them.
         # default to -1 so the comparisons are infallible (ln is always int).
+        # VRL requires `} else` on one line, so keep the chain inline.
         ln = to_int(lvl) ?? -1
-        if ln >= 60 { .level = "fatal" }
-        else if ln >= 50 { .level = "error" }
-        else if ln >= 40 { .level = "warn" }
-        else if ln >= 30 { .level = "info" }
-        else if ln >= 20 { .level = "debug" }
-        else if ln >= 10 { .level = "trace" }
-        else { .level = downcase(to_string(lvl) ?? "info") }
+        if ln >= 60 { .level = "fatal" } else if ln >= 50 { .level = "error" } else if ln >= 40 { .level = "warn" } else if ln >= 30 { .level = "info" } else if ln >= 20 { .level = "debug" } else if ln >= 10 { .level = "trace" } else { .level = downcase(to_string(lvl) ?? "info") }
       }
       msg = get(parsed, ["msg"]) ?? get(parsed, ["message"]) ?? null
       if msg != null { .display = to_string(msg) ?? .message }
