@@ -7,6 +7,7 @@ import { Badge, Card, Empty, PageTitle, Sparkline, StatusPill } from "~/componen
 import * as analysis from "~/lib/analysis.server";
 import * as vm from "~/lib/vm.server";
 import { safe } from "~/lib/config.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtNum } from "~/lib/utils";
 
 const KEY = "container_label_coolify_resourceName";
@@ -16,8 +17,8 @@ export async function loader(_args: LoaderFunctionArgs) {
   const start = end - 30 * 60 * 1000;
   const [health, cpuR, memR] = await Promise.all([
     safe(() => analysis.serviceHealth(), [] as analysis.ServiceHealth[]),
-    safe(() => vm.range(`sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`, { start, end, step: "120s" }), [] as vm.Series[]),
-    safe(() => vm.range(`sum by (${KEY})(container_memory_working_set_bytes{name!=""})`, { start, end, step: "120s" }), [] as vm.Series[]),
+    safe(() => cached("ct:cpuspark", 12000, () => vm.range(`sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`, { start, end, step: "120s" })), [] as vm.Series[]),
+    safe(() => cached("ct:memspark", 12000, () => vm.range(`sum by (${KEY})(container_memory_working_set_bytes{name!=""})`, { start, end, step: "120s" })), [] as vm.Series[]),
   ]);
   const spark = (rows: vm.Series[]) => {
     const m: Record<string, number[]> = {};

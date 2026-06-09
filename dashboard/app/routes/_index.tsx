@@ -9,6 +9,7 @@ import * as apm from "~/lib/apm.server";
 import * as vm from "~/lib/vm.server";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct, fmtRate } from "~/lib/utils";
 
 export async function loader(_args: LoaderFunctionArgs) {
@@ -18,8 +19,8 @@ export async function loader(_args: LoaderFunctionArgs) {
   const [incidents, apmData, logVol, cpuTrend] = await Promise.all([
     safe(() => analysis.getIncidents(), [] as analysis.Incident[]),
     safe(() => apm.getAPM(1), { byService: [], topOps: [], totals: { reqRate: 0, errorRatePct: 0, worstP95: 0, services: 0 } } as Awaited<ReturnType<typeof apm.getAPM>>),
-    safe(() => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
-    safe(() => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }), [] as vm.Series[]),
+    safe(() => cached("ov:logvol", 12000, () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" })), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
+    safe(() => cached("ov:cputrend", 12000, () => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" })), [] as vm.Series[]),
   ]);
   const summary = await analysis.hostSummary(health.data);
   return json({

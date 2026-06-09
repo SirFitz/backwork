@@ -6,6 +6,7 @@ import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import * as analysis from "~/lib/analysis.server";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtClock, LEVEL_TEXT, timeAgo } from "~/lib/utils";
 
 const ICON: Record<string, any> = {
@@ -22,7 +23,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   const start = end - 6 * 3600 * 1000;
   const [incidents, errors] = await Promise.all([
     safe(() => analysis.getIncidents(), [] as analysis.Incident[]),
-    safe(() => loki.queryRange('{level="error"}', { start, end, limit: 120 }), [] as loki.LogEntry[]),
+    safe(() => cached("inc:errors", 8000, () => loki.queryRange('{level="error"}', { start, end, limit: 120 })), [] as loki.LogEntry[]),
   ]);
   return json({ incidents: incidents.data, errors: errors.data, error: incidents.error });
 }

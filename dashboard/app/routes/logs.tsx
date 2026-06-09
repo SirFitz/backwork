@@ -6,6 +6,7 @@ import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
@@ -27,15 +28,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const service = url.searchParams.get("service") || "all";
   const level = url.searchParams.get("level") || "all";
   const q = url.searchParams.get("q") || "";
-  const rangeKey = url.searchParams.get("range") || "1h";
-  const mins = RANGES[rangeKey] ?? 60;
+  const rangeKey = url.searchParams.get("range") || "15m";
+  const mins = RANGES[rangeKey] ?? 15;
   const end = Date.now();
   const start = end - mins * 60 * 1000;
   const query = buildQuery(service, level, q);
+  const ck = `logs:${rangeKey}:${query}`;
   const [services, entries, volume] = await Promise.all([
     safe(() => loki.services(), [] as string[]),
-    safe(() => loki.queryRange(query, { start, end, limit: 300 }), [] as loki.LogEntry[]),
-    safe(() => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
+    safe(() => cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 })), [] as loki.LogEntry[]),
+    safe(() => cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" })), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
   ]);
   return json({
     services: services.data,
