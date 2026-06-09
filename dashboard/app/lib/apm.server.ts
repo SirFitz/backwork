@@ -1,4 +1,5 @@
 import * as jaeger from "./jaeger.server";
+import { cached } from "./cache.server";
 
 // RED metrics (Rate, Errors, Duration) derived from real Jaeger traces, for any
 // instrumented service. No synthetic data: as more apps emit OTLP spans, more
@@ -36,17 +37,32 @@ function rateOf(starts: number[], count: number): number {
   return count / Math.max(span, 1);
 }
 
-export async function getAPM(lookbackHours = 1): Promise<{
+export type APMResult = {
   byService: ServiceAPM[];
   topOps: OpRow[];
   totals: { reqRate: number; errorRatePct: number; worstP95: number; services: number };
-}> {
+};
+
+export function getAPM(lookbackHours = 1): Promise<APMResult> {
+  return cached(`apm:${lookbackHours}`, 12000, () => computeAPM(lookbackHours));
+}
+
+async function computeAPM(lookbackHours: number): Promise<APMResult> {
   const services = await jaeger.services().catch(() => [] as string[]);
   const byService: ServiceAPM[] = [];
   const opMap = new Map<string, { service: string; op: string; durs: number[]; errs: number; starts: number[] }>();
 
-  for (const svc of services) {
-    const traces = await jaeger.recentTraces({ service: svc, limit: 500, lookbackHours }).catch(() => []);
+  // fetch every service's traces concurrently (was sequential = N round-trips)
+  const perService = await Promise.all(
+    services.map((svc) =>
+      jaeger
+        .recentTraces({ service: svc, limit: 150, lookbackHours })
+        .then((traces) => ({ svc, traces }))
+        .catch(() => ({ svc, traces: [] as jaeger.TraceSummary[] }))
+    )
+  );
+
+  for (const { svc, traces } of perService) {
     if (!traces.length) continue;
     const durs = traces.map((t) => t.durationMs).sort((a, b) => a - b);
     const starts = traces.map((t) => t.startMs);

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { cached } from "./cache.server";
 
 const SOCKET = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
 
@@ -74,7 +75,11 @@ function parseHealth(status: string): ContainerInfo["health"] {
 }
 
 /** All containers on the host (running + stopped) with derived metadata. */
-export async function listContainers(): Promise<ContainerInfo[]> {
+export function listContainers(): Promise<ContainerInfo[]> {
+  return cached("docker:containers", 8000, computeListContainers);
+}
+
+async function computeListContainers(): Promise<ContainerInfo[]> {
   const raw = await engine<RawContainer[]>("/containers/json?all=true");
   return raw.map((c) => {
     const labels = c.Labels || {};

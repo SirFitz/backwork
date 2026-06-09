@@ -1,4 +1,5 @@
 import { config, fetchJson } from "./config.server";
+import { cached } from "./cache.server";
 
 type VectorResp = {
   status: string;
@@ -48,12 +49,14 @@ export async function range(
 }
 
 /** Which scrape targets are currently up. */
-export async function targetsUp(): Promise<Record<string, boolean>> {
-  const r = await instant("up");
-  const out: Record<string, boolean> = {};
-  for (const s of r) {
-    const name = s.metric.service || s.metric.job || s.metric.instance || "unknown";
-    out[name] = s.value === 1;
-  }
-  return out;
+export function targetsUp(): Promise<Record<string, boolean>> {
+  return cached("vm:targets", 20000, async () => {
+    const r = await instant("up");
+    const out: Record<string, boolean> = {};
+    for (const s of r) {
+      const name = s.metric.service || s.metric.job || s.metric.instance || "unknown";
+      out[name] = s.value === 1;
+    }
+    return out;
+  });
 }

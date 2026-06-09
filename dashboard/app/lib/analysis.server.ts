@@ -1,6 +1,7 @@
 import * as vm from "./vm.server";
 import * as loki from "./loki.server";
 import * as docker from "./docker.server";
+import { cached } from "./cache.server";
 
 // cAdvisor groups every metric by container `name`; we carry the friendly labels
 // so we can fold per-container metrics up to a per-service view.
@@ -36,8 +37,14 @@ export type ServiceHealth = {
   reasons: string[];
 };
 
-/** Per-service health: Docker state + cAdvisor metrics + Loki log rates. */
-export async function serviceHealth(): Promise<ServiceHealth[]> {
+/** Per-service health: Docker state + cAdvisor metrics + Loki log rates.
+ *  Cached briefly so the Overview/Containers/Incidents panels + auto-refresh
+ *  share one computation. */
+export function serviceHealth(): Promise<ServiceHealth[]> {
+  return cached("serviceHealth", 10000, computeServiceHealth);
+}
+
+async function computeServiceHealth(): Promise<ServiceHealth[]> {
   const [containers, cpu, mem, rx, tx, restarts, oom, logRate, errRate] = await Promise.all([
     docker.listContainers().catch(() => [] as docker.ContainerInfo[]),
     vm.instant(`sum by (${GROUP})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`).catch(() => []),

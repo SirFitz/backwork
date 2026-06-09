@@ -1,4 +1,5 @@
 import { config, fetchJson } from "./config.server";
+import { cached } from "./cache.server";
 
 export type TraceSummary = {
   traceID: string;
@@ -22,9 +23,11 @@ export type Span = {
   parentID?: string;
 };
 
-export async function services(): Promise<string[]> {
-  const res = await fetchJson<{ data: string[] }>(`${config.jaegerUrl}/api/services`);
-  return (res.data || []).filter((s) => s && s !== "jaeger-all-in-one").sort();
+export function services(): Promise<string[]> {
+  return cached("jaeger:services", 30000, async () => {
+    const res = await fetchJson<{ data: string[] }>(`${config.jaegerUrl}/api/services`);
+    return (res.data || []).filter((s) => s && s !== "jaeger-all-in-one").sort();
+  });
 }
 
 type RawTrace = {

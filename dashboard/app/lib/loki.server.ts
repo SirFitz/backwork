@@ -1,4 +1,5 @@
 import { config, fetchJson } from "./config.server";
+import { cached } from "./cache.server";
 
 export type LogEntry = {
   ts: number; // ms
@@ -151,6 +152,6 @@ export async function labelValues(name: string): Promise<string[]> {
   return (res.data || []).sort();
 }
 
-export async function services(): Promise<string[]> {
-  return labelValues("service");
+export function services(): Promise<string[]> {
+  return cached("loki:services", 30000, () => labelValues("service"));
 }
