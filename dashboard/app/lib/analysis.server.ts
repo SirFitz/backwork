@@ -187,7 +187,7 @@ export type HostSummary = {
   errorRate: number;
 };
 
-export async function hostSummary(health: ServiceHealth[]): Promise<HostSummary> {
+export function hostSummary(health: ServiceHealth[]): HostSummary {
   const containersTotal = health.reduce((a, s) => a + s.containers, 0);
   const running = health.reduce((a, s) => a + s.running, 0);
   const stopped = health.filter((s) => s.status === "stopped").length;

@@ -1,8 +1,9 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { defer } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { Search } from "lucide-react";
-import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
+import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
+import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
@@ -34,18 +35,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const start = end - mins * 60 * 1000;
   const query = buildQuery(service, level, q);
   const ck = `logs:${rangeKey}:${query}`;
-  const [services, entries, volume] = await Promise.all([
-    safe(() => loki.services(), [] as string[]),
-    safe(() => cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 })), [] as loki.LogEntry[]),
-    safe(() => cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" })), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
-  ]);
-  return json({
+  const services = await safe(() => loki.services(), [] as string[]); // fast (cached)
+  return defer({
     services: services.data,
-    entries: entries.data,
-    error: entries.error,
-    volume: volume.data.map((p) => ({ t: p.t, v: p.v })),
     query,
     filters: { service, level, q, range: rangeKey },
+    entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 })),
+    volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" })).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
   });
 }
 
@@ -65,12 +61,7 @@ export default function Logs() {
       <Form method="get" className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[280px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
-          <input
-            name="q"
-            defaultValue={f.q}
-            placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'}
-            className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
-          />
+          <input name="q" defaultValue={f.q} placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'} className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40" />
         </div>
         <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
           <option value="all">all services</option>
@@ -85,32 +76,31 @@ export default function Logs() {
       </Form>
 
       <Card>
-        <CardHead
-          title="Volume"
-          sub={<span className="font-mono">{d.query}</span>}
-          right={<Badge tone="neutral">{d.entries.length} lines</Badge>}
-        />
-        <div className="p-3">
-          <AreaSeries points={d.volume} color="oklch(0.58 0.13 240)" height={80} fmt={(n) => fmtNum(n, 0)} />
-        </div>
+        <CardHead title="Volume" sub={<span className="font-mono">{d.query}</span>} />
+        <Deferred resolve={d.volume} fallback={<ChartSkeleton height={80} />}>
+          {(points) => <div className="p-3"><AreaSeries points={points} color="oklch(0.58 0.13 240)" height={80} fmt={(n) => fmtNum(n, 0)} /></div>}
+        </Deferred>
       </Card>
 
       <Card>
-        <ErrorNote error={d.error} />
-        {d.entries.length === 0 ? (
-          <Empty title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
-        ) : (
-          <div className={cn("max-h-[62vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
-            {d.entries.map((e, i) => (
-              <div key={i} className="flex gap-3 border-b border-border/40 px-4 py-1 hover:bg-surface-2/50">
-                <span className="shrink-0 tabular-nums text-faint">{fmtClock(e.ts)}</span>
-                <span className={cn("w-11 shrink-0 font-semibold uppercase", LEVEL_TEXT[e.level] || "text-faint")}>{e.level}</span>
-                <span className="w-40 shrink-0 truncate text-accent" title={e.service}>{e.service}</span>
-                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg/90">{e.message}</span>
+        <Deferred resolve={d.entries} fallback={<RowsSkeleton rows={10} />}>
+          {(entries) =>
+            entries.length === 0 ? (
+              <Empty title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
+            ) : (
+              <div className={cn("max-h-[62vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
+                {entries.map((e, i) => (
+                  <div key={i} className="flex gap-3 border-b border-border/40 px-4 py-1 hover:bg-surface-2/50">
+                    <span className="shrink-0 tabular-nums text-faint">{fmtClock(e.ts)}</span>
+                    <span className={cn("w-11 shrink-0 font-semibold uppercase", LEVEL_TEXT[e.level] || "text-faint")}>{e.level}</span>
+                    <span className="w-40 shrink-0 truncate text-accent" title={e.service}>{e.service}</span>
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg/90">{e.message}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            )
+          }
+        </Deferred>
       </Card>
     </div>
   );
