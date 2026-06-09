@@ -7,17 +7,16 @@
 #   backwork        the dashboard — queries all three backends
 services:
   loki:
-    image: grafana/loki:3.3.0
+    build: ./infra/loki
     command: -config.file=/etc/loki/loki-config.yaml
     restart: unless-stopped
     volumes:
-      - ./infra/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - loki-data:/loki
     expose:
       - "3100"
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.106.1
+    build: ./infra/victoriametrics
     command:
       - -storageDataPath=/vmdata
       - -retentionPeriod=14d
@@ -25,7 +24,6 @@ services:
       - -promscrape.config.strictParse=false
     restart: unless-stopped
     volumes:
-      - ./infra/victoriametrics/scrape.yml:/etc/vm/scrape.yml:ro
       - vm-data:/vmdata
     expose:
       - "8428"
@@ -43,10 +41,9 @@ services:
       - "4318"   # OTLP HTTP
 
   vector:
-    image: timberio/vector:0.43.1-alpine
+    build: ./infra/vector
     restart: unless-stopped
     volumes:
-      - ./infra/vector/vector.yaml:/etc/vector/vector.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - vector-data:/vector-data
     command: --config /etc/vector/vector.yaml
