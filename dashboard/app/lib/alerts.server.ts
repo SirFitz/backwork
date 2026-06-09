@@ -13,7 +13,7 @@ export type AlertRule = {
   service: string; // "*" = any service
   comparator: ">" | "<";
   threshold: number;
-  channel: string;
+  channelIds: string[]; // notification channels to fire
   enabled: boolean;
 };
 
@@ -31,9 +31,9 @@ const KEY = "container_label_coolify_resourceName";
 const FILE = () => path.join(config.dataDir, "alerts.json");
 
 const DEFAULTS: AlertRule[] = [
-  { id: "r1", name: "High error rate (any service)", metric: "error_rate", service: "*", comparator: ">", threshold: 2, channel: "#alerts", enabled: true },
-  { id: "r2", name: "Restart loop (any service)", metric: "restarts", service: "*", comparator: ">", threshold: 3, channel: "#oncall", enabled: true },
-  { id: "r3", name: "High memory (any container)", metric: "memory_mb", service: "*", comparator: ">", threshold: 1024, channel: "#alerts", enabled: true },
+  { id: "r1", name: "High error rate (any service)", metric: "error_rate", service: "*", comparator: ">", threshold: 2, channelIds: [], enabled: true },
+  { id: "r2", name: "Restart loop (any service)", metric: "restarts", service: "*", comparator: ">", threshold: 3, channelIds: [], enabled: true },
+  { id: "r3", name: "High memory (any container)", metric: "memory_mb", service: "*", comparator: ">", threshold: 1024, channelIds: [], enabled: true },
 ];
 
 export async function loadRules(): Promise<AlertRule[]> {

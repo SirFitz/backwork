@@ -30,6 +30,7 @@ import {
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
+import { ensureEvaluator } from "~/lib/evaluator.server";
 import { cn } from "~/lib/utils";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: tailwind }];
@@ -40,6 +41,7 @@ export const meta: MetaFunction = () => [
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  ensureEvaluator(); // start the background alert evaluator once
   const { getTheme } = await themeSessionResolver(request);
   // Light is the default. Dark is an explicit, persisted choice.
   return json({ theme: getTheme() ?? Theme.LIGHT });
