@@ -26,7 +26,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const showToken = !settingsKey || url.searchParams.get("key") === settingsKey;
 
   const [lokiUp, targets, jaegerSvcs] = await Promise.all([
-    ping(`${config.lokiUrl}/ready`),
+    // /ready can flap 503; the labels API is a truer "is Loki serving" check
+    ping(`${config.lokiUrl}/loki/api/v1/labels`),
     vm.targetsUp().then((t) => ({ ok: true, t })).catch(() => ({ ok: false, t: {} as Record<string, boolean> })),
     jaeger.services().then(() => true).catch(() => false),
   ]);
