@@ -30,10 +30,26 @@ export async function loader(_args: LoaderFunctionArgs) {
 export default function Incidents() {
   const d = useLoaderData<typeof loader>();
   const critical = d.incidents.filter((i) => i.severity === "critical").length;
+  const warning = d.incidents.length - critical;
 
   return (
     <div className="space-y-5 animate-fade-in">
       <PageTitle title="Incidents" sub="Crashes, OOM kills, failing healthchecks, restart loops and error spikes, detected automatically from container state, metrics and logs." />
+
+      <div className="grid grid-cols-3 gap-3">
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Open incidents</div>
+          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{d.incidents.length}</div>
+        </Card>
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Critical</div>
+          <div className={cn("mt-1 font-mono text-2xl font-semibold tabular-nums", critical > 0 ? "text-err" : "text-ok")}>{critical}</div>
+        </Card>
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Warning</div>
+          <div className={cn("mt-1 font-mono text-2xl font-semibold tabular-nums", warning > 0 ? "text-warn" : "text-muted")}>{warning}</div>
+        </Card>
+      </div>
 
       <Card>
         <CardHead

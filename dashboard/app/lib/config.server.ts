@@ -9,24 +9,38 @@ export const config = {
   publicUrl: process.env.PUBLIC_URL || "https://backwork.dev",
 };
 
-const DEFAULT_TIMEOUT = 8000;
+const DEFAULT_TIMEOUT = 15000;
 
-export async function fetchJson<T = any>(
-  url: string,
-  init?: RequestInit & { timeoutMs?: number }
-): Promise<T> {
+async function once<T>(url: string, init: (RequestInit & { timeoutMs?: number }) | undefined): Promise<T> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), init?.timeoutMs ?? DEFAULT_TIMEOUT);
   try {
     const res = await fetch(url, { ...init, signal: ctrl.signal });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`${res.status} ${res.statusText} for ${url} :: ${body.slice(0, 200)}`);
+      throw new Error(`${res.status} ${res.statusText} :: ${body.slice(0, 160)}`);
     }
     return (await res.json()) as T;
   } finally {
     clearTimeout(t);
   }
+}
+
+export async function fetchJson<T = any>(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number; retries?: number }
+): Promise<T> {
+  const retries = init?.retries ?? 1;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await once<T>(url, init);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /** Run a data fetch and never throw — returns a fallback + the error string so

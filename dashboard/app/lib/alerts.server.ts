@@ -19,12 +19,12 @@ export type AlertRule = {
 
 export type AlertState = AlertRule & { firing: boolean; value: number };
 
-export const METRIC_META: Record<AlertMetric, { label: string; unit: string; source: "vm" | "loki" }> = {
-  cpu: { label: "CPU usage", unit: "cores", source: "vm" },
-  memory_mb: { label: "Memory", unit: "MB", source: "vm" },
-  restarts: { label: "Restarts (1h)", unit: "", source: "vm" },
-  error_rate: { label: "Error rate", unit: "/s", source: "loki" },
-  log_rate: { label: "Log rate", unit: "/s", source: "loki" },
+export const METRIC_META: Record<AlertMetric, { label: string; hint: string; unit: string; source: "vm" | "loki" }> = {
+  cpu: { label: "CPU usage (cores)", hint: "container CPU, in cores", unit: " cores", source: "vm" },
+  memory_mb: { label: "Memory, busiest container (MB)", hint: "peak container working set", unit: " MB", source: "vm" },
+  restarts: { label: "Restarts in last hour (count)", hint: "container restarts over 1h", unit: "", source: "vm" },
+  error_rate: { label: "Error log rate (lines/sec)", hint: "error-level log lines per second", unit: "/s", source: "loki" },
+  log_rate: { label: "Log volume (lines/sec)", hint: "all log lines per second", unit: "/s", source: "loki" },
 };
 
 const KEY = "container_label_coolify_resourceName";

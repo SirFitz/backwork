@@ -1,23 +1,24 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { Activity, ArrowRight, Boxes, CheckCircle2, Gauge, TriangleAlert, Zap } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle, StatusDot, StatusPill } from "~/components/ui";
 import { AreaSeries } from "~/components/charts";
 import * as analysis from "~/lib/analysis.server";
+import * as apm from "~/lib/apm.server";
 import * as vm from "~/lib/vm.server";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
-import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtNum, fmtPct } from "~/lib/utils";
+import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct, fmtRate } from "~/lib/utils";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const end = Date.now();
   const start = end - 60 * 60 * 1000;
   const health = await safe(() => analysis.serviceHealth(), [] as analysis.ServiceHealth[]);
-  const [incidents, logVol, errVol, cpuTrend] = await Promise.all([
+  const [incidents, apmData, logVol, cpuTrend] = await Promise.all([
     safe(() => analysis.getIncidents(), [] as analysis.Incident[]),
+    safe(() => apm.getAPM(1), { byService: [], topOps: [], totals: { reqRate: 0, errorRatePct: 0, worstP95: 0, services: 0 } } as Awaited<ReturnType<typeof apm.getAPM>>),
     safe(() => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
-    safe(() => loki.countOverTime('sum(count_over_time({level="error"}[1m]))', { start, end, step: "120s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
     safe(() => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }), [] as vm.Series[]),
   ]);
   const summary = await analysis.hostSummary(health.data);
@@ -25,45 +26,55 @@ export async function loader(_args: LoaderFunctionArgs) {
     health: health.data,
     healthErr: health.error,
     incidents: incidents.data,
+    apm: apmData.data.totals,
     summary,
     logVol: logVol.data.map((p) => ({ t: p.t, v: p.v })),
-    errVol: errVol.data.map((p) => ({ t: p.t, v: p.v })),
     cpuTrend: (cpuTrend.data[0]?.points ?? []).map((p) => ({ t: p.t, v: p.v })),
   });
 }
 
-function Vital({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="px-4 py-3 first:pl-0">
-      <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
-      <div className={cn("mt-1 font-mono text-lg font-semibold tabular-nums", tone)}>{value}</div>
-    </div>
+function SummaryCard({ icon: Icon, label, value, sub, tone, to }: { icon: any; label: string; value: string; sub?: string; tone?: string; to?: string }) {
+  const inner = (
+    <Card className="flex h-full items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/40">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-muted">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
+        <div className={cn("font-mono text-xl font-semibold leading-tight tabular-nums", tone)}>{value}</div>
+        {sub ? <div className="truncate text-2xs text-faint">{sub}</div> : null}
+      </div>
+    </Card>
   );
+  return to ? <Link to={to} className="block">{inner}</Link> : inner;
 }
 
 export default function Overview() {
   const d = useLoaderData<typeof loader>();
   const s = d.summary;
   const attention = d.health.filter((h) => h.status === "down" || h.status === "degraded");
-  const errToneOk = s.errorRate < 0.2;
+  const up = s.servicesActive - s.servicesDown - s.servicesDegraded;
+  const critical = d.incidents.filter((i) => i.severity === "critical").length;
+  const a = d.apm;
 
   return (
     <div className="space-y-6 animate-fade-in">
       <PageTitle title="Overview" sub="What's healthy and what needs attention across every container on this host, in one place." />
 
-      {/* host vitals strip */}
-      <Card>
-        <div className="flex flex-wrap items-center divide-x divide-border">
-          <Vital label="Active services" value={String(s.servicesActive)} />
-          <Vital label="Down" value={String(s.servicesDown)} tone={s.servicesDown > 0 ? "text-err" : "text-muted"} />
-          <Vital label="Degraded" value={String(s.servicesDegraded)} tone={s.servicesDegraded > 0 ? "text-warn" : "text-muted"} />
-          <Vital label="Stopped" value={String(s.servicesStopped)} tone="text-faint" />
-          <Vital label="CPU" value={`${fmtCores(s.cpuCores)} cores`} />
-          <Vital label="Memory" value={fmtBytes(s.memBytes)} />
-          <Vital label="Logs" value={`${fmtNum(s.logRate, 1)}/s`} />
-          <Vital label="Errors" value={`${fmtNum(s.errorRate, 2)}/s`} tone={errToneOk ? "text-muted" : "text-err"} />
-        </div>
-      </Card>
+      {/* summary cards */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <SummaryCard icon={Boxes} label="Services up" value={`${up}/${s.servicesActive}`}
+          sub={`${s.servicesDown} down · ${s.servicesDegraded} degraded · ${s.servicesStopped} stopped`}
+          tone={s.servicesDown > 0 ? "text-err" : s.servicesDegraded > 0 ? "text-warn" : "text-ok"} />
+        <SummaryCard icon={Gauge} label="Request rate" value={a.services ? fmtRate(a.reqRate) : "—"}
+          sub={a.services ? `${a.services} instrumented service${a.services > 1 ? "s" : ""}` : "instrument an app"} />
+        <SummaryCard icon={TriangleAlert} label="Error rate" value={a.services ? fmtPct(a.errorRatePct) : "—"}
+          sub="of traced requests" tone={a.errorRatePct >= 5 ? "text-err" : a.errorRatePct >= 1 ? "text-warn" : undefined} />
+        <SummaryCard icon={Zap} label="Worst p95" value={a.services ? fmtMs(a.worstP95) : "—"}
+          sub="tail latency" tone={a.worstP95 >= 1000 ? "text-err" : a.worstP95 >= 500 ? "text-warn" : undefined} />
+        <SummaryCard icon={Activity} label="Active incidents" value={String(d.incidents.length)}
+          sub={`${critical} critical`} tone={critical > 0 ? "text-err" : d.incidents.length > 0 ? "text-warn" : "text-ok"} to="/incidents" />
+      </div>
 
       {/* needs attention + log trend */}
       <div className="grid gap-4 lg:grid-cols-3">

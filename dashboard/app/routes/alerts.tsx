@@ -43,10 +43,26 @@ const FIELD = "h-9 w-full rounded-lg border border-border bg-surface px-2.5 text
 export default function Alerts() {
   const d = useLoaderData<typeof loader>();
   const firing = d.states.filter((s) => s.firing).length;
+  const enabled = d.states.filter((s) => s.enabled).length;
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Alerts" sub="Thresholds on real metrics and log rates, evaluated live against VictoriaMetrics and Loki on every refresh." />
+      <PageTitle title="Alerts" sub="Thresholds on real metrics and log rates, evaluated live against VictoriaMetrics and Loki and delivered to your channels." />
+
+      <div className="grid grid-cols-3 gap-3">
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Rules</div>
+          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{d.states.length}</div>
+        </Card>
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Firing now</div>
+          <div className={cn("mt-1 font-mono text-2xl font-semibold tabular-nums", firing > 0 ? "text-err" : "text-ok")}>{firing}</div>
+        </Card>
+        <Card className="px-4 py-3.5">
+          <div className="text-2xs uppercase tracking-wide text-faint">Enabled</div>
+          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{enabled}</div>
+        </Card>
+      </div>
 
       <Card>
         <CardHead

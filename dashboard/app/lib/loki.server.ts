@@ -61,7 +61,8 @@ export async function queryRange(
     direction: "backward",
   });
   const res = await fetchJson<LokiStreamResult>(
-    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`
+    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`,
+    { timeoutMs: 22000, retries: 2 }
   );
   const out: LogEntry[] = [];
   for (const stream of res.data.result || []) {
@@ -97,7 +98,8 @@ export async function countOverTime(
     step,
   });
   const res = await fetchJson<LokiMatrixResult>(
-    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`
+    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`,
+    { timeoutMs: 20000, retries: 2 }
   );
   const points: Array<{ t: number; v: number; labels: Record<string, string> }> = [];
   for (const series of res.data.result || []) {
