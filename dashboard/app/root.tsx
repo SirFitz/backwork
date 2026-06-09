@@ -1,6 +1,8 @@
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
+  Form,
+  Link,
   Links,
   Meta,
   NavLink,
@@ -12,28 +14,40 @@ import {
   useRevalidator,
   useRouteError,
 } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Activity,
   AlertTriangle,
   BellRing,
   Boxes,
+  Building2,
+  ChevronDown,
   Cog,
   GitBranch,
   LayoutDashboard,
+  LogOut,
   Moon,
   Network,
   Pause,
   Play,
   ScrollText,
   Sun,
+  Users,
 } from "lucide-react";
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
 import { ensureEvaluator } from "~/lib/evaluator.server";
+import { requireOrg } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
+
+type AuthData = {
+  user: { name: string; email: string };
+  org: { id: string; name: string; slug: string };
+  role: string;
+  orgs: { id: string; name: string }[];
+} | null;
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: tailwind }];
 
@@ -42,30 +56,28 @@ export const meta: MetaFunction = () => [
   { name: "description", content: "Self-hosted log aggregation and application performance monitoring." },
 ];
 
-// Temporary HTTP basic-auth gate for the (currently public) dashboard UI.
-// Enabled by setting BASIC_AUTH_USER + BASIC_AUTH_PASS. Only runs for document
-// loads (this root loader); the machine endpoints (/ingest, /otlp, /install.sh,
-// /healthz) are resource routes that don't invoke the root loader, so agents
-// keep working. Superseded by the real multi-tenant auth.
-function requireBasicAuth(request: Request) {
-  const user = process.env.BASIC_AUTH_USER;
-  const pass = process.env.BASIC_AUTH_PASS;
-  if (!user || !pass) return;
-  const expected = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
-  if ((request.headers.get("authorization") || "") !== expected) {
-    throw new Response("Authentication required", {
-      status: 401,
-      headers: { "WWW-Authenticate": 'Basic realm="backwork.dev", charset="UTF-8"' },
-    });
-  }
-}
+// Public routes render bare (no app shell) and don't require a session. The
+// machine endpoints (/ingest, /otlp, /install.sh, /healthz) are resource routes
+// that never invoke this root loader, so agents are unaffected.
+const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  requireBasicAuth(request);
   ensureEvaluator(); // start the background alert evaluator once
+  const path = new URL(request.url).pathname;
+  const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite");
   const { getTheme } = await themeSessionResolver(request);
-  // Light is the default. Dark is an explicit, persisted choice.
-  return json({ theme: getTheme() ?? Theme.LIGHT });
+  const theme = getTheme() ?? Theme.LIGHT;
+  if (isPublic) return json({ theme, auth: null as AuthData });
+  const ctx = await requireOrg(request); // redirects to /login or /onboarding
+  return json({
+    theme,
+    auth: {
+      user: { name: ctx.user.name, email: ctx.user.email },
+      org: ctx.org,
+      role: ctx.role,
+      orgs: ctx.memberships.map((m) => ({ id: m.orgId, name: m.orgName })),
+    } as AuthData,
+  });
 }
 
 const NAV = [
@@ -134,7 +146,52 @@ function LiveStatus() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const link = "flex items-center gap-2 rounded px-2 py-1.5 text-[13px] text-fg hover:bg-surface-2";
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-2xs font-medium text-muted hover:bg-surface-2 hover:text-fg">
+        <Building2 className="h-3.5 w-3.5" />
+        <span className="max-w-[120px] truncate text-fg">{auth.org.name}</span>
+        <ChevronDown className="h-3 w-3" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 z-40 mt-1.5 w-60 rounded-lg border border-border bg-surface p-1 shadow-lg">
+          {auth.orgs.length > 1 ? (
+            <div className="mb-1 border-b border-border px-1 pb-1.5">
+              <div className="px-2 py-1 text-2xs uppercase tracking-wide text-faint">Organizations</div>
+              {auth.orgs.map((o) => (
+                <Form key={o.id} method="post" action="/action/set-org">
+                  <input type="hidden" name="orgId" value={o.id} />
+                  <button className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-surface-2", o.id === auth.org.id ? "text-brand" : "text-fg")}>
+                    <Building2 className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{o.name}</span>
+                  </button>
+                </Form>
+              ))}
+            </div>
+          ) : null}
+          <Link to="/members" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Members</Link>
+          <Link to="/teams" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Teams</Link>
+          <div className="mt-1 border-t border-border pt-1">
+            <div className="truncate px-2 py-1 text-2xs text-faint">{auth.user.email} · {auth.role}</div>
+            <Form method="post" action="/logout">
+              <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] text-err hover:bg-surface-2"><LogOut className="h-3.5 w-3.5" /> Sign out</button>
+            </Form>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: React.ReactNode }) {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[224px_1fr]">
       <aside className="hidden flex-col border-r border-border bg-surface lg:flex lg:sticky lg:top-0 lg:h-screen">
@@ -182,6 +239,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <LiveStatus />
             <ThemeToggle />
+            <AuthMenu auth={auth} />
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6">{children}</main>
@@ -233,9 +291,13 @@ export default function AppWithProviders() {
   return (
     <ThemeProvider specifiedTheme={data.theme} themeAction="/action/set-theme">
       <Document>
-        <Shell>
+        {data.auth ? (
+          <Shell auth={data.auth}>
+            <Outlet />
+          </Shell>
+        ) : (
           <Outlet />
-        </Shell>
+        )}
       </Document>
     </ThemeProvider>
   );

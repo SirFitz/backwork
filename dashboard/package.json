@@ -24,15 +24,20 @@
     "@remix-run/serve": "^2.15.2",
     "clsx": "^2.1.1",
     "isbot": "^5.1.17",
+    "@node-rs/argon2": "^2.0.2",
+    "drizzle-orm": "^0.36.4",
     "lucide-react": "^0.468.0",
     "nodemailer": "^6.9.16",
+    "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.13.3",
     "remix-themes": "^1.5.1",
-    "tailwind-merge": "^2.5.5"
+    "tailwind-merge": "^2.5.5",
+    "ulid": "^2.3.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.11.10",
     "@remix-run/dev": "^2.15.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

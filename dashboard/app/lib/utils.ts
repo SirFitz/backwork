@@ -70,6 +70,17 @@ export function fmtClock(ts: number): string {
   );
 }
 
+export function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "org"
+  );
+}
+
 export const LEVEL_TEXT: Record<string, string> = {
   error: "text-err",
   fatal: "text-err",

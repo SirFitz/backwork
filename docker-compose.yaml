@@ -70,6 +70,19 @@ services:
       - "4317"   # OTLP gRPC
       - "4318"   # OTLP HTTP
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 320m
+    environment:
+      POSTGRES_DB: backwork
+      POSTGRES_USER: backwork
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-backwork_dev_pw}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+
   vector:
     build: ./infra/vector
     restart: unless-stopped
@@ -98,6 +111,9 @@ services:
       DOCKER_SOCKET: /var/run/docker.sock
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       PUBLIC_URL: ${PUBLIC_URL:-https://backwork.dev}
+      DATABASE_URL: postgresql://backwork:${PG_PASSWORD:-backwork_dev_pw}@postgres:5432/backwork
+      SESSION_SECRET: ${SESSION_SECRET:-backwork-dev-session-secret-change-me}
+      AUTH_PEPPER: ${AUTH_PEPPER:-backwork-dev-pepper-change-me}
     volumes:
       - backwork-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -107,9 +123,11 @@ services:
       - loki
       - victoriametrics
       - cadvisor
+      - postgres
 
 volumes:
   loki-data:
   vm-data:
   vector-data:
   backwork-data:
+  pg-data:
