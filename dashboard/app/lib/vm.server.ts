@@ -1,5 +1,6 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
+import type { Tenant } from "./tenant.server";
 
 type VectorResp = {
   status: string;
@@ -12,8 +13,16 @@ type MatrixResp = {
 
 export type Series = { metric: Record<string, string>; points: Array<{ t: number; v: number }> };
 
+// cAdvisor host metrics belong to the platform org. Customer orgs have no
+// metrics-push path yet, so their metric queries return empty (no leak); this
+// also keeps customer infra views correctly blank until they connect agents.
+function blocked(t?: Tenant): boolean {
+  return !!t && !t.platform;
+}
+
 /** PromQL instant query. */
-export async function instant(query: string, time?: number) {
+export async function instant(query: string, time?: number, tenant?: Tenant) {
+  if (blocked(tenant)) return [] as Array<{ metric: Record<string, string>; value: number }>;
   const params = new URLSearchParams({ query });
   if (time) params.set("time", String(Math.floor(time / 1000)));
   const res = await fetchJson<VectorResp>(`${config.vmUrl}/api/v1/query?${params.toString()}`);
@@ -21,7 +30,8 @@ export async function instant(query: string, time?: number) {
 }
 
 /** Single scalar from an instant query (first result), or fallback. */
-export async function scalar(query: string, fallback = 0): Promise<number> {
+export async function scalar(query: string, fallback = 0, tenant?: Tenant): Promise<number> {
+  if (blocked(tenant)) return fallback;
   const r = await instant(query);
   if (!r.length) return fallback;
   const v = r[0].value;
@@ -31,8 +41,10 @@ export async function scalar(query: string, fallback = 0): Promise<number> {
 /** PromQL range query. */
 export async function range(
   query: string,
-  opts: { start?: number; end?: number; step?: string } = {}
+  opts: { start?: number; end?: number; step?: string } = {},
+  tenant?: Tenant
 ): Promise<Series[]> {
+  if (blocked(tenant)) return [];
   const end = opts.end ?? Date.now();
   const start = opts.start ?? end - 60 * 60 * 1000;
   const params = new URLSearchParams({

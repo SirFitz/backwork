@@ -1,5 +1,12 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
+import type { Tenant } from "./tenant.server";
+
+// Traces aren't org-tagged at OTLP ingest yet, so customer orgs see no traces
+// (no leak); platform sees all. Per-org trace tagging is the next increment.
+function blocked(t?: Tenant): boolean {
+  return !!t && !t.platform;
+}
 
 export type TraceSummary = {
   traceID: string;
@@ -23,7 +30,8 @@ export type Span = {
   parentID?: string;
 };
 
-export function services(): Promise<string[]> {
+export function services(tenant?: Tenant): Promise<string[]> {
+  if (blocked(tenant)) return Promise.resolve([]);
   return cached("jaeger:services", 30000, async () => {
     const res = await fetchJson<{ data: string[] }>(`${config.jaegerUrl}/api/services`);
     return (res.data || []).filter((s) => s && s !== "jaeger-all-in-one").sort();
@@ -56,8 +64,10 @@ function spanHasError(tags?: Array<{ key: string; value: any }>): boolean {
 }
 
 export async function recentTraces(
-  opts: { service?: string; limit?: number; lookbackHours?: number } = {}
+  opts: { service?: string; limit?: number; lookbackHours?: number } = {},
+  tenant?: Tenant
 ): Promise<TraceSummary[]> {
+  if (blocked(tenant)) return [];
   const lookback = (opts.lookbackHours ?? 1) * 3600 * 1e6; // micros
   const end = Date.now() * 1000;
   const params = new URLSearchParams({
@@ -124,8 +134,10 @@ function tagVal(tags: Array<{ key: string; value: any }> | undefined, keys: stri
 
 /** Flat list of recent HTTP requests, extracted from each trace's root span. */
 export async function recentRequests(
-  opts: { service?: string; limit?: number; lookbackHours?: number } = {}
+  opts: { service?: string; limit?: number; lookbackHours?: number } = {},
+  tenant?: Tenant
 ): Promise<RequestRow[]> {
+  if (blocked(tenant)) return [];
   const lb = opts.lookbackHours ?? 1;
   const end = Date.now() * 1000;
   const params = new URLSearchParams({
@@ -199,7 +211,8 @@ export async function getTrace(id: string): Promise<{ spans: Span[]; durationMs:
   return { spans, durationMs: (maxEnd - minStart) / 1000, startMs: minStart / 1000 };
 }
 
-export async function dependencies(lookbackHours = 24): Promise<Array<{ parent: string; child: string; callCount: number }>> {
+export async function dependencies(lookbackHours = 24, tenant?: Tenant): Promise<Array<{ parent: string; child: string; callCount: number }>> {
+  if (blocked(tenant)) return [];
   const end = Date.now();
   const params = new URLSearchParams({
     endTs: String(end),

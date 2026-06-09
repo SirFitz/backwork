@@ -8,11 +8,15 @@ import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as analysis from "~/lib/analysis.server";
 import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtNum } from "~/lib/utils";
 
 const KEY = "container_label_coolify_resourceName";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const end = Date.now();
   const start = end - 30 * 60 * 1000;
   const spark = (rows: vm.Series[]) => {
@@ -24,9 +28,9 @@ export async function loader(_args: LoaderFunctionArgs) {
     return m;
   };
   const data = Promise.all([
-    analysis.serviceHealth(),
-    cached("ct:cpuspark", 12000, () => vm.range(`sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`, { start, end, step: "120s" })).then(spark).catch(() => ({} as Record<string, number[]>)),
-    cached("ct:memspark", 12000, () => vm.range(`sum by (${KEY})(container_memory_working_set_bytes{name!=""})`, { start, end, step: "120s" })).then(spark).catch(() => ({} as Record<string, number[]>)),
+    analysis.serviceHealth(t),
+    cached(`ct:cpuspark:${t.orgId}`, 12000, () => vm.range(`sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`, { start, end, step: "120s" }, t)).then(spark).catch(() => ({} as Record<string, number[]>)),
+    cached(`ct:memspark:${t.orgId}`, 12000, () => vm.range(`sum by (${KEY})(container_memory_working_set_bytes{name!=""})`, { start, end, step: "120s" }, t)).then(spark).catch(() => ({} as Record<string, number[]>)),
   ]).then(([health, cpuSpark, memSpark]) => ({ health, cpuSpark, memSpark }));
   return defer({ data });
 }

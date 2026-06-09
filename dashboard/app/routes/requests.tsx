@@ -6,11 +6,15 @@ import { Network, Search } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtClock, fmtMs, fmtPct } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const requested = new URL(request.url).searchParams.get("service") || "all";
-  const services = await safe(() => jaeger.services(), [] as string[]);
+  const services = await safe(() => jaeger.services(t), [] as string[]);
   const list = services.data;
   const chosen = requested === "all" ? "all" : list.includes(requested) ? requested : list[0] || "";
 
@@ -18,12 +22,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   let error: string | null = null;
   if (chosen === "all" && list.length) {
     const batches = await Promise.all(
-      list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: 1 }), [] as jaeger.RequestRow[]))
+      list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]))
     );
     rows = batches.flatMap((b) => b.data).sort((a, b) => b.startMs - a.startMs).slice(0, 200);
     error = batches.find((b) => b.error)?.error ?? null;
   } else if (chosen) {
-    const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: 1 }), [] as jaeger.RequestRow[]);
+    const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]);
     rows = r.data;
     error = r.error;
   }

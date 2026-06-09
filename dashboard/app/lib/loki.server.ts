@@ -1,5 +1,18 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
+import type { Tenant } from "./tenant.server";
+
+/** Inject an org_id matcher into the first LogQL stream selector for non-platform
+ *  tenants. Platform (and untenanted internal calls) are left unfiltered. */
+function scoped(query: string, t?: Tenant): string {
+  if (!t || t.platform) return query;
+  const m = `org_id=${JSON.stringify(t.orgId)}`;
+  const i = query.indexOf("{");
+  if (i === -1) return query;
+  const j = query.indexOf("}", i);
+  const inner = query.slice(i + 1, j).trim();
+  return query.slice(0, i) + "{" + (inner ? `${m},${inner}` : m) + "}" + query.slice(j + 1);
+}
 
 export type LogEntry = {
   ts: number; // ms
@@ -50,12 +63,13 @@ function safeParse(s: string): any | null {
 /** Query a LogQL expression over a time range, newest first. */
 export async function queryRange(
   query: string,
-  opts: { start?: number; end?: number; limit?: number } = {}
+  opts: { start?: number; end?: number; limit?: number } = {},
+  tenant?: Tenant
 ): Promise<LogEntry[]> {
   const end = opts.end ?? Date.now();
   const start = opts.start ?? end - 60 * 60 * 1000;
   const params = new URLSearchParams({
-    query,
+    query: scoped(query, tenant),
     start: String(start * 1e6), // ns
     end: String(end * 1e6),
     limit: String(opts.limit ?? 200),
@@ -87,13 +101,14 @@ export async function queryRange(
 /** Count log lines bucketed over time (for the volume sparkline / rate chart). */
 export async function countOverTime(
   query: string,
-  opts: { start?: number; end?: number; step?: string } = {}
+  opts: { start?: number; end?: number; step?: string } = {},
+  tenant?: Tenant
 ): Promise<Array<{ t: number; v: number; labels: Record<string, string> }>> {
   const end = opts.end ?? Date.now();
   const start = opts.start ?? end - 60 * 60 * 1000;
   const step = opts.step ?? "60s";
   const params = new URLSearchParams({
-    query,
+    query: scoped(query, tenant),
     start: String(Math.floor(start / 1000)),
     end: String(Math.floor(end / 1000)),
     step,
@@ -114,11 +129,11 @@ export async function countOverTime(
 /** Grouped metric query → { service: latest value }.
  *  Uses query_range, not the instant endpoint: Loki returns nothing for a
  *  grouped `sum by (...)(rate(...))` on the instant API, but works over a range. */
-export async function rateByService(query: string): Promise<Record<string, number>> {
+export async function rateByService(query: string, tenant?: Tenant): Promise<Record<string, number>> {
   const end = Date.now();
   const start = end - 10 * 60 * 1000;
   const params = new URLSearchParams({
-    query,
+    query: scoped(query, tenant),
     start: String(Math.floor(start / 1000)),
     end: String(Math.floor(end / 1000)),
     step: "120",
@@ -136,22 +151,23 @@ export async function rateByService(query: string): Promise<Record<string, numbe
 }
 
 /** Instant metric query returning a single scalar (sum of vector), or fallback. */
-export async function scalar(query: string, fallback = 0): Promise<number> {
+export async function scalar(query: string, fallback = 0, tenant?: Tenant): Promise<number> {
   const res = await fetchJson<{ data: { result: Array<{ value: [number, string] }> } }>(
-    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(query)}`
+    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(scoped(query, tenant))}`
   );
   const rows = res.data.result || [];
   if (!rows.length) return fallback;
   return rows.reduce((a, r) => a + Number(r.value[1]), 0);
 }
 
-export async function labelValues(name: string): Promise<string[]> {
-  const res = await fetchJson<{ data: string[] }>(
-    `${config.lokiUrl}/loki/api/v1/label/${encodeURIComponent(name)}/values`
-  );
+export async function labelValues(name: string, tenant?: Tenant): Promise<string[]> {
+  let url = `${config.lokiUrl}/loki/api/v1/label/${encodeURIComponent(name)}/values`;
+  if (tenant && !tenant.platform) url += `?query=${encodeURIComponent(`{org_id=${JSON.stringify(tenant.orgId)}}`)}`;
+  const res = await fetchJson<{ data: string[] }>(url);
   return (res.data || []).sort();
 }
 
-export function services(): Promise<string[]> {
-  return cached("loki:services", 30000, () => labelValues("service"));
+export function services(tenant?: Tenant): Promise<string[]> {
+  const key = tenant && !tenant.platform ? `loki:services:${tenant.orgId}` : "loki:services";
+  return cached(key, 30000, () => labelValues("service", tenant));
 }

@@ -7,16 +7,20 @@ import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as analysis from "~/lib/analysis.server";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtClock, LEVEL_TEXT, timeAgo } from "~/lib/utils";
 
 const ICON: Record<string, any> = { oom: MemoryStick, unhealthy: HeartPulse, stopped: Power, restart: RotateCcw, error_spike: Activity, crash: Power };
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const end = Date.now();
   const start = end - 6 * 3600 * 1000;
   return defer({
-    incidents: analysis.getIncidents(),
-    errors: cached("inc:errors", 8000, () => loki.queryRange('{level="error"}', { start, end, limit: 120 })),
+    incidents: analysis.getIncidents(t),
+    errors: cached(`inc:errors:${t.orgId}`, 8000, () => loki.queryRange('{level="error"}', { start, end, limit: 120 }, t)),
   });
 }
 

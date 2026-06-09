@@ -10,18 +10,22 @@ import * as apm from "~/lib/apm.server";
 import * as vm from "~/lib/vm.server";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct, fmtRate } from "~/lib/utils";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const end = Date.now();
   const start = end - 60 * 60 * 1000;
-  const healthP = analysis.serviceHealth();
-  const apmP = apm.getAPM(1);
-  const incidentsP = analysis.getIncidents();
-  const logVolP = cached("ov:logvol", 12000, () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }))
+  const healthP = analysis.serviceHealth(t);
+  const apmP = apm.getAPM(1, t);
+  const incidentsP = analysis.getIncidents(t);
+  const logVolP = cached(`ov:logvol:${t.orgId}`, 12000, () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }, t))
     .then((d) => d.map((p) => ({ t: p.t, v: p.v })))
     .catch(() => [] as { t: number; v: number }[]);
-  const cpuTrendP = cached("ov:cputrend", 12000, () => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }))
+  const cpuTrendP = cached(`ov:cputrend:${t.orgId}`, 12000, () => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }, t))
     .then((s) => (s[0]?.points ?? []).map((p) => ({ t: p.t, v: p.v })))
     .catch(() => [] as { t: number; v: number }[]);
 

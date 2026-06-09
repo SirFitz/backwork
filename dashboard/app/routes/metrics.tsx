@@ -7,22 +7,26 @@ import { PALETTE, TimeSeries } from "~/components/charts";
 import * as vm from "~/lib/vm.server";
 import * as apm from "~/lib/apm.server";
 import * as jaeger from "~/lib/jaeger.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct } from "~/lib/utils";
 
 const KEY = "container_label_coolify_resourceName";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const end = Date.now();
   const start = end - 60 * 60 * 1000;
   const named = (rows: vm.Series[]) => rows.map((r, i) => ({ name: r.metric[KEY] || "other", color: PALETTE[i % PALETTE.length], points: r.points }));
 
   const cadvisor = Promise.all([
-    vm.range(`topk(7, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, { start, end, step: "120s" }),
-    vm.range(`topk(7, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`, { start, end, step: "120s" }),
-    vm.range(`sum(rate(container_network_receive_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }),
-    vm.range(`sum(rate(container_network_transmit_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }),
-    vm.instant(`topk(10, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`),
-    vm.instant(`topk(10, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`),
+    vm.range(`topk(7, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, { start, end, step: "120s" }, t),
+    vm.range(`topk(7, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`, { start, end, step: "120s" }, t),
+    vm.range(`sum(rate(container_network_receive_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }, t),
+    vm.range(`sum(rate(container_network_transmit_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }, t),
+    vm.instant(`topk(10, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, undefined, t),
+    vm.instant(`topk(10, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`, undefined, t),
   ]).then(([cpuTop, memTop, netRx, netTx, cpuNow, memNow]) => ({
     cpuTop: named(cpuTop),
     memTop: named(memTop),
@@ -37,8 +41,8 @@ export async function loader(_args: LoaderFunctionArgs) {
 
   return defer({
     cadvisor,
-    apm: apm.getAPM(1),
-    deps: jaeger.dependencies(24).catch(() => [] as Array<{ parent: string; child: string; callCount: number }>),
+    apm: apm.getAPM(1, t),
+    deps: jaeger.dependencies(24, t).catch(() => [] as Array<{ parent: string; child: string; callCount: number }>),
   });
 }
 

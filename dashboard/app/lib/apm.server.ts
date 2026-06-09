@@ -1,5 +1,6 @@
 import * as jaeger from "./jaeger.server";
 import { cached } from "./cache.server";
+import type { Tenant } from "./tenant.server";
 
 // RED metrics (Rate, Errors, Duration) derived from real Jaeger traces, for any
 // instrumented service. No synthetic data: as more apps emit OTLP spans, more
@@ -43,12 +44,13 @@ export type APMResult = {
   totals: { reqRate: number; errorRatePct: number; worstP95: number; services: number };
 };
 
-export function getAPM(lookbackHours = 1): Promise<APMResult> {
-  return cached(`apm:${lookbackHours}`, 12000, () => computeAPM(lookbackHours));
+export function getAPM(lookbackHours = 1, tenant?: Tenant): Promise<APMResult> {
+  const suffix = tenant && !tenant.platform ? `:${tenant.orgId}` : "";
+  return cached(`apm:${lookbackHours}${suffix}`, 12000, () => computeAPM(lookbackHours, tenant));
 }
 
-async function computeAPM(lookbackHours: number): Promise<APMResult> {
-  const services = await jaeger.services().catch(() => [] as string[]);
+async function computeAPM(lookbackHours: number, tenant?: Tenant): Promise<APMResult> {
+  const services = await jaeger.services(tenant).catch(() => [] as string[]);
   const byService: ServiceAPM[] = [];
   const opMap = new Map<string, { service: string; op: string; durs: number[]; errs: number; starts: number[] }>();
 
@@ -56,7 +58,7 @@ async function computeAPM(lookbackHours: number): Promise<APMResult> {
   const perService = await Promise.all(
     services.map((svc) =>
       jaeger
-        .recentTraces({ service: svc, limit: 150, lookbackHours })
+        .recentTraces({ service: svc, limit: 150, lookbackHours }, tenant)
         .then((traces) => ({ svc, traces }))
         .catch(() => ({ svc, traces: [] as jaeger.TraceSummary[] }))
     )

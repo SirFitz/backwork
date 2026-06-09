@@ -2,6 +2,7 @@ import * as vm from "./vm.server";
 import * as loki from "./loki.server";
 import * as docker from "./docker.server";
 import { cached } from "./cache.server";
+import type { Tenant } from "./tenant.server";
 
 // cAdvisor groups every metric by container `name`; we carry the friendly labels
 // so we can fold per-container metrics up to a per-service view.
@@ -40,21 +41,25 @@ export type ServiceHealth = {
 /** Per-service health: Docker state + cAdvisor metrics + Loki log rates.
  *  Cached briefly so the Overview/Containers/Incidents panels + auto-refresh
  *  share one computation. */
-export function serviceHealth(): Promise<ServiceHealth[]> {
-  return cached("serviceHealth", 10000, computeServiceHealth);
+export function serviceHealth(tenant?: Tenant): Promise<ServiceHealth[]> {
+  const key = tenant && !tenant.platform ? `serviceHealth:${tenant.orgId}` : "serviceHealth";
+  return cached(key, 10000, () => computeServiceHealth(tenant));
 }
 
-async function computeServiceHealth(): Promise<ServiceHealth[]> {
+async function computeServiceHealth(tenant?: Tenant): Promise<ServiceHealth[]> {
+  // Docker + cAdvisor describe the host's own infrastructure — platform only.
+  // Customer orgs derive their service list from their own (org-scoped) logs.
+  const isCustomer = !!tenant && !tenant.platform;
   const [containers, cpu, mem, rx, tx, restarts, oom, logRate, errRate] = await Promise.all([
-    docker.listContainers().catch(() => [] as docker.ContainerInfo[]),
-    vm.instant(`sum by (${GROUP})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`).catch(() => []),
-    vm.instant(`sum by (${GROUP})(container_memory_working_set_bytes{name!=""})`).catch(() => []),
-    vm.instant(`sum by (${GROUP})(rate(container_network_receive_bytes_total{name!=""}[5m]))`).catch(() => []),
-    vm.instant(`sum by (${GROUP})(rate(container_network_transmit_bytes_total{name!=""}[5m]))`).catch(() => []),
-    vm.instant(`sum by (${GROUP})(changes(container_start_time_seconds{name!=""}[1h]))`).catch(() => []),
-    vm.instant(`sum by (${GROUP})(increase(container_oom_events_total{name!=""}[6h]))`).catch(() => []),
-    loki.rateByService('sum by (service)(rate({service=~".+"}[5m]))').catch(() => ({} as Record<string, number>)),
-    loki.rateByService('sum by (service)(rate({level="error"}[5m]))').catch(() => ({} as Record<string, number>)),
+    isCustomer ? Promise.resolve([] as docker.ContainerInfo[]) : docker.listContainers().catch(() => [] as docker.ContainerInfo[]),
+    vm.instant(`sum by (${GROUP})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`, undefined, tenant).catch(() => []),
+    vm.instant(`sum by (${GROUP})(container_memory_working_set_bytes{name!=""})`, undefined, tenant).catch(() => []),
+    vm.instant(`sum by (${GROUP})(rate(container_network_receive_bytes_total{name!=""}[5m]))`, undefined, tenant).catch(() => []),
+    vm.instant(`sum by (${GROUP})(rate(container_network_transmit_bytes_total{name!=""}[5m]))`, undefined, tenant).catch(() => []),
+    vm.instant(`sum by (${GROUP})(changes(container_start_time_seconds{name!=""}[1h]))`, undefined, tenant).catch(() => []),
+    vm.instant(`sum by (${GROUP})(increase(container_oom_events_total{name!=""}[6h]))`, undefined, tenant).catch(() => []),
+    loki.rateByService('sum by (service)(rate({service=~".+"}[5m]))', tenant).catch(() => ({} as Record<string, number>)),
+    loki.rateByService('sum by (service)(rate({level="error"}[5m]))', tenant).catch(() => ({} as Record<string, number>)),
   ]);
 
   const cpuM = foldByService(cpu);
@@ -74,9 +79,10 @@ async function computeServiceHealth(): Promise<ServiceHealth[]> {
     e.healths.push(c.health);
     svc.set(c.service, e);
   }
-  // include services seen only in metrics (e.g. label-only)
-  for (const k of [...Object.keys(cpuM), ...Object.keys(memM)]) {
-    if (!svc.has(k)) svc.set(k, { project: "", total: 1, running: 1, healths: ["none"], crashed: false });
+  // include services seen only in metrics (e.g. label-only) or only in logs
+  // (customer orgs: their services come purely from their org-scoped log streams)
+  for (const k of [...Object.keys(cpuM), ...Object.keys(memM), ...Object.keys(logRate)]) {
+    if (k && k !== "unknown" && !svc.has(k)) svc.set(k, { project: "", total: 1, running: 1, healths: ["none"], crashed: false });
   }
 
   const out: ServiceHealth[] = [];
@@ -148,8 +154,8 @@ export type Incident = {
   ts: number;
 };
 
-export async function getIncidents(): Promise<Incident[]> {
-  const health = await serviceHealth().catch(() => [] as ServiceHealth[]);
+export async function getIncidents(tenant?: Tenant): Promise<Incident[]> {
+  const health = await serviceHealth(tenant).catch(() => [] as ServiceHealth[]);
   const now = Date.now();
   const incidents: Incident[] = [];
   for (const s of health) {

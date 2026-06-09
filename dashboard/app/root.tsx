@@ -177,6 +177,7 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
               ))}
             </div>
           ) : null}
+          <Link to="/projects" onClick={() => setOpen(false)} className={link}><Boxes className="h-3.5 w-3.5" /> Projects</Link>
           <Link to="/members" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Members</Link>
           <Link to="/teams" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Teams</Link>
           <div className="mt-1 border-t border-border pt-1">

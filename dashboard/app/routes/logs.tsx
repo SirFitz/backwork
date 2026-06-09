@@ -8,6 +8,8 @@ import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
@@ -34,13 +36,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const end = Date.now();
   const start = end - mins * 60 * 1000;
   const query = buildQuery(service, level, q);
-  const ck = `logs:${rangeKey}:${query}`;
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
+  const ck = `logs:${t.orgId}:${rangeKey}:${query}`;
   return defer({
-    services: loki.services().catch(() => [] as string[]),
+    services: loki.services(t).catch(() => [] as string[]),
     query,
     filters: { service, level, q, range: rangeKey },
-    entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 })),
-    volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" })).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
+    entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)),
+    volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }, t)).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
   });
 }
 

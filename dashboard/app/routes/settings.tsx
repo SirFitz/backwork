@@ -2,11 +2,14 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { Link } from "@remix-run/react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { config } from "~/lib/config.server";
 import * as vm from "~/lib/vm.server";
 import * as jaeger from "~/lib/jaeger.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 
 async function ping(url: string): Promise<boolean> {
@@ -22,6 +25,8 @@ async function ping(url: string): Promise<boolean> {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const isPlatform = tenantOf(ctx.org.id).platform;
   const url = new URL(request.url);
   const settingsKey = process.env.SETTINGS_KEY || "";
   const showToken = !settingsKey || url.searchParams.get("key") === settingsKey;
@@ -41,8 +46,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return defer({
     publicUrl: config.publicUrl,
-    token: showToken ? config.ingestToken : "",
-    tokenGated: !!settingsKey && !showToken,
+    isPlatform,
+    // The legacy global token is platform-only; customer orgs use per-project
+    // tokens from the Projects page (never expose the platform token to them).
+    token: isPlatform && showToken ? config.ingestToken : "",
+    tokenGated: isPlatform && !!settingsKey && !showToken,
     health,
     retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", traces: "in-memory, ~20k (Jaeger)" },
   });
@@ -100,22 +108,31 @@ OTEL_SERVICE_NAME=<your-service>`;
         </Deferred>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {d.isPlatform ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHead title="Ship logs from another server" sub="one command installs a Vector agent" />
+            <div className="space-y-2 p-4">
+              <CodeBlock>{agentCmd}</CodeBlock>
+              <p className="text-2xs text-faint">Runs a Vector container that forwards the host's container logs to backwork, tagged with the host name. View them under Logs.</p>
+            </div>
+          </Card>
+          <Card>
+            <CardHead title="Send traces from an app" sub="OpenTelemetry over OTLP" />
+            <div className="space-y-2 p-4">
+              <CodeBlock>{otlpEnv}</CodeBlock>
+              <p className="text-2xs text-faint">Any OTel SDK works. Spans show up under Traces, Requests and Metrics → Application performance.</p>
+            </div>
+          </Card>
+        </div>
+      ) : (
         <Card>
-          <CardHead title="Ship logs from another server" sub="one command installs a Vector agent" />
-          <div className="space-y-2 p-4">
-            <CodeBlock>{agentCmd}</CodeBlock>
-            <p className="text-2xs text-faint">Runs a Vector container that forwards the host's container logs to backwork, tagged with the host name. View them under Logs.</p>
+          <CardHead title="Connect a source" sub="ship logs & traces from your own infrastructure" />
+          <div className="p-4 text-[13px] text-muted">
+            Create a <Link to="/projects" className="font-medium text-brand hover:underline">project</Link> to get an ingest token, then use the install + OpenTelemetry snippets shown there. Your data is isolated to this organization.
           </div>
         </Card>
-        <Card>
-          <CardHead title="Send traces from an app" sub="OpenTelemetry over OTLP" />
-          <div className="space-y-2 p-4">
-            <CodeBlock>{otlpEnv}</CodeBlock>
-            <p className="text-2xs text-faint">Any OTel SDK works. Spans show up under Traces, Requests and Metrics → Application performance.</p>
-          </div>
-        </Card>
-      </div>
+      )}
 
       <Card>
         <CardHead title="Retention" sub="how long data is kept" />

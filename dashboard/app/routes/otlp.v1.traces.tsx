@@ -1,17 +1,18 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { config } from "~/lib/config.server";
+import { resolveIngestToken } from "~/lib/tenant.server";
 
 // Authenticated OTLP/HTTP trace ingest. An app's OpenTelemetry exporter posts to
-// <PUBLIC_URL>/otlp/v1/traces with `Authorization: Bearer <INGEST_TOKEN>`; we
-// verify the token and forward the (protobuf or JSON) payload to Jaeger's OTLP
-// receiver, so apps can ship traces without exposing Jaeger directly.
+// <PUBLIC_URL>/otlp/v1/traces with `Authorization: Bearer <token>` (legacy
+// INGEST_TOKEN or a per-project token); we verify and forward the payload to
+// Jaeger's OTLP receiver. (Per-org trace tagging is the next increment, so
+// customer traces aren't yet surfaced in their scoped views.)
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
-  const expected = config.ingestToken;
   const auth = request.headers.get("authorization") || "";
-  if (!expected || auth !== `Bearer ${expected}`) {
-    return new Response("unauthorized", { status: 401 });
-  }
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const tenant = await resolveIngestToken(token);
+  if (!tenant) return new Response("unauthorized", { status: 401 });
   const body = Buffer.from(await request.arrayBuffer());
   try {
     const res = await fetch(`${config.otlpHttp}/v1/traces`, {
