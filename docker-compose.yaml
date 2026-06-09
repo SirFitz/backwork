@@ -1,15 +1,18 @@
-# backwork.dev — self-hosted log aggregation + APM stack.
+# backwork.dev — self-hosted log aggregation + APM, monitoring the REAL Docker host.
 #   loki            log storage (LogQL)
-#   victoriametrics metrics TSDB (PromQL)         scrapes the instrumented services
-#   jaeger          distributed traces (OTLP in)
-#   vector          collector: tails all container logs -> loki, exposes metrics
-#   api/payments/worker  instrumented demo services (logs + metrics + traces)
-#   backwork        the dashboard — queries all three backends
+#   victoriametrics metrics TSDB (PromQL)  scrapes cAdvisor + Vector
+#   cadvisor        REAL per-container CPU / memory / network / disk metrics
+#   jaeger          trace store (OTLP in) for any instrumented app
+#   vector          collector: tails EVERY container's logs -> Loki
+#   backwork        the dashboard — queries all backends
+# Deployed on the host it watches (Vector + cAdvisor read the host docker.sock /
+# cgroups), so every number is real container telemetry, never synthetic.
 services:
   loki:
     build: ./infra/loki
     command: -config.file=/etc/loki/loki-config.yaml
     restart: unless-stopped
+    mem_limit: 640m
     volumes:
       - loki-data:/loki
     expose:
@@ -23,18 +26,41 @@ services:
       - -promscrape.config=/etc/vm/scrape.yml
       - -promscrape.config.strictParse=false
     restart: unless-stopped
+    mem_limit: 640m
     volumes:
       - vm-data:/vmdata
     expose:
       - "8428"
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    mem_limit: 384m
+    command:
+      - -housekeeping_interval=10s
+      - -docker_only=true
+      - -store_container_labels=false
+      - -whitelisted_container_labels=coolify.resourceName,coolify.projectName,com.docker.compose.service
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    expose:
+      - "8080"
+
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     restart: unless-stopped
+    mem_limit: 320m
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
       SPAN_STORAGE_TYPE: memory
-      MEMORY_MAX_TRACES: "30000"
+      MEMORY_MAX_TRACES: "20000"
     expose:
       - "16686"  # query UI + API
       - "4317"   # OTLP gRPC
@@ -43,6 +69,7 @@ services:
   vector:
     build: ./infra/vector
     restart: unless-stopped
+    mem_limit: 320m
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - vector-data:/vector-data
@@ -52,51 +79,10 @@ services:
     depends_on:
       - loki
 
-  api:
-    build: ./demo
-    restart: unless-stopped
-    environment:
-      SERVICE_NAME: api
-      ERROR_RATE: "0.05"
-      BASE_LATENCY_MS: "55"
-      OTLP_ENDPOINT: http://jaeger:4318
-    expose:
-      - "9100"
-    depends_on:
-      - jaeger
-      - payments
-
-  payments:
-    build: ./demo
-    restart: unless-stopped
-    environment:
-      SERVICE_NAME: payments
-      ERROR_RATE: "0.07"
-      BASE_LATENCY_MS: "90"
-      OTLP_ENDPOINT: http://jaeger:4318
-    expose:
-      - "9100"
-    depends_on:
-      - jaeger
-      - worker
-
-  worker:
-    build: ./demo
-    restart: unless-stopped
-    environment:
-      SERVICE_NAME: worker
-      ERROR_RATE: "0.03"
-      BASE_LATENCY_MS: "130"
-      CRASH_MEAN_MIN: "18"
-      OTLP_ENDPOINT: http://jaeger:4318
-    expose:
-      - "9100"
-    depends_on:
-      - jaeger
-
   backwork:
     build: ./dashboard
     restart: unless-stopped
+    mem_limit: 512m
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -104,14 +90,17 @@ services:
       VM_URL: http://victoriametrics:8428
       JAEGER_URL: http://jaeger:16686
       DATA_DIR: /data
+      OTLP_ENDPOINT: http://jaeger:4318
+      DOCKER_SOCKET: /var/run/docker.sock
     volumes:
       - backwork-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     expose:
       - "3000"
     depends_on:
       - loki
       - victoriametrics
-      - jaeger
+      - cadvisor
 
 volumes:
   loki-data:

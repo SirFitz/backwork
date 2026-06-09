@@ -1,17 +1,14 @@
-# VictoriaMetrics scrape config — pulls Prometheus metrics from the stack.
-# Every instrumented service exposes /metrics; VM stores the time series that
-# power the backwork APM + resource dashboards.
+# VictoriaMetrics scrape config. Real metrics from cAdvisor (per-container CPU /
+# memory / network / disk for every container on the host) plus Vector + self.
 global:
-  scrape_interval: 10s
+  scrape_interval: 15s
   external_labels:
     monitor: backwork
 
 scrape_configs:
-  - job_name: victoriametrics
+  - job_name: cadvisor
     static_configs:
-      - targets: ["victoriametrics:8428"]
-        labels:
-          service: victoriametrics
+      - targets: ["cadvisor:8080"]
 
   - job_name: vector
     static_configs:
@@ -19,16 +16,8 @@ scrape_configs:
         labels:
           service: vector
 
-  # The instrumented demo services. Each exports prom-client default process
-  # metrics (cpu/mem/eventloop) + custom http request/error/latency histograms.
-  - job_name: services
+  - job_name: victoriametrics
     static_configs:
-      - targets: ["api:9100"]
+      - targets: ["victoriametrics:8428"]
         labels:
-          service: api
-      - targets: ["payments:9100"]
-        labels:
-          service: payments
-      - targets: ["worker:9100"]
-        labels:
-          service: worker
+          service: victoriametrics

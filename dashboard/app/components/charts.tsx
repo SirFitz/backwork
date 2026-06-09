@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
+import { useTheme } from "remix-themes";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -19,57 +18,79 @@ export function useHydrated() {
   return h;
 }
 
-export type Series = { name: string; color: string; points: Array<{ t: number; v: number }> };
+/** Read theme-dependent chart colors from the CSS vars, recompute on toggle. */
+function useChartTheme() {
+  const [theme] = useTheme();
+  const [c, setC] = useState({ grid: "rgba(120,120,120,0.15)", axis: "#9aa0aa" });
+  useEffect(() => {
+    const root = document.documentElement;
+    const get = (v: string) => getComputedStyle(root).getPropertyValue(v).trim();
+    const border = get("--border");
+    const faint = get("--faint");
+    setC({
+      grid: border ? `oklch(${border} / 0.6)` : "rgba(120,120,120,0.15)",
+      axis: faint ? `oklch(${faint})` : "#9aa0aa",
+    });
+  }, [theme]);
+  return c;
+}
 
-const AXIS = { stroke: "#3a4150", fontSize: 11 };
-const GRID = "#1c222e";
+export const PALETTE = [
+  "oklch(0.62 0.18 16)", // coral
+  "oklch(0.58 0.13 240)", // blue
+  "oklch(0.6 0.13 150)", // green
+  "oklch(0.7 0.13 75)", // amber
+  "oklch(0.55 0.17 290)", // violet
+  "oklch(0.62 0.1 200)", // teal
+  "oklch(0.64 0.16 40)", // orange
+];
+
+export type Series = { name: string; color: string; points: Array<{ t: number; v: number }> };
 
 function fmtTick(t: number) {
   const d = new Date(t);
-  return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function ChartTooltip({ active, payload, label, unit }: any) {
+function ChartTip({ active, payload, label, unit, fmt }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded border border-border bg-panel-2 px-2.5 py-1.5 text-xs shadow-lg">
-      <div className="mb-1 text-muted">{new Date(label).toLocaleTimeString("en-GB", { hour12: false })}</div>
+    <div className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-2xs shadow-lg">
+      <div className="mb-1 text-faint">{new Date(label).toLocaleTimeString("en-GB", { hour12: false })}</div>
       {payload.map((p: any) => (
         <div key={p.name} className="flex items-center gap-2 font-mono">
           <span className="h-2 w-2 rounded-full" style={{ background: p.color }} />
           <span className="text-fg">{p.name}</span>
-          <span className="ml-auto tabular-nums text-fg">{Number(p.value).toFixed(2)}{unit || ""}</span>
+          <span className="ml-auto tabular-nums text-fg">{fmt ? fmt(p.value) : Number(p.value).toFixed(2)}{unit || ""}</span>
         </div>
       ))}
     </div>
   );
 }
 
-/** Merge multiple series into a single recharts dataset keyed by timestamp. */
 function merge(series: Series[]) {
   const map = new Map<number, Record<string, number>>();
-  for (const s of series) {
-    for (const p of s.points) {
-      const row = map.get(p.t) || { t: p.t };
-      row[s.name] = p.v;
-      map.set(p.t, row);
-    }
+  for (const s of series) for (const p of s.points) {
+    const row = map.get(p.t) || { t: p.t };
+    row[s.name] = p.v;
+    map.set(p.t, row);
   }
   return [...map.values()].sort((a, b) => a.t - b.t);
 }
 
-export function TimeSeries({ series, height = 200, unit }: { series: Series[]; height?: number; unit?: string }) {
+export function TimeSeries({ series, height = 200, unit, fmt }: { series: Series[]; height?: number; unit?: string; fmt?: (n: number) => string }) {
   const hydrated = useHydrated();
+  const ct = useChartTheme();
   const data = merge(series);
-  if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-panel-2/40" />;
-  if (!data.length) return <div style={{ height }} className="flex items-center justify-center text-sm text-muted">no data in range</div>;
+  if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-surface-2/50" />;
+  if (!data.length) return <div style={{ height }} className="flex items-center justify-center text-[13px] text-faint">no data in range</div>;
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
-        <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="t" tickFormatter={fmtTick} {...AXIS} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={40} />
-        <YAxis {...AXIS} tickLine={false} axisLine={false} width={44} />
-        <Tooltip content={<ChartTooltip unit={unit} />} />
+      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -6 }}>
+        <CartesianGrid stroke={ct.grid} vertical={false} />
+        <XAxis dataKey="t" tickFormatter={fmtTick} stroke={ct.axis} fontSize={11} tickLine={false} axisLine={{ stroke: ct.grid }} minTickGap={44} />
+        <YAxis stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} width={46} tickFormatter={fmt} />
+        <Tooltip content={<ChartTip unit={unit} fmt={fmt} />} />
         {series.map((s) => (
           <Line key={s.name} type="monotone" dataKey={s.name} stroke={s.color} strokeWidth={1.8} dot={false} isAnimationActive={false} connectNulls />
         ))}
@@ -78,45 +99,27 @@ export function TimeSeries({ series, height = 200, unit }: { series: Series[]; h
   );
 }
 
-export function AreaSeries({ points, color = "#ef5a78", height = 120, unit }: { points: Array<{ t: number; v: number }>; color?: string; height?: number; unit?: string }) {
+export function AreaSeries({ points, color = PALETTE[0], height = 120, unit, fmt }: { points: Array<{ t: number; v: number }>; color?: string; height?: number; unit?: string; fmt?: (n: number) => string }) {
   const hydrated = useHydrated();
-  if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-panel-2/40" />;
-  if (!points.length) return <div style={{ height }} className="flex items-center justify-center text-sm text-muted">no data</div>;
-  const id = "g" + color.replace(/[^a-z0-9]/gi, "");
+  const ct = useChartTheme();
+  if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-surface-2/50" />;
+  if (!points.length) return <div style={{ height }} className="flex items-center justify-center text-[13px] text-faint">no data</div>;
+  const id = "ar" + color.replace(/[^a-z0-9]/gi, "");
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
+      <AreaChart data={points} margin={{ top: 6, right: 10, bottom: 0, left: -6 }}>
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+            <stop offset="0%" stopColor={color} stopOpacity={0.28} />
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="t" tickFormatter={fmtTick} {...AXIS} tickLine={false} axisLine={false} minTickGap={50} />
-        <YAxis {...AXIS} tickLine={false} axisLine={false} width={40} />
-        <Tooltip content={<ChartTooltip unit={unit} />} />
+        <CartesianGrid stroke={ct.grid} vertical={false} />
+        <XAxis dataKey="t" tickFormatter={fmtTick} stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} minTickGap={50} />
+        <YAxis stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} width={46} tickFormatter={fmt} />
+        <Tooltip content={<ChartTip unit={unit} fmt={fmt} />} />
         <Area type="monotone" dataKey="v" name="value" stroke={color} strokeWidth={1.8} fill={`url(#${id})`} isAnimationActive={false} />
       </AreaChart>
     </ResponsiveContainer>
   );
 }
-
-export function Bars({ data, color = "#58a6ff", height = 120 }: { data: Array<{ label: string; v: number }>; color?: string; height?: number }) {
-  const hydrated = useHydrated();
-  if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-panel-2/40" />;
-  if (!data.length) return <div style={{ height }} className="flex items-center justify-center text-sm text-muted">no data</div>;
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
-        <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="label" {...AXIS} tickLine={false} axisLine={{ stroke: GRID }} />
-        <YAxis {...AXIS} tickLine={false} axisLine={false} width={40} />
-        <Tooltip content={<ChartTooltip />} cursor={{ fill: "#ffffff08" }} />
-        <Bar dataKey="v" name="value" fill={color} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-export const PALETTE = ["#ef5a78", "#58a6ff", "#3fb950", "#d8a657", "#a371f7", "#56d4dd", "#f0883e"];

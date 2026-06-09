@@ -1,12 +1,13 @@
-# backwork collector. Tails every container's stdout/stderr, normalises the
-# log shape, and ships to Loki. Also exposes host + internal metrics for VM.
+# backwork collector. Tails EVERY container on the host's stdout/stderr,
+# derives a friendly service name from Coolify/compose labels, normalises the
+# level, and ships to Loki. Also exposes host + internal metrics for VM.
 data_dir: /vector-data
 
 sources:
   docker:
     type: docker_logs
     exclude_containers:
-      - vector
+      - vector            # don't tail ourselves
 
   vector_metrics:
     type: internal_metrics
@@ -27,29 +28,39 @@ transforms:
     type: remap
     inputs: [docker]
     source: |
-      # Default service/level from container metadata.
-      .service = to_string(.container_name) ?? "unknown"
-      .level = "info"
+      labels = object(.label) ?? {}
 
-      # Our services log structured JSON — lift level/service/msg out of it.
+      # Friendly service name: Coolify resource name > compose service > container.
+      svc = get(labels, ["coolify.resourceName"]) ?? null
+      if svc == null { svc = get(labels, ["com.docker.compose.service"]) ?? null }
+      .service = to_string(svc) ?? to_string(.container_name) ?? "unknown"
+      .project = to_string(get(labels, ["coolify.projectName"]) ?? "") ?? ""
+      .role = to_string(get(labels, ["com.docker.compose.service"]) ?? "") ?? ""
+
+      # Structured JSON logs: lift level/msg.
+      .level = "info"
       parsed = parse_json(.message) ?? {}
-      lvl = get(parsed, ["level"]) ?? null
+      lvl = get(parsed, ["level"]) ?? get(parsed, ["lvl"]) ?? get(parsed, ["severity"]) ?? null
       if lvl != null { .level = downcase(to_string(lvl) ?? "info") }
-      svc = get(parsed, ["service"]) ?? null
-      if svc != null { .service = to_string(svc) ?? .service }
-      msg = get(parsed, ["msg"]) ?? get(parsed, ["display"]) ?? get(parsed, ["message"]) ?? null
+      msg = get(parsed, ["msg"]) ?? get(parsed, ["message"]) ?? null
       if msg != null { .display = to_string(msg) ?? .message }
       if !exists(.display) { .display = .message }
 
-      # Coarse level detection for unstructured lines (loki/jaeger/etc).
+      # Heuristic level for unstructured lines (proxies, runtimes, DBs).
       if .level == "info" {
         m = downcase(to_string(.message) ?? "")
-        if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "panic") || contains(m, "fatal") {
+        if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "[error]") || contains(m, "panic") || contains(m, "fatal") || contains(m, "exception") {
           .level = "error"
-        } else if contains(m, "level=warn") || contains(m, "warning") {
+        } else if contains(m, "level=warn") || contains(m, "[warn]") || contains(m, "warning") || contains(m, "deprecat") {
           .level = "warn"
+        } else if contains(m, "level=debug") || contains(m, "[debug]") {
+          .level = "debug"
         }
       }
+
+      # normalise odd level spellings
+      if .level == "warning" { .level = "warn" }
+      if .level == "err" || .level == "critical" || .level == "crit" { .level = "error" }
 
 sinks:
   loki:
@@ -61,7 +72,6 @@ sinks:
     labels:
       service: "{{ service }}"
       level: "{{ level }}"
-      container: "{{ container_name }}"
     out_of_order_action: accept
     remove_label_fields: false
 

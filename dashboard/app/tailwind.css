@@ -1,31 +1,79 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* OKLCH design tokens. Each var holds an "L C H" triple consumed as
+   oklch(var(--x) / <alpha>). Light is the default; .dark overrides. */
 @layer base {
   :root {
+    --bg: 0.99 0.004 60;
+    --surface: 0.985 0.004 60;
+    --surface-2: 0.965 0.005 60;
+    --border: 0.9 0.006 60;
+    --border-strong: 0.84 0.008 60;
+    --fg: 0.26 0.01 60;
+    --muted: 0.5 0.012 60;
+    --faint: 0.64 0.009 60;
+
+    --brand: 0.6 0.18 16;
+    --brand-fg: 0.99 0.01 16;
+    --ring: 0.6 0.13 16;
+
+    --ok: 0.58 0.13 150;
+    --warn: 0.68 0.13 70;
+    --err: 0.55 0.21 25;
+    --info: 0.55 0.13 240;
+    --accent: 0.5 0.17 290;
+
+    color-scheme: light;
+  }
+
+  .dark {
+    --bg: 0.185 0.008 265;
+    --surface: 0.215 0.009 265;
+    --surface-2: 0.255 0.01 265;
+    --border: 0.3 0.012 265;
+    --border-strong: 0.4 0.014 265;
+    --fg: 0.93 0.008 265;
+    --muted: 0.7 0.012 265;
+    --faint: 0.55 0.012 265;
+
+    --brand: 0.68 0.17 16;
+    --brand-fg: 0.18 0.02 265;
+    --ring: 0.68 0.15 16;
+
+    --ok: 0.7 0.15 150;
+    --warn: 0.78 0.13 75;
+    --err: 0.66 0.2 25;
+    --info: 0.68 0.13 240;
+    --accent: 0.68 0.16 290;
+
     color-scheme: dark;
   }
-  html,
-  body {
+
+  html, body {
     @apply bg-bg text-fg;
+    font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  * {
-    border-color: theme("colors.border");
+  ::selection { background: oklch(var(--brand) / 0.22); }
+
+  *:focus-visible {
+    outline: 2px solid oklch(var(--ring));
+    outline-offset: 1px;
   }
 }
 
 @layer utilities {
-  .scroll-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
+  .font-mono { font-family: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace; }
+  .scroll-thin::-webkit-scrollbar { width: 10px; height: 10px; }
   .scroll-thin::-webkit-scrollbar-thumb {
-    background: #2a3140;
-    border-radius: 6px;
+    background: oklch(var(--border-strong)); border-radius: 8px;
+    border: 2px solid transparent; background-clip: padding-box;
   }
-  .scroll-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
+  .scroll-thin::-webkit-scrollbar-track { background: transparent; }
 }

@@ -4,10 +4,10 @@
 #   ./smoke.sh https://backwork...host -k   (live, -k = insecure for fresh certs)
 set -u
 BASE="${1:-http://localhost:3000}"
-CURL="curl -s --max-time 20"
+CURL="curl -s --max-time 25"
 [ "${2:-}" = "-k" ] && CURL="$CURL -k"
 pass=0; fail=0
-check() { # name, url, expected-substring
+check() {
   local body code
   body=$($CURL -w $'\n%{http_code}' "$2" 2>/dev/null)
   code=$(printf '%s' "$body" | tail -1)
@@ -19,12 +19,13 @@ check() { # name, url, expected-substring
   fi
 }
 echo "== backwork smoke test :: $BASE =="
-check "healthz"        "$BASE/healthz"             "ok"
-check "overview"       "$BASE/"                    "Service Health"
-check "logs page"      "$BASE/logs"                "Logs"
-check "metrics page"   "$BASE/metrics"             "Performance"
-check "traces page"    "$BASE/traces"              "Traces"
-check "incidents page" "$BASE/incidents"           "Incidents"
-check "alerts page"    "$BASE/alerts"              "Alert Rules"
+check "healthz"        "$BASE/healthz"   "ok"
+check "overview"       "$BASE/"          "Overview"
+check "containers"     "$BASE/containers" "Containers"
+check "logs"           "$BASE/logs"      "Logs"
+check "metrics"        "$BASE/metrics"   "Metrics"
+check "incidents"      "$BASE/incidents" "Incidents"
+check "alerts"         "$BASE/alerts"    "Alerts"
+check "traces"         "$BASE/traces"    "Traces"
 echo "== $pass passed, $fail failed =="
 exit $fail

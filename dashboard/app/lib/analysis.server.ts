@@ -1,210 +1,185 @@
 import * as vm from "./vm.server";
 import * as loki from "./loki.server";
+import * as docker from "./docker.server";
+
+// cAdvisor groups every metric by container `name`; we carry the friendly labels
+// so we can fold per-container metrics up to a per-service view.
+const GROUP = "name, container_label_coolify_resourceName, container_label_com_docker_compose_service";
+
+function keyOf(m: Record<string, string>) {
+  return m.container_label_coolify_resourceName || m.name || "unknown";
+}
+function foldByService(rows: { metric: Record<string, string>; value: number }[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const k = keyOf(r.metric);
+    out[k] = (out[k] || 0) + (Number.isFinite(r.value) ? r.value : 0);
+  }
+  return out;
+}
 
 export type ServiceHealth = {
   service: string;
+  project: string;
   status: "up" | "degraded" | "down";
-  reqRate: number; // req/s
-  errorRatePct: number;
-  p95Ms: number;
-  p50Ms: number;
+  containers: number;
+  running: number;
+  health: "healthy" | "unhealthy" | "starting" | "none" | "mixed";
   cpuCores: number;
-  memMB: number;
+  memBytes: number;
+  netRxRate: number;
+  netTxRate: number;
   restarts: number;
+  oom: number;
+  logRate: number;
+  errorRate: number;
+  reasons: string[];
 };
 
-function mapBy(results: { metric: Record<string, string>; value: number }[], key = "service") {
-  const m: Record<string, number> = {};
-  for (const r of results) {
-    const k = r.metric[key];
-    if (k) m[k] = r.value;
-  }
-  return m;
-}
-
-/** Per-service health rolled up from VictoriaMetrics. */
+/** Per-service health: Docker state + cAdvisor metrics + Loki log rates. */
 export async function serviceHealth(): Promise<ServiceHealth[]> {
-  const [up, req, err, p95, p50, cpu, mem, restarts] = await Promise.all([
-    vm.instant("up").catch(() => []),
-    vm.instant("sum by (service) (rate(http_requests_total[5m]))").catch(() => []),
-    vm
-      .instant(
-        'sum by (service) (rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum by (service)(rate(http_requests_total[5m])), 0.001)'
-      )
-      .catch(() => []),
-    vm
-      .instant(
-        "histogram_quantile(0.95, sum by (service, le)(rate(http_request_duration_seconds_bucket[5m])))"
-      )
-      .catch(() => []),
-    vm
-      .instant(
-        "histogram_quantile(0.50, sum by (service, le)(rate(http_request_duration_seconds_bucket[5m])))"
-      )
-      .catch(() => []),
-    vm.instant("sum by (service)(rate(process_cpu_seconds_total[5m]))").catch(() => []),
-    vm.instant("sum by (service)(process_resident_memory_bytes)").catch(() => []),
-    vm.instant("sum by (service)(changes(process_start_time_seconds[3h]))").catch(() => []),
+  const [containers, cpu, mem, rx, tx, restarts, oom, logRate, errRate] = await Promise.all([
+    docker.listContainers().catch(() => [] as docker.ContainerInfo[]),
+    vm.instant(`sum by (${GROUP})(rate(container_cpu_usage_seconds_total{name!=""}[5m]))`).catch(() => []),
+    vm.instant(`sum by (${GROUP})(container_memory_working_set_bytes{name!=""})`).catch(() => []),
+    vm.instant(`sum by (${GROUP})(rate(container_network_receive_bytes_total{name!=""}[5m]))`).catch(() => []),
+    vm.instant(`sum by (${GROUP})(rate(container_network_transmit_bytes_total{name!=""}[5m]))`).catch(() => []),
+    vm.instant(`sum by (${GROUP})(changes(container_start_time_seconds{name!=""}[1h]))`).catch(() => []),
+    vm.instant(`sum by (${GROUP})(increase(container_oom_events_total{name!=""}[6h]))`).catch(() => []),
+    loki.rateByService('sum by (service)(rate({service=~".+"}[5m]))').catch(() => ({} as Record<string, number>)),
+    loki.rateByService('sum by (service)(rate({level="error"}[5m]))').catch(() => ({} as Record<string, number>)),
   ]);
 
-  const upm = mapBy(up);
-  const reqm = mapBy(req);
-  const errm = mapBy(err);
-  const p95m = mapBy(p95);
-  const p50m = mapBy(p50);
-  const cpum = mapBy(cpu);
-  const memm = mapBy(mem);
-  const rsm = mapBy(restarts);
+  const cpuM = foldByService(cpu);
+  const memM = foldByService(mem);
+  const rxM = foldByService(rx);
+  const txM = foldByService(tx);
+  const rsM = foldByService(restarts);
+  const oomM = foldByService(oom);
 
-  const services = new Set<string>([
-    ...Object.keys(upm),
-    ...Object.keys(reqm),
-    ...Object.keys(memm),
-  ]);
-  // never surface infra targets as "services" on the health board
-  for (const infra of ["victoriametrics", "vector"]) services.delete(infra);
+  // group docker inventory by service
+  const svc = new Map<string, { project: string; total: number; running: number; healths: string[] }>();
+  for (const c of containers) {
+    const e = svc.get(c.service) || { project: c.project, total: 0, running: 0, healths: [] };
+    e.total++;
+    if (c.state === "running") e.running++;
+    e.healths.push(c.health);
+    svc.set(c.service, e);
+  }
+  // include services seen only in metrics (e.g. label-only)
+  for (const k of [...Object.keys(cpuM), ...Object.keys(memM)]) {
+    if (!svc.has(k)) svc.set(k, { project: "", total: 1, running: 1, healths: ["none"] });
+  }
 
   const out: ServiceHealth[] = [];
-  for (const s of services) {
-    const isUp = upm[s] === undefined ? Object.keys(reqm).includes(s) : upm[s] === 1;
-    const errPct = (errm[s] || 0) * 100;
-    const p95Ms = (p95m[s] || 0) * 1000;
+  for (const [service, e] of svc) {
+    if (service === "unknown" || service === "") continue;
+    const restartN = Math.round(rsM[service] || 0);
+    const oomN = Math.round(oomM[service] || 0);
+    const errR = errRate[service] || 0;
+    const logR = logRate[service] || 0;
+    const allRunning = e.running === e.total && e.total > 0;
+    const anyUnhealthy = e.healths.includes("unhealthy");
+    const health: ServiceHealth["health"] = anyUnhealthy
+      ? "unhealthy"
+      : e.healths.every((h) => h === "healthy")
+      ? "healthy"
+      : e.healths.some((h) => h === "healthy")
+      ? "mixed"
+      : e.healths.includes("starting")
+      ? "starting"
+      : "none";
+
+    const reasons: string[] = [];
     let status: ServiceHealth["status"] = "up";
-    if (!isUp) status = "down";
-    else if (errPct >= 5 || p95Ms >= 1000) status = "degraded";
+    if (e.total > 0 && e.running === 0) { status = "down"; reasons.push("no running containers"); }
+    else if (!allRunning) { status = "degraded"; reasons.push(`${e.total - e.running}/${e.total} containers stopped`); }
+    if (anyUnhealthy) { status = "down"; reasons.push("healthcheck failing"); }
+    if (oomN > 0) { status = "down"; reasons.push(`${oomN} OOM kill${oomN > 1 ? "s" : ""} (6h)`); }
+    if (restartN >= 3) { status = status === "up" ? "degraded" : status; reasons.push(`${restartN} restarts (1h)`); }
+    if (errR > 0.2 && logR > 0 && errR / logR > 0.1) { status = status === "up" ? "degraded" : status; reasons.push(`${((errR / logR) * 100).toFixed(0)}% error logs`); }
+
     out.push({
-      service: s,
+      service,
+      project: e.project,
       status,
-      reqRate: reqm[s] || 0,
-      errorRatePct: errPct,
-      p95Ms,
-      p50Ms: (p50m[s] || 0) * 1000,
-      cpuCores: cpum[s] || 0,
-      memMB: (memm[s] || 0) / 1024 / 1024,
-      restarts: Math.round(rsm[s] || 0),
+      containers: e.total,
+      running: e.running,
+      health,
+      cpuCores: cpuM[service] || 0,
+      memBytes: memM[service] || 0,
+      netRxRate: rxM[service] || 0,
+      netTxRate: txM[service] || 0,
+      restarts: restartN,
+      oom: oomN,
+      logRate: logR,
+      errorRate: errR,
+      reasons,
     });
   }
-  out.sort((a, b) => a.service.localeCompare(b.service));
+  // worst first, then busiest
+  const rank = { down: 0, degraded: 1, up: 2 } as const;
+  out.sort((a, b) => rank[a.status] - rank[b.status] || b.logRate - a.logRate || a.service.localeCompare(b.service));
   return out;
 }
 
 export type Incident = {
   id: string;
-  type: "crash" | "error_spike" | "restart";
+  type: "crash" | "oom" | "unhealthy" | "stopped" | "error_spike" | "restart";
   severity: "critical" | "warning";
   service: string;
   title: string;
   detail: string;
   ts: number;
-  count?: number;
 };
 
-/** Detect incidents from logs (crashes) + metrics (restarts, sustained errors). */
-export async function getIncidents(lookbackHours = 6): Promise<Incident[]> {
-  const end = Date.now();
-  const start = end - lookbackHours * 3600 * 1000;
+export async function getIncidents(): Promise<Incident[]> {
+  const health = await serviceHealth().catch(() => [] as ServiceHealth[]);
+  const now = Date.now();
   const incidents: Incident[] = [];
-
-  // 1. fatal / crash log lines
-  const fatal = await loki
-    .queryRange('{level=~"fatal|error"} |~ "(?i)oom|out of memory|fatal|panic|segfault|killed"', {
-      start,
-      end,
-      limit: 50,
-    })
-    .catch(() => [] as loki.LogEntry[]);
-  const seenCrash = new Set<string>();
-  for (const e of fatal) {
-    const key = `${e.service}-${Math.floor(e.ts / 60000)}`;
-    if (seenCrash.has(key)) continue;
-    seenCrash.add(key);
-    incidents.push({
-      id: `crash-${e.service}-${e.ts}`,
-      type: "crash",
-      severity: "critical",
-      service: e.service,
-      title: `${e.service} crashed`,
-      detail: e.message.slice(0, 200),
-      ts: e.ts,
-    });
+  for (const s of health) {
+    if (s.oom > 0)
+      incidents.push({ id: `oom-${s.service}`, type: "oom", severity: "critical", service: s.service, title: `${s.service} hit OOM`, detail: `${s.oom} out-of-memory kill(s) in the last 6h.`, ts: now });
+    if (s.health === "unhealthy")
+      incidents.push({ id: `unhealthy-${s.service}`, type: "unhealthy", severity: "critical", service: s.service, title: `${s.service} healthcheck failing`, detail: `A container is reporting unhealthy.`, ts: now });
+    if (s.running === 0 && s.containers > 0)
+      incidents.push({ id: `stopped-${s.service}`, type: "stopped", severity: "critical", service: s.service, title: `${s.service} is down`, detail: `${s.containers} container(s), none running.`, ts: now });
+    else if (s.running < s.containers)
+      incidents.push({ id: `partial-${s.service}`, type: "stopped", severity: "warning", service: s.service, title: `${s.service} partially down`, detail: `${s.containers - s.running}/${s.containers} container(s) stopped.`, ts: now });
+    if (s.restarts >= 3)
+      incidents.push({ id: `restart-${s.service}`, type: "restart", severity: s.restarts >= 6 ? "critical" : "warning", service: s.service, title: `${s.service} restart loop`, detail: `${s.restarts} restarts in the last hour.`, ts: now });
+    if (s.logRate > 0 && s.errorRate / s.logRate > 0.1 && s.errorRate > 0.2)
+      incidents.push({ id: `spike-${s.service}`, type: "error_spike", severity: s.errorRate / s.logRate > 0.3 ? "critical" : "warning", service: s.service, title: `Elevated errors on ${s.service}`, detail: `${((s.errorRate / s.logRate) * 100).toFixed(0)}% of logs are errors (${s.errorRate.toFixed(1)}/s).`, ts: now });
   }
-
-  // 2. container restarts (process_start_time_seconds changed)
-  const restarts = await vm
-    .instant("sum by (service)(changes(process_start_time_seconds[" + lookbackHours + "h]))")
-    .catch(() => []);
-  for (const r of restarts) {
-    if (r.value >= 1 && r.metric.service) {
-      incidents.push({
-        id: `restart-${r.metric.service}`,
-        type: "restart",
-        severity: "warning",
-        service: r.metric.service,
-        title: `${r.metric.service} restarted ${Math.round(r.value)}×`,
-        detail: `Process start time changed ${Math.round(r.value)} time(s) in the last ${lookbackHours}h.`,
-        ts: end,
-        count: Math.round(r.value),
-      });
-    }
-  }
-
-  // 3. sustained error spikes
-  const spikes = await vm
-    .instant(
-      'sum by (service) (rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum by (service)(rate(http_requests_total[5m])), 0.001) > 0.1'
-    )
-    .catch(() => []);
-  for (const s of spikes) {
-    if (s.metric.service) {
-      incidents.push({
-        id: `spike-${s.metric.service}`,
-        type: "error_spike",
-        severity: s.value >= 0.25 ? "critical" : "warning",
-        service: s.metric.service,
-        title: `Elevated error rate on ${s.metric.service}`,
-        detail: `5xx error rate is ${(s.value * 100).toFixed(1)}% over the last 5 minutes.`,
-        ts: end,
-      });
-    }
-  }
-
-  // de-dup by id, newest first
-  const byId = new Map<string, Incident>();
-  for (const i of incidents) if (!byId.has(i.id)) byId.set(i.id, i);
-  return [...byId.values()].sort((a, b) => b.ts - a.ts);
+  const rank = { critical: 0, warning: 1 };
+  incidents.sort((a, b) => rank[a.severity] - rank[b.severity] || a.service.localeCompare(b.service));
+  return incidents;
 }
 
-export type Anomaly = {
-  service: string;
-  metric: string;
-  current: number;
-  baseline: number;
-  deltaPct: number;
+export type HostSummary = {
+  containersRunning: number;
+  containersTotal: number;
+  services: number;
+  servicesDown: number;
+  servicesDegraded: number;
+  cpuCores: number;
+  memBytes: number;
+  logRate: number;
+  errorRate: number;
 };
 
-/** Compare last-5m behaviour to the trailing 1h baseline. */
-export async function getAnomalies(): Promise<Anomaly[]> {
-  const [errNow, errBase, rateNow, rateBase] = await Promise.all([
-    vm.instant('sum by (service)(rate(http_requests_total{status=~"5.."}[5m]))').catch(() => []),
-    vm.instant('sum by (service)(rate(http_requests_total{status=~"5.."}[1h]))').catch(() => []),
-    vm.instant("sum by (service)(rate(http_requests_total[5m]))").catch(() => []),
-    vm.instant("sum by (service)(rate(http_requests_total[1h]))").catch(() => []),
-  ]);
-  const out: Anomaly[] = [];
-  const en = mapBy(errNow), eb = mapBy(errBase);
-  for (const s of Object.keys(en)) {
-    if (eb[s] > 0.001 && en[s] / eb[s] > 2.5) {
-      out.push({ service: s, metric: "error rate", current: en[s], baseline: eb[s], deltaPct: (en[s] / eb[s] - 1) * 100 });
-    }
-  }
-  const rn = mapBy(rateNow), rb = mapBy(rateBase);
-  for (const s of Object.keys(rn)) {
-    if (rb[s] > 0.1) {
-      const ratio = rn[s] / rb[s];
-      if (ratio > 2.5 || ratio < 0.3) {
-        out.push({ service: s, metric: ratio > 1 ? "traffic surge" : "traffic drop", current: rn[s], baseline: rb[s], deltaPct: (ratio - 1) * 100 });
-      }
-    }
-  }
-  return out;
+export async function hostSummary(health: ServiceHealth[]): Promise<HostSummary> {
+  const containersTotal = health.reduce((a, s) => a + s.containers, 0);
+  const running = health.reduce((a, s) => a + s.running, 0);
+  return {
+    containersRunning: running,
+    containersTotal,
+    services: health.length,
+    servicesDown: health.filter((s) => s.status === "down").length,
+    servicesDegraded: health.filter((s) => s.status === "degraded").length,
+    cpuCores: health.reduce((a, s) => a + s.cpuCores, 0),
+    memBytes: health.reduce((a, s) => a + s.memBytes, 0),
+    logRate: health.reduce((a, s) => a + s.logRate, 0),
+    errorRate: health.reduce((a, s) => a + s.errorRate, 0),
+  };
 }

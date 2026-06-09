@@ -1,15 +1,14 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Form, Link, useLoaderData, useSubmit } from "@remix-run/react";
-import { Badge, Card, CardHeader, Empty, ErrorNote } from "~/components/ui";
+import { GitBranch } from "lucide-react";
+import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
 import { cn, fmtMs, timeAgo } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const url = new URL(request.url);
-  const requested = url.searchParams.get("service") || "";
-  // jaeger's /api/traces requires a service, so resolve one first, then query once.
+  const requested = new URL(request.url).searchParams.get("service") || "";
   const services = await safe(() => jaeger.services(), [] as string[]);
   const chosen = requested || services.data[0] || "";
   const traces = chosen
@@ -21,59 +20,76 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function Traces() {
   const d = useLoaderData<typeof loader>();
   const submit = useSubmit();
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Traces</h1>
-        <p className="text-sm text-muted">Follow a request as it flows across services — exactly where time is spent.</p>
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      <PageTitle title="Traces" sub="Distributed traces follow a request across services. They appear here when an app emits OpenTelemetry spans." />
 
-      <Form method="get" onChange={(e) => submit(e.currentTarget)}>
-        <select name="service" defaultValue={d.service} className="rounded-md border border-border bg-panel px-3 py-2 text-sm outline-none focus:border-brand/50">
-          {d.services.length === 0 ? <option value="">no services</option> : null}
-          {d.services.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </Form>
+      {d.services.length === 0 ? (
+        <Card>
+          <div className="flex flex-col items-center px-6 py-14 text-center">
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-surface-2 text-faint"><GitBranch className="h-5 w-5" /></span>
+            <p className="mt-4 text-sm font-medium">No instrumented services yet</p>
+            <p className="mt-1 max-w-[52ch] text-[13px] text-muted">
+              Tracing needs apps to emit spans. Point an OpenTelemetry exporter at the bundled
+              Jaeger collector (OTLP) and traces will show up here automatically. Logs and metrics
+              work for every container without any instrumentation.
+            </p>
+            <code className="mt-4 rounded-lg border border-border bg-surface-2 px-3 py-1.5 font-mono text-2xs text-muted">
+              OTEL_EXPORTER_OTLP_ENDPOINT = http://jaeger:4318
+            </code>
+          </div>
+        </Card>
+      ) : (
+        <>
+          <Form method="get">
+            <select
+              name="service"
+              defaultValue={d.service}
+              onChange={(e) => submit(e.currentTarget.form)}
+              className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
+            >
+              {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Form>
 
-      <Card>
-        <CardHeader title="Recent traces" subtitle={`${d.service || "—"} · last 1h`} right={<span className="text-xs text-muted">{d.traces.length} traces</span>} />
-        <ErrorNote error={d.error} />
-        {d.traces.length === 0 ? (
-          <Empty>No traces yet. Traces appear once instrumented services emit spans (correlation IDs required).</Empty>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="px-4 py-2 font-medium">Root operation</th>
-                <th className="px-4 py-2 font-medium">Services</th>
-                <th className="px-4 py-2 text-right font-medium">Spans</th>
-                <th className="px-4 py-2 text-right font-medium">Duration</th>
-                <th className="px-4 py-2 text-right font-medium">When</th>
-                <th className="px-4 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.traces.map((t) => (
-                <tr key={t.traceID} className="border-b border-border/40 last:border-0 hover:bg-panel-2/40">
-                  <td className="px-4 py-2.5">
-                    <Link to={`/traces/${t.traceID}`} className="font-mono text-sm hover:text-brand">
-                      {t.error ? <Badge tone="err" className="mr-2">error</Badge> : null}
-                      {t.root}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted">{t.services.join(", ")}</td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{t.spans}</td>
-                  <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", t.durationMs >= 1000 ? "text-err" : t.durationMs >= 500 ? "text-warn" : "")}>{fmtMs(t.durationMs)}</td>
-                  <td className="px-4 py-2.5 text-right text-xs text-muted">{timeAgo(t.startMs)}</td>
-                  <td className="px-4 py-2.5 text-right"><Link to={`/traces/${t.traceID}`} className="text-xs text-brand hover:underline">view →</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+          <Card>
+            <CardHead title="Recent traces" sub={`${d.service} · last 1h`} right={<Badge tone="neutral">{d.traces.length}</Badge>} />
+            <ErrorNote error={d.error} />
+            {d.traces.length === 0 ? (
+              <Empty title="No traces in range">Nothing from this service in the last hour.</Empty>
+            ) : (
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
+                    <th className="px-4 py-2 font-medium">Root operation</th>
+                    <th className="px-4 py-2 font-medium">Services</th>
+                    <th className="px-4 py-2 text-right font-medium">Spans</th>
+                    <th className="px-4 py-2 text-right font-medium">Duration</th>
+                    <th className="px-4 py-2 text-right font-medium">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.traces.map((t) => (
+                    <tr key={t.traceID} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
+                      <td className="px-4 py-2.5">
+                        <Link to={`/traces/${t.traceID}`} className="font-mono hover:text-brand">
+                          {t.error ? <Badge tone="err" className="mr-2">error</Badge> : null}
+                          {t.root}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-2xs text-muted">{t.services.join(", ")}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{t.spans}</td>
+                      <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", t.durationMs >= 1000 ? "text-err" : t.durationMs >= 500 ? "text-warn" : "")}>{fmtMs(t.durationMs)}</td>
+                      <td className="px-4 py-2.5 text-right text-2xs text-faint">{timeAgo(t.startMs)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </>
+      )}
     </div>
   );
 }

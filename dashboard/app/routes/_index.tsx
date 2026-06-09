@@ -1,179 +1,164 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { AlertTriangle, ArrowUpRight, Boxes, TrendingUp, Zap } from "lucide-react";
-import { Badge, Card, CardHeader, Empty, StatusDot } from "~/components/ui";
-import { AreaSeries, PALETTE, TimeSeries } from "~/components/charts";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { Badge, Card, CardHead, Empty, PageTitle, StatusDot, StatusPill } from "~/components/ui";
+import { AreaSeries } from "~/components/charts";
 import * as analysis from "~/lib/analysis.server";
 import * as vm from "~/lib/vm.server";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
-import { cn, fmtMs, fmtNum, fmtPct, fmtRate, fmtBytesMB, timeAgo } from "~/lib/utils";
+import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtNum, fmtPct } from "~/lib/utils";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const end = Date.now();
   const start = end - 60 * 60 * 1000;
-  const [health, incidents, anomalies, reqSeries, errSeries, logVol] = await Promise.all([
-    safe(() => analysis.serviceHealth(), [] as analysis.ServiceHealth[]),
-    safe(() => analysis.getIncidents(6), [] as analysis.Incident[]),
-    safe(() => analysis.getAnomalies(), [] as analysis.Anomaly[]),
-    safe(() => vm.range("sum by (service)(rate(http_requests_total[1m]))", { start, end, step: "60s" }), [] as vm.Series[]),
-    safe(
-      () =>
-        vm.range(
-          '100 * sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])),0.001)',
-          { start, end, step: "60s" }
-        ),
-      [] as vm.Series[]
-    ),
-    safe(
-      () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "60s" }),
-      [] as Array<{ t: number; v: number; labels: Record<string, string> }>
-    ),
+  const health = await safe(() => analysis.serviceHealth(), [] as analysis.ServiceHealth[]);
+  const [incidents, logVol, errVol, cpuTrend] = await Promise.all([
+    safe(() => analysis.getIncidents(), [] as analysis.Incident[]),
+    safe(() => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
+    safe(() => loki.countOverTime('sum(count_over_time({level="error"}[1m]))', { start, end, step: "120s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
+    safe(() => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }), [] as vm.Series[]),
   ]);
-
-  const h = health.data;
-  const totalReq = h.reduce((a, s) => a + s.reqRate, 0);
-  const totalErrReq = h.reduce((a, s) => a + (s.reqRate * s.errorRatePct) / 100, 0);
-  const overallErr = totalReq > 0 ? (totalErrReq / totalReq) * 100 : 0;
-  const worstP95 = h.reduce((a, s) => Math.max(a, s.p95Ms), 0);
-  const upCount = h.filter((s) => s.status === "up").length;
-
+  const summary = await analysis.hostSummary(health.data);
   return json({
-    health: h,
+    health: health.data,
     healthErr: health.error,
-    incidents: incidents.data.slice(0, 6),
-    anomalies: anomalies.data,
-    totals: { totalReq, overallErr, worstP95, upCount, total: h.length },
-    reqSeries: reqSeries.data,
-    errSeries: errSeries.data,
+    incidents: incidents.data,
+    summary,
     logVol: logVol.data.map((p) => ({ t: p.t, v: p.v })),
+    errVol: errVol.data.map((p) => ({ t: p.t, v: p.v })),
+    cpuTrend: (cpuTrend.data[0]?.points ?? []).map((p) => ({ t: p.t, v: p.v })),
   });
 }
 
-function GlobalStat({ icon: Icon, label, value, tone }: { icon: any; label: string; value: string; tone?: string }) {
+function Vital({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <Card className="flex items-center gap-3 px-4 py-3.5">
-      <div className="grid h-9 w-9 place-items-center rounded-md bg-panel-2 text-muted">
-        <Icon className="h-4 w-4" />
-      </div>
-      <div>
-        <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
-        <div className={cn("font-mono text-xl font-semibold tabular-nums", tone)}>{value}</div>
-      </div>
-    </Card>
+    <div className="px-4 py-3 first:pl-0">
+      <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
+      <div className={cn("mt-1 font-mono text-lg font-semibold tabular-nums", tone)}>{value}</div>
+    </div>
   );
 }
 
 export default function Overview() {
   const d = useLoaderData<typeof loader>();
-  const reqSeries = d.reqSeries.map((s, i) => ({
-    name: s.metric.service || "series",
-    color: PALETTE[i % PALETTE.length],
-    points: s.points,
-  }));
-  const errPoints = d.errSeries[0]?.points ?? [];
+  const s = d.summary;
+  const attention = d.health.filter((h) => h.status !== "up");
+  const errToneOk = s.errorRate < 0.2;
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">Service Health</h1>
-        <p className="text-sm text-muted">One screen tells you what is broken right now — across logs, metrics and traces.</p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageTitle title="Overview" sub="What's healthy and what needs attention across every container on this host, in one place." />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <GlobalStat icon={Boxes} label="Services up" value={`${d.totals.upCount}/${d.totals.total}`} tone={d.totals.upCount === d.totals.total ? "text-ok" : "text-warn"} />
-        <GlobalStat icon={TrendingUp} label="Request rate" value={fmtRate(d.totals.totalReq)} />
-        <GlobalStat icon={AlertTriangle} label="Error rate" value={fmtPct(d.totals.overallErr)} tone={d.totals.overallErr >= 5 ? "text-err" : d.totals.overallErr >= 1 ? "text-warn" : "text-ok"} />
-        <GlobalStat icon={Zap} label="Worst p95" value={fmtMs(d.totals.worstP95)} tone={d.totals.worstP95 >= 1000 ? "text-err" : d.totals.worstP95 >= 500 ? "text-warn" : "text-fg"} />
-      </div>
+      {/* host vitals strip */}
+      <Card>
+        <div className="flex flex-wrap items-center divide-x divide-border">
+          <Vital label="Containers" value={`${s.containersRunning}/${s.containersTotal}`} tone={s.containersRunning === s.containersTotal ? "text-ok" : "text-warn"} />
+          <Vital label="Services" value={String(s.services)} />
+          <Vital label="Down" value={String(s.servicesDown)} tone={s.servicesDown > 0 ? "text-err" : "text-muted"} />
+          <Vital label="Degraded" value={String(s.servicesDegraded)} tone={s.servicesDegraded > 0 ? "text-warn" : "text-muted"} />
+          <Vital label="CPU" value={`${fmtCores(s.cpuCores)} cores`} />
+          <Vital label="Memory" value={fmtBytes(s.memBytes)} />
+          <Vital label="Logs" value={`${fmtNum(s.logRate, 1)}/s`} />
+          <Vital label="Errors" value={`${fmtNum(s.errorRate, 2)}/s`} tone={errToneOk ? "text-muted" : "text-err"} />
+        </div>
+      </Card>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        <Card className="lg:col-span-1">
-          <CardHeader title="Request rate" subtitle="req/s by service · 1h" />
-          <div className="p-2"><TimeSeries series={reqSeries} height={190} unit="/s" /></div>
-        </Card>
-        <Card className="lg:col-span-1">
-          <CardHeader title="Error rate" subtitle="% of 5xx · 1h" />
-          <div className="p-2"><AreaSeries points={errPoints} color="#f85149" height={190} unit="%" /></div>
-        </Card>
-        <Card className="lg:col-span-1">
-          <CardHeader title="Log volume" subtitle="lines/min · all sources · 1h" />
-          <div className="p-2"><AreaSeries points={d.logVol} color="#58a6ff" height={190} /></div>
-        </Card>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-3">
+      {/* needs attention + log trend */}
+      <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader title="Services" subtitle="status · throughput · errors · latency · resources" right={<Link to="/metrics" className="text-xs text-brand hover:underline">Metrics →</Link>} />
-          {d.health.length === 0 ? (
-            <Empty>No services reporting yet. Metrics appear within ~30s of the first scrape.</Empty>
-          ) : (
-            <div className="overflow-x-auto scroll-thin">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
-                    <th className="px-4 py-2 font-medium">Service</th>
-                    <th className="px-4 py-2 font-medium">Status</th>
-                    <th className="px-4 py-2 text-right font-medium">Req/s</th>
-                    <th className="px-4 py-2 text-right font-medium">Errors</th>
-                    <th className="px-4 py-2 text-right font-medium">p50</th>
-                    <th className="px-4 py-2 text-right font-medium">p95</th>
-                    <th className="px-4 py-2 text-right font-medium">CPU</th>
-                    <th className="px-4 py-2 text-right font-medium">Mem</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.health.map((s) => (
-                    <tr key={s.service} className="border-b border-border/50 last:border-0 hover:bg-panel-2/40">
-                      <td className="px-4 py-2.5 font-medium">
-                        <Link to={`/logs?service=${s.service}`} className="hover:text-brand">{s.service}</Link>
-                        {s.restarts > 0 ? <Badge tone="warn" className="ml-2">{s.restarts}× restart</Badge> : null}
-                      </td>
-                      <td className="px-4 py-2.5"><StatusDot status={s.status} pulse /></td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums">{fmtNum(s.reqRate, 2)}</td>
-                      <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", s.errorRatePct >= 5 ? "text-err" : s.errorRatePct >= 1 ? "text-warn" : "text-muted")}>{fmtPct(s.errorRatePct)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtMs(s.p50Ms)}</td>
-                      <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", s.p95Ms >= 1000 ? "text-err" : s.p95Ms >= 500 ? "text-warn" : "")}>{fmtMs(s.p95Ms)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtNum(s.cpuCores, 2)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtBytesMB(s.memMB)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <CardHead title="Needs attention" sub="services not fully operational, worst first" right={<Link to="/incidents" className="text-2xs font-medium text-brand hover:underline">Incidents</Link>} />
+          {attention.length === 0 && d.incidents.length === 0 ? (
+            <div className="flex items-center gap-3 px-4 py-8">
+              <CheckCircle2 className="h-5 w-5 text-ok" />
+              <div>
+                <p className="text-sm font-medium">All systems operational</p>
+                <p className="text-[13px] text-muted">No down or degraded services, no open incidents.</p>
+              </div>
             </div>
-          )}
-        </Card>
-
-        <Card className="lg:col-span-1">
-          <CardHeader title="Active incidents" subtitle="auto-detected · 6h" right={<Link to="/incidents" className="text-xs text-brand hover:underline">All →</Link>} />
-          {d.incidents.length === 0 && d.anomalies.length === 0 ? (
-            <Empty>No incidents detected. All clear.</Empty>
           ) : (
-            <ul className="divide-y divide-border/50">
-              {d.incidents.map((i) => (
-                <li key={i.id} className="flex items-start gap-2.5 px-4 py-2.5">
-                  <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", i.severity === "critical" ? "bg-err" : "bg-warn")} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-medium">{i.title}</div>
-                    <div className="truncate text-xs text-muted">{i.detail}</div>
-                    <div className="mt-0.5 text-[11px] text-muted">{timeAgo(i.ts)}</div>
-                  </div>
-                </li>
-              ))}
-              {d.anomalies.map((a, idx) => (
-                <li key={"an" + idx} className="flex items-start gap-2.5 px-4 py-2.5">
-                  <ArrowUpRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{a.service}: {a.metric}</div>
-                    <div className="text-xs text-muted">{a.deltaPct > 0 ? "+" : ""}{a.deltaPct.toFixed(0)}% vs 1h baseline</div>
-                  </div>
+            <ul className="divide-y divide-border">
+              {attention.slice(0, 8).map((h) => (
+                <li key={h.service} className="flex items-center gap-3 px-4 py-2.5">
+                  <StatusDot status={h.status} pulse />
+                  <Link to={`/logs?service=${encodeURIComponent(h.service)}`} className="font-medium hover:text-brand">{h.service}</Link>
+                  {h.project ? <Badge>{h.project}</Badge> : null}
+                  <span className="ml-auto truncate text-[13px] text-muted">{h.reasons[0] ?? "degraded"}</span>
+                  <span className="font-mono text-2xs tabular-nums text-faint">{h.running}/{h.containers} up</span>
                 </li>
               ))}
             </ul>
           )}
         </Card>
+
+        <Card>
+          <CardHead title="Host load" sub="CPU cores in use, 1h" />
+          <div className="px-3 pb-2 pt-3">
+            <AreaSeries points={d.cpuTrend} color="oklch(0.55 0.17 290)" height={92} fmt={(n) => fmtCores(n)} />
+          </div>
+          <div className="border-t border-border px-4 py-3">
+            <div className="flex items-center justify-between text-[13px]">
+              <span className="text-muted">Memory in use</span>
+              <span className="font-mono font-medium tabular-nums">{fmtBytes(s.memBytes)}</span>
+            </div>
+          </div>
+        </Card>
       </div>
+
+      {/* service health table */}
+      <Card>
+        <CardHead
+          title="Services"
+          sub={`${d.health.length} services · status, resources, throughput`}
+          right={<Link to="/containers" className="inline-flex items-center gap-1 text-2xs font-medium text-brand hover:underline">All containers <ArrowRight className="h-3 w-3" /></Link>}
+        />
+        {d.healthErr ? <Empty title="Metrics unavailable">{d.healthErr}</Empty> : d.health.length === 0 ? (
+          <Empty title="No containers reporting">Telemetry appears within ~30s of the first scrape.</Empty>
+        ) : (
+          <div className="overflow-x-auto scroll-thin">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
+                  <th className="px-4 py-2 font-medium">Service</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 text-right font-medium">CPU</th>
+                  <th className="px-4 py-2 text-right font-medium">Memory</th>
+                  <th className="px-4 py-2 text-right font-medium">Net I/O</th>
+                  <th className="px-4 py-2 text-right font-medium">Restarts</th>
+                  <th className="px-4 py-2 text-right font-medium">Logs/s</th>
+                  <th className="px-4 py-2 text-right font-medium">Err/s</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.health.slice(0, 14).map((h) => (
+                  <tr key={h.service} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
+                    <td className="max-w-[260px] px-4 py-2.5">
+                      <Link to={`/logs?service=${encodeURIComponent(h.service)}`} className="truncate font-medium hover:text-brand">{h.service}</Link>
+                      {h.containers > 1 ? <span className="ml-2 text-2xs text-faint">×{h.containers}</span> : null}
+                    </td>
+                    <td className="px-4 py-2.5"><StatusPill status={h.status} /></td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtCores(h.cpuCores)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtBytes(h.memBytes)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-2xs tabular-nums text-faint">{fmtBytesRate(h.netRxRate)} ↓ {fmtBytesRate(h.netTxRate)} ↑</td>
+                    <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", h.restarts > 0 ? "text-warn" : "text-faint")}>{h.restarts || "—"}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtNum(h.logRate, 1)}</td>
+                    <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", h.errorRate > 0 ? "text-err" : "text-faint")}>{h.errorRate > 0 ? fmtNum(h.errorRate, 2) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* log volume */}
+      <Card>
+        <CardHead title="Log volume" sub="lines/min across all sources, errors overlaid, 1h" right={<Link to="/logs" className="text-2xs font-medium text-brand hover:underline">Search logs</Link>} />
+        <div className="p-3">
+          <AreaSeries points={d.logVol} color="oklch(0.58 0.13 240)" height={150} fmt={(n) => fmtNum(n, 0)} />
+        </div>
+      </Card>
     </div>
   );
 }

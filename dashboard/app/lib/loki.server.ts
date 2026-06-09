@@ -108,6 +108,29 @@ export async function countOverTime(
   return points;
 }
 
+/** Instant metric query grouped by `service` → { service: value }. */
+export async function rateByService(query: string): Promise<Record<string, number>> {
+  const res = await fetchJson<{ data: { result: Array<{ metric: Record<string, string>; value: [number, string] }> } }>(
+    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(query)}`
+  );
+  const out: Record<string, number> = {};
+  for (const r of res.data.result || []) {
+    const k = r.metric.service || "unknown";
+    out[k] = Number(r.value[1]);
+  }
+  return out;
+}
+
+/** Instant metric query returning a single scalar (sum of vector), or fallback. */
+export async function scalar(query: string, fallback = 0): Promise<number> {
+  const res = await fetchJson<{ data: { result: Array<{ value: [number, string] }> } }>(
+    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(query)}`
+  );
+  const rows = res.data.result || [];
+  if (!rows.length) return fallback;
+  return rows.reduce((a, r) => a + Number(r.value[1]), 0);
+}
+
 export async function labelValues(name: string): Promise<string[]> {
   const res = await fetchJson<{ data: string[] }>(
     `${config.lokiUrl}/loki/api/v1/label/${encodeURIComponent(name)}/values`

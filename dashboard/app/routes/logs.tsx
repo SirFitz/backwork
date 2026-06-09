@@ -1,27 +1,24 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useLoaderData, useSubmit } from "@remix-run/react";
+import { Form, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { Search } from "lucide-react";
-import { Card, CardHeader, Empty, ErrorNote } from "~/components/ui";
+import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
 import { safe } from "~/lib/config.server";
-import { cn, fmtTime, LEVEL_COLOR } from "~/lib/utils";
+import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
 const RANGES: Record<string, number> = { "15m": 15, "1h": 60, "6h": 360, "24h": 1440 };
 
 function buildQuery(service: string, level: string, q: string): string {
-  if (q.trim().startsWith("{")) return q.trim(); // raw LogQL passthrough
-  const matchers: string[] = [];
-  if (service && service !== "all") matchers.push(`service="${service}"`);
-  if (level && level !== "all") matchers.push(`level="${level}"`);
-  if (matchers.length === 0) matchers.push(`service=~".+"`);
-  let query = `{${matchers.join(",")}}`;
-  if (q.trim()) {
-    const esc = q.trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    query += ` |~ "(?i)${esc}"`;
-  }
+  if (q.trim().startsWith("{")) return q.trim();
+  const m: string[] = [];
+  if (service && service !== "all") m.push(`service=${JSON.stringify(service)}`);
+  if (level && level !== "all") m.push(`level="${level}"`);
+  if (m.length === 0) m.push(`service=~".+"`);
+  let query = `{${m.join(",")}}`;
+  if (q.trim()) query += ` |~ "(?i)${q.trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return query;
 }
 
@@ -34,17 +31,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const mins = RANGES[rangeKey] ?? 60;
   const end = Date.now();
   const start = end - mins * 60 * 1000;
-
   const query = buildQuery(service, level, q);
   const [services, entries, volume] = await Promise.all([
     safe(() => loki.services(), [] as string[]),
     safe(() => loki.queryRange(query, { start, end, limit: 300 }), [] as loki.LogEntry[]),
-    safe(
-      () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }),
-      [] as Array<{ t: number; v: number; labels: Record<string, string> }>
-    ),
+    safe(() => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }), [] as Array<{ t: number; v: number; labels: Record<string, string> }>),
   ]);
-
   return json({
     services: services.data,
     entries: entries.data,
@@ -55,63 +47,63 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
+const SELECT = "h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
+
 export default function Logs() {
   const d = useLoaderData<typeof loader>();
   const submit = useSubmit();
+  const nav = useNavigation();
+  const loading = nav.state === "loading";
   const f = d.filters;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Logs</h1>
-        <p className="text-sm text-muted">Full-text and structured search across every ingested source. Without search, logs are just stale.</p>
-      </div>
+    <div className="space-y-4 animate-fade-in">
+      <PageTitle title="Logs" sub="Full-text and structured search across every container's output. Pick a service and level, or paste raw LogQL." />
 
       <Form method="get" className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[260px]">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+        <div className="relative min-w-[280px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
           <input
             name="q"
             defaultValue={f.q}
-            placeholder='search… (free text, or paste LogQL like {service="api"} |= "timeout") — Enter to run'
-            className="w-full rounded-md border border-border bg-panel py-2 pl-9 pr-3 text-sm font-mono outline-none placeholder:text-muted/70 focus:border-brand/50"
+            placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'}
+            className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
           />
         </div>
-        <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className="rounded-md border border-border bg-panel px-3 py-2 text-sm outline-none focus:border-brand/50">
+        <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
           <option value="all">all services</option>
-          {d.services.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
+          {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <select name="level" defaultValue={f.level} onChange={(e) => submit(e.currentTarget.form)} className="rounded-md border border-border bg-panel px-3 py-2 text-sm outline-none focus:border-brand/50">
-          {LEVELS.map((l) => (
-            <option key={l} value={l}>{l === "all" ? "all levels" : l}</option>
-          ))}
+        <select name="level" defaultValue={f.level} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
+          {LEVELS.map((l) => <option key={l} value={l}>{l === "all" ? "all levels" : l}</option>)}
         </select>
-        <select name="range" defaultValue={f.range} onChange={(e) => submit(e.currentTarget.form)} className="rounded-md border border-border bg-panel px-3 py-2 text-sm outline-none focus:border-brand/50">
-          {Object.keys(RANGES).map((r) => (
-            <option key={r} value={r}>{r}</option>
-          ))}
+        <select name="range" defaultValue={f.range} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
+          {Object.keys(RANGES).map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
-        <button type="submit" className="rounded-md border border-border bg-panel px-3 py-2 text-sm text-muted hover:bg-panel-2 hover:text-fg">Run</button>
       </Form>
 
       <Card>
-        <CardHeader title="Volume" subtitle={<span className="font-mono text-[11px]">{d.query}</span>} right={<span className="text-xs text-muted">{d.entries.length} lines</span>} />
-        <div className="p-2"><AreaSeries points={d.volume} color="#58a6ff" height={90} /></div>
+        <CardHead
+          title="Volume"
+          sub={<span className="font-mono">{d.query}</span>}
+          right={<Badge tone="neutral">{d.entries.length} lines</Badge>}
+        />
+        <div className="p-3">
+          <AreaSeries points={d.volume} color="oklch(0.58 0.13 240)" height={80} fmt={(n) => fmtNum(n, 0)} />
+        </div>
       </Card>
 
       <Card>
         <ErrorNote error={d.error} />
         {d.entries.length === 0 ? (
-          <Empty>No log lines match. Try widening the time range or clearing filters.</Empty>
+          <Empty title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
         ) : (
-          <div className="max-h-[60vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-relaxed">
+          <div className={cn("max-h-[62vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
             {d.entries.map((e, i) => (
-              <div key={i} className="flex gap-3 border-b border-border/30 px-4 py-1.5 hover:bg-panel-2/40">
-                <span className="shrink-0 tabular-nums text-muted">{fmtTime(e.ts)}</span>
-                <span className={cn("w-12 shrink-0 font-semibold uppercase", LEVEL_COLOR[e.level] || "text-muted")}>{e.level}</span>
-                <span className="w-20 shrink-0 truncate text-accent">{e.service}</span>
+              <div key={i} className="flex gap-3 border-b border-border/40 px-4 py-1 hover:bg-surface-2/50">
+                <span className="shrink-0 tabular-nums text-faint">{fmtClock(e.ts)}</span>
+                <span className={cn("w-11 shrink-0 font-semibold uppercase", LEVEL_TEXT[e.level] || "text-faint")}>{e.level}</span>
+                <span className="w-40 shrink-0 truncate text-accent" title={e.service}>{e.service}</span>
                 <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg/90">{e.message}</span>
               </div>
             ))}
