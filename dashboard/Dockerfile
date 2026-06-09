@@ -1,16 +1,18 @@
 FROM node:20-slim AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+ENV NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false NPM_CONFIG_MAXSOCKETS=4
+COPY package.json package-lock.json ./
+# npm ci is deterministic; retry with a clean cache to survive the cacache
+# EEXIST/rename race that shows up on contended disks.
+RUN npm ci || (npm cache clean --force && npm ci)
 COPY . .
 RUN npm run build
 
 FROM node:20-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+ENV NODE_ENV=production PORT=3000 NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false NPM_CONFIG_MAXSOCKETS=4
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev || (npm cache clean --force && npm ci --omit=dev)
 COPY --from=build /app/build ./build
 EXPOSE 3000
 HEALTHCHECK --interval=20s --timeout=5s --start-period=25s --retries=5 \
