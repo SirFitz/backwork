@@ -8,20 +8,14 @@ import { cn, fmtMs, timeAgo } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
-  const service = url.searchParams.get("service") || "";
-  const [services, traces] = await Promise.all([
-    safe(() => jaeger.services(), [] as string[]),
-    safe(() => jaeger.recentTraces({ service: service || undefined, limit: 40, lookbackHours: 1 }), [] as jaeger.TraceSummary[]),
-  ]);
-  // jaeger requires a service to list traces; default to the first if none chosen
-  let list = traces.data;
-  let chosen = service;
-  if (!service && services.data.length) {
-    chosen = services.data[0];
-    const t = await safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: 1 }), [] as jaeger.TraceSummary[]);
-    list = t.data;
-  }
-  return json({ services: services.data, traces: list, error: traces.error, service: chosen });
+  const requested = url.searchParams.get("service") || "";
+  // jaeger's /api/traces requires a service, so resolve one first, then query once.
+  const services = await safe(() => jaeger.services(), [] as string[]);
+  const chosen = requested || services.data[0] || "";
+  const traces = chosen
+    ? await safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: 1 }), [] as jaeger.TraceSummary[])
+    : { data: [] as jaeger.TraceSummary[], error: null as string | null };
+  return json({ services: services.data, traces: traces.data, error: traces.error, service: chosen });
 }
 
 export default function Traces() {
