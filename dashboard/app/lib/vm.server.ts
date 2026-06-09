@@ -54,6 +54,7 @@ export async function range(
     end: String(Math.floor(end / 1000)),
     step: opts.step ?? "30s",
   });
+  applyScope(params, tenant);
   const res = await fetchJson<MatrixResp>(`${config.vmUrl}/api/v1/query_range?${params.toString()}`);
   return (res.data.result || []).map((r) => ({
     metric: r.metric,
