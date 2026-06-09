@@ -33,10 +33,14 @@ services:
       - "8428"
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
     restart: unless-stopped
     privileged: true
     mem_limit: 384m
+    environment:
+      # bserve runs Docker 28 (min API 1.44); pin the client so cAdvisor's
+      # docker factory (which provides container names + labels) negotiates ok.
+      DOCKER_API_VERSION: "1.44"
     command:
       - -housekeeping_interval=10s
       - -docker_only=true
