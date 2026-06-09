@@ -25,7 +25,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const logVolP = cached(`ov:logvol:${t.orgId}`, 12000, () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }, t))
     .then((d) => d.map((p) => ({ t: p.t, v: p.v })))
     .catch(() => [] as { t: number; v: number }[]);
-  const cpuTrendP = cached(`ov:cputrend:${t.orgId}`, 12000, () => vm.range('sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))', { start, end, step: "120s" }, t))
+  // platform host CPU comes from cAdvisor; customer host CPU from node-exporter
+  const cpuQuery = t.platform
+    ? 'sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))'
+    : 'sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))';
+  const cpuTrendP = cached(`ov:cputrend:${t.orgId}`, 12000, () => vm.range(cpuQuery, { start, end, step: "120s" }, t))
     .then((s) => (s[0]?.points ?? []).map((p) => ({ t: p.t, v: p.v })))
     .catch(() => [] as { t: number; v: number }[]);
 

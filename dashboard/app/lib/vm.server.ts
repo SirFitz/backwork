@@ -13,26 +13,28 @@ type MatrixResp = {
 
 export type Series = { metric: Record<string, string>; points: Array<{ t: number; v: number }> };
 
-// cAdvisor host metrics belong to the platform org. Customer orgs have no
-// metrics-push path yet, so their metric queries return empty (no leak); this
-// also keeps customer infra views correctly blank until they connect agents.
-function blocked(t?: Tenant): boolean {
-  return !!t && !t.platform;
+// Customer metrics are stamped org_id=<id> at the ingest proxy (VM extra_label).
+// VM's extra_filters[] applies an org_id matcher to EVERY series selector in the
+// query server-side (robust for bare/multi-metric expressions), so a customer
+// only sees its own series. Platform (Inkress, which owns the cAdvisor host
+// metrics that have no org_id) gets no filter — its view is unchanged.
+function applyScope(params: URLSearchParams, t?: Tenant): URLSearchParams {
+  if (t && !t.platform) params.append("extra_filters[]", `{org_id=${JSON.stringify(t.orgId)}}`);
+  return params;
 }
 
 /** PromQL instant query. */
 export async function instant(query: string, time?: number, tenant?: Tenant) {
-  if (blocked(tenant)) return [] as Array<{ metric: Record<string, string>; value: number }>;
   const params = new URLSearchParams({ query });
   if (time) params.set("time", String(Math.floor(time / 1000)));
+  applyScope(params, tenant);
   const res = await fetchJson<VectorResp>(`${config.vmUrl}/api/v1/query?${params.toString()}`);
   return (res.data.result || []).map((r) => ({ metric: r.metric, value: Number(r.value[1]) }));
 }
 
 /** Single scalar from an instant query (first result), or fallback. */
 export async function scalar(query: string, fallback = 0, tenant?: Tenant): Promise<number> {
-  if (blocked(tenant)) return fallback;
-  const r = await instant(query);
+  const r = await instant(query, undefined, tenant);
   if (!r.length) return fallback;
   const v = r[0].value;
   return Number.isFinite(v) ? v : fallback;
@@ -44,7 +46,6 @@ export async function range(
   opts: { start?: number; end?: number; step?: string } = {},
   tenant?: Tenant
 ): Promise<Series[]> {
-  if (blocked(tenant)) return [];
   const end = opts.end ?? Date.now();
   const start = opts.start ?? end - 60 * 60 * 1000;
   const params = new URLSearchParams({

@@ -3,7 +3,7 @@ import { defer } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
-import { PALETTE, TimeSeries } from "~/components/charts";
+import { AreaSeries, PALETTE, TimeSeries } from "~/components/charts";
 import * as vm from "~/lib/vm.server";
 import * as apm from "~/lib/apm.server";
 import * as jaeger from "~/lib/jaeger.server";
@@ -39,7 +39,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
     empty: cpuTop.length === 0 && memTop.length === 0,
   }));
 
+  const host = t.platform
+    ? Promise.resolve(null)
+    : Promise.all([
+        vm.range('sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))', { start, end, step: "120s" }, t),
+        vm.range("node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", { start, end, step: "120s" }, t),
+        vm.range('sum(rate(node_network_receive_bytes_total{device!="lo"}[5m]))', { start, end, step: "120s" }, t),
+        vm.range('sum(rate(node_network_transmit_bytes_total{device!="lo"}[5m]))', { start, end, step: "120s" }, t),
+      ])
+        .then(([cpu, mem, rx, tx]) => ({
+          cpu: cpu[0]?.points ?? [],
+          mem: mem[0]?.points ?? [],
+          net: [
+            { name: "rx", color: PALETTE[1], points: rx[0]?.points ?? [] },
+            { name: "tx", color: PALETTE[0], points: tx[0]?.points ?? [] },
+          ],
+          empty: !(cpu[0]?.points?.length || mem[0]?.points?.length),
+        }))
+        .catch(() => null);
+
   return defer({
+    isPlatform: t.platform,
+    host,
     cadvisor,
     apm: apm.getAPM(1, t),
     deps: jaeger.dependencies(24, t).catch(() => [] as Array<{ parent: string; child: string; callCount: number }>),
@@ -70,12 +91,30 @@ export default function Metrics() {
   const d = useLoaderData<typeof loader>();
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Metrics" sub="Real per-container CPU, memory and network from cAdvisor. Resource pressure and the heaviest consumers, at a glance." />
+      <PageTitle title="Metrics" sub="Real CPU, memory and network for your infrastructure. Resource pressure and the heaviest consumers, at a glance." />
+
+      {!d.isPlatform ? (
+        <Deferred resolve={d.host} fallback={<div className="grid gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={170} /></Card><Card><ChartSkeleton height={170} /></Card></div>}>
+          {(h) =>
+            h && !h.empty ? (
+              <div className="space-y-4">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card><CardHead title="Host CPU" sub="cores in use, 1h" /><div className="p-3"><AreaSeries points={h.cpu} color="oklch(0.55 0.17 290)" height={170} fmt={(n) => fmtCores(n)} /></div></Card>
+                  <Card><CardHead title="Host memory" sub="used, 1h" /><div className="p-3"><AreaSeries points={h.mem} color="oklch(0.58 0.13 240)" height={170} fmt={(n) => fmtBytes(n)} /></div></Card>
+                </div>
+                <Card><CardHead title="Host network" sub="receive vs transmit, 1h" /><div className="p-3"><TimeSeries series={h.net} height={150} fmt={(n) => fmtBytesRate(n)} /></div></Card>
+              </div>
+            ) : (
+              <Card><Empty title="No host metrics yet">Install the agent with metrics enabled — <span className="font-mono">--metrics host</span>. Data appears within ~1 minute.</Empty></Card>
+            )
+          }
+        </Deferred>
+      ) : null}
 
       <Deferred resolve={d.cadvisor} fallback={<div className="grid gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={210} /></Card><Card><ChartSkeleton height={210} /></Card></div>}>
         {(c) =>
           c.empty ? (
-            <Card><Empty title="No metrics yet">cAdvisor populates within ~30s of the first scrape.</Empty></Card>
+            <Card><Empty title={d.isPlatform ? "No metrics yet" : "No per-container metrics"}>{d.isPlatform ? "cAdvisor populates within ~30s of the first scrape." : "Per-container metrics need the cAdvisor agent — install with --metrics container (or all)."}</Empty></Card>
           ) : (
             <div className="space-y-4">
               <div className="grid gap-4 xl:grid-cols-2">
