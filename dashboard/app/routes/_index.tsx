@@ -49,6 +49,15 @@ function SummaryCard({ icon: Icon, label, value, sub, tone, to }: { icon: any; l
   return to ? <Link to={to} className="block">{inner}</Link> : inner;
 }
 
+function Vital({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="px-4 py-3 first:pl-4">
+      <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
+      <div className={cn("mt-1 font-mono text-lg font-semibold tabular-nums", tone)}>{value}</div>
+    </div>
+  );
+}
+
 export default function Overview() {
   const d = useLoaderData<typeof loader>();
   const s = d.summary;
@@ -75,6 +84,20 @@ export default function Overview() {
         <SummaryCard icon={Activity} label="Active incidents" value={String(d.incidents.length)}
           sub={`${critical} critical`} tone={critical > 0 ? "text-err" : d.incidents.length > 0 ? "text-warn" : "text-ok"} to="/incidents" />
       </div>
+
+      {/* container vitals strip */}
+      <Card>
+        <div className="flex flex-wrap items-center divide-x divide-border">
+          <Vital label="Active services" value={String(s.servicesActive)} />
+          <Vital label="Down" value={String(s.servicesDown)} tone={s.servicesDown > 0 ? "text-err" : "text-muted"} />
+          <Vital label="Degraded" value={String(s.servicesDegraded)} tone={s.servicesDegraded > 0 ? "text-warn" : "text-muted"} />
+          <Vital label="Stopped" value={String(s.servicesStopped)} tone="text-faint" />
+          <Vital label="CPU" value={`${fmtCores(s.cpuCores)} cores`} />
+          <Vital label="Memory" value={fmtBytes(s.memBytes)} />
+          <Vital label="Logs" value={`${fmtNum(s.logRate, 1)}/s`} />
+          <Vital label="Errors" value={`${fmtNum(s.errorRate, 2)}/s`} tone={s.errorRate >= 0.2 ? "text-err" : "text-muted"} />
+        </div>
+      </Card>
 
       {/* needs attention + log trend */}
       <div className="grid gap-4 lg:grid-cols-3">
