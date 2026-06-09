@@ -2,6 +2,7 @@ export const config = {
   lokiUrl: process.env.LOKI_URL || "http://loki:3100",
   vmUrl: process.env.VM_URL || "http://victoriametrics:8428",
   jaegerUrl: process.env.JAEGER_URL || "http://jaeger:16686",
+  otlpHttp: process.env.OTLP_ENDPOINT || "http://jaeger:4318",
   dataDir: process.env.DATA_DIR || "/data",
   // bearer token external agents present to the ingest proxy
   ingestToken: process.env.INGEST_TOKEN || "",

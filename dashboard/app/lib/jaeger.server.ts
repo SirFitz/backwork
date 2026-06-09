@@ -99,6 +99,63 @@ export async function recentTraces(
   return out;
 }
 
+export type RequestRow = {
+  traceID: string;
+  service: string;
+  method: string;
+  route: string;
+  status: number | null;
+  durationMs: number;
+  startMs: number;
+  error: boolean;
+};
+
+function tagVal(tags: Array<{ key: string; value: any }> | undefined, keys: string[]): any {
+  if (!tags) return undefined;
+  for (const k of keys) {
+    const t = tags.find((x) => x.key === k);
+    if (t !== undefined) return t.value;
+  }
+  return undefined;
+}
+
+/** Flat list of recent HTTP requests, extracted from each trace's root span. */
+export async function recentRequests(
+  opts: { service?: string; limit?: number; lookbackHours?: number } = {}
+): Promise<RequestRow[]> {
+  const lb = opts.lookbackHours ?? 1;
+  const end = Date.now() * 1000;
+  const params = new URLSearchParams({
+    limit: String(opts.limit ?? 60),
+    lookback: `${lb}h`,
+    start: String(end - lb * 3600 * 1e6),
+    end: String(end),
+  });
+  if (opts.service) params.set("service", opts.service);
+  const res = await fetchJson<{ data: RawTrace[] }>(`${config.jaegerUrl}/api/traces?${params.toString()}`);
+  const rows: RequestRow[] = [];
+  for (const tr of res.data || []) {
+    if (!tr.spans?.length) continue;
+    const root = tr.spans.find((s) => !s.references || s.references.length === 0) || tr.spans[0];
+    const method = tagVal(root.tags, ["http.method", "http.request.method"]);
+    const statusRaw = tagVal(root.tags, ["http.status_code", "http.response.status_code"]);
+    const route = tagVal(root.tags, ["http.route", "http.target", "url.path"]) || root.operationName;
+    const status = statusRaw !== undefined ? Number(statusRaw) : null;
+    rows.push({
+      traceID: tr.traceID,
+      service: tr.processes[root.processID]?.serviceName || "unknown",
+      method: method ? String(method) : "",
+      route: String(route),
+      status,
+      durationMs: root.duration / 1000,
+      startMs: root.startTime / 1000,
+      error: spanHasError(root.tags) || (status !== null && status >= 500),
+    });
+  }
+  rows.sort((a, b) => b.startMs - a.startMs);
+  return rows;
+}
+
 export async function getTrace(id: string): Promise<{ spans: Span[]; durationMs: number; startMs: number } | null> {
   const res = await fetchJson<{ data: RawTrace[] }>(`${config.jaegerUrl}/api/traces/${encodeURIComponent(id)}`);
   const tr = res.data?.[0];

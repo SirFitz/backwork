@@ -22,6 +22,7 @@ import {
   GitBranch,
   LayoutDashboard,
   Moon,
+  Network,
   Pause,
   Play,
   ScrollText,
@@ -52,9 +53,10 @@ const NAV = [
   { to: "/containers", label: "Containers", icon: Boxes },
   { to: "/logs", label: "Logs", icon: ScrollText },
   { to: "/metrics", label: "Metrics", icon: Activity },
+  { to: "/traces", label: "Traces", icon: GitBranch },
+  { to: "/requests", label: "Requests", icon: Network },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/alerts", label: "Alerts", icon: BellRing },
-  { to: "/traces", label: "Traces", icon: GitBranch },
 ];
 
 function ThemeToggle() {
