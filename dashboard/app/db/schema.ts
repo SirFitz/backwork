@@ -79,6 +79,25 @@ export const invitations = pgTable("invitations", {
   orgEmailIdx: index("invitations_org_email_idx").on(t.orgId, t.email),
 }));
 
+export const alertRules = pgTable("alert_rules", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+  ...ts(),
+}, (t) => ({ orgIdx: index("alert_rules_org_idx").on(t.orgId) }));
+
+export const alertChannels = pgTable("alert_channels", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+  ...ts(),
+}, (t) => ({ orgIdx: index("alert_channels_org_idx").on(t.orgId) }));
+
+export const migrations = pgTable("migrations", {
+  name: text("name").primaryKey(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const auditLog = pgTable("audit_log", {
   id: id(),
   orgId: text("org_id").references(() => orgs.id, { onDelete: "cascade" }),

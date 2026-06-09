@@ -7,11 +7,15 @@ import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as alerts from "~/lib/alerts.server";
 import * as channels from "~/lib/channels.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtNum } from "~/lib/utils";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   return defer({
-    data: Promise.all([alerts.evaluate(), channels.loadChannels()])
+    data: Promise.all([alerts.evaluate(t), channels.loadChannels(ctx.org.id)])
       .then(([states, chans]) => ({ states, channels: chans.map(channels.redact) }))
       .catch(() => ({ states: [] as alerts.AlertState[], channels: [] as ReturnType<typeof channels.redact>[] })),
     meta: alerts.METRIC_META,
@@ -20,26 +24,27 @@ export async function loader(_args: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const ctx = await requireOrg(request);
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
 
   // ---- channel intents ----
   if (intent.endsWith("_channel")) {
-    const chans = await channels.loadChannels();
+    const chans = await channels.loadChannels(ctx.org.id);
     if (intent === "add_channel") {
       const type = String(fd.get("type") || "webhook") as channels.ChannelType;
       const cfg: Record<string, string> = {};
       for (const f of channels.CHANNEL_TYPES[type]?.fields || []) cfg[f.key] = String(fd.get(f.key) || "");
       chans.push({ id: "c" + Date.now().toString(36), name: String(fd.get("name") || channels.CHANNEL_TYPES[type].label), type, enabled: true, config: cfg });
-      await channels.saveChannels(chans);
+      await channels.saveChannels(ctx.org.id, chans);
     } else if (intent === "toggle_channel") {
       const c = chans.find((x) => x.id === String(fd.get("id")));
       if (c) c.enabled = !c.enabled;
-      await channels.saveChannels(chans);
+      await channels.saveChannels(ctx.org.id, chans);
     } else if (intent === "delete_channel") {
       const i = chans.findIndex((x) => x.id === String(fd.get("id")));
       if (i >= 0) chans.splice(i, 1);
-      await channels.saveChannels(chans);
+      await channels.saveChannels(ctx.org.id, chans);
     } else if (intent === "test_channel") {
       const c = chans.find((x) => x.id === String(fd.get("id")));
       if (!c) return json({ test: { ok: false, error: "channel not found" } });
@@ -54,7 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   // ---- rule intents ----
-  const rules = await alerts.loadRules();
+  const rules = await alerts.loadRules(ctx.org.id);
   if (intent === "add") {
     rules.push({
       id: "r" + Date.now().toString(36),
@@ -73,7 +78,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const i = rules.findIndex((x) => x.id === String(fd.get("id")));
     if (i >= 0) rules.splice(i, 1);
   }
-  await alerts.saveRules(rules);
+  await alerts.saveRules(ctx.org.id, rules);
   return redirect("/alerts");
 }
 

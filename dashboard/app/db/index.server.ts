@@ -65,6 +65,23 @@ CREATE TABLE IF NOT EXISTS invitations (
 CREATE UNIQUE INDEX IF NOT EXISTS invitations_token_uniq ON invitations (token);
 CREATE INDEX IF NOT EXISTS invitations_org_email_idx ON invitations (org_id, email);
 
+CREATE TABLE IF NOT EXISTS alert_rules (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  data jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS alert_rules_org_idx ON alert_rules (org_id);
+
+CREATE TABLE IF NOT EXISTS alert_channels (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  data jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS alert_channels_org_idx ON alert_channels (org_id);
+
+CREATE TABLE IF NOT EXISTS migrations (
+  name text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id text PRIMARY KEY,
   org_id text REFERENCES orgs(id) ON DELETE CASCADE,

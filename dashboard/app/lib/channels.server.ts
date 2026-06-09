@@ -1,6 +1,6 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { config } from "./config.server";
+import { eq } from "drizzle-orm";
+import { db, ensureSchema } from "~/db/index.server";
+import { alertChannels } from "~/db/schema";
 
 export type ChannelType = "webhook" | "slack" | "discord" | "email" | "sms";
 
@@ -54,24 +54,20 @@ export const CHANNEL_TYPES: Record<ChannelType, { label: string; hint: string; f
   },
 };
 
-const FILE = () => path.join(config.dataDir, "channels.json");
-
-export async function loadChannels(): Promise<Channel[]> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(FILE(), "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+export async function loadChannels(orgId: string): Promise<Channel[]> {
+  await ensureSchema();
+  const rows = await db.select({ data: alertChannels.data }).from(alertChannels).where(eq(alertChannels.orgId, orgId));
+  return rows.map((r) => r.data as unknown as Channel);
 }
 
-export async function saveChannels(channels: Channel[]): Promise<void> {
-  try {
-    await fs.mkdir(config.dataDir, { recursive: true });
-    await fs.writeFile(FILE(), JSON.stringify(channels, null, 2), "utf8");
-  } catch {
-    /* read-only data dir */
-  }
+export async function saveChannels(orgId: string, channels: Channel[]): Promise<void> {
+  await ensureSchema();
+  await db.transaction(async (tx) => {
+    await tx.delete(alertChannels).where(eq(alertChannels.orgId, orgId));
+    if (channels.length) {
+      await tx.insert(alertChannels).values(channels.map((c) => ({ id: c.id, orgId, data: c as unknown as Record<string, unknown> })));
+    }
+  });
 }
 
 /** Redacted view for the client (no secret values leak to the browser). */
