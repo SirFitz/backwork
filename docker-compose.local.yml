@@ -1,0 +1,13 @@
+# Local testing only. Publishes ports to the host so the stack can be
+# inspected from the Mac. Coolify never reads this file (it deploys the
+# base docker-compose.yaml). Use:
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yml up -d --build
+services:
+  loki:
+    ports: ["3100:3100"]
+  victoriametrics:
+    ports: ["8428:8428"]
+  jaeger:
+    ports: ["16686:16686", "4318:4318"]
+  backwork:
+    ports: ["3000:3000"]

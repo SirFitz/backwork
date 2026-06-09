@@ -1,0 +1,71 @@
+# backwork collector. Tails every container's stdout/stderr, normalises the
+# log shape, and ships to Loki. Also exposes host + internal metrics for VM.
+data_dir: /vector-data
+
+sources:
+  docker:
+    type: docker_logs
+    exclude_containers:
+      - vector
+
+  vector_metrics:
+    type: internal_metrics
+
+  host:
+    type: host_metrics
+    scrape_interval_secs: 15
+    collectors:
+      - cpu
+      - memory
+      - disk
+      - filesystem
+      - load
+      - network
+
+transforms:
+  normalize:
+    type: remap
+    inputs: [docker]
+    source: |
+      # Default service/level from container metadata.
+      .service = to_string(.container_name) ?? "unknown"
+      .level = "info"
+
+      # Our services log structured JSON — lift level/service/msg out of it.
+      parsed = parse_json(.message) ?? {}
+      lvl = get(parsed, ["level"]) ?? null
+      if lvl != null { .level = downcase(to_string(lvl) ?? "info") }
+      svc = get(parsed, ["service"]) ?? null
+      if svc != null { .service = to_string(svc) ?? .service }
+      msg = get(parsed, ["msg"]) ?? get(parsed, ["display"]) ?? get(parsed, ["message"]) ?? null
+      if msg != null { .display = to_string(msg) ?? .message }
+      if !exists(.display) { .display = .message }
+
+      # Coarse level detection for unstructured lines (loki/jaeger/etc).
+      if .level == "info" {
+        m = downcase(to_string(.message) ?? "")
+        if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "panic") || contains(m, "fatal") {
+          .level = "error"
+        } else if contains(m, "level=warn") || contains(m, "warning") {
+          .level = "warn"
+        }
+      }
+
+sinks:
+  loki:
+    type: loki
+    inputs: [normalize]
+    endpoint: http://loki:3100
+    encoding:
+      codec: json
+    labels:
+      service: "{{ service }}"
+      level: "{{ level }}"
+      container: "{{ container_name }}"
+    out_of_order_action: accept
+    remove_label_fields: false
+
+  prometheus:
+    type: prometheus_exporter
+    inputs: [vector_metrics, host]
+    address: 0.0.0.0:9598

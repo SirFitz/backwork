@@ -1,0 +1,123 @@
+# backwork.dev — self-hosted log aggregation + APM stack.
+#   loki            log storage (LogQL)
+#   victoriametrics metrics TSDB (PromQL)         scrapes the instrumented services
+#   jaeger          distributed traces (OTLP in)
+#   vector          collector: tails all container logs -> loki, exposes metrics
+#   api/payments/worker  instrumented demo services (logs + metrics + traces)
+#   backwork        the dashboard — queries all three backends
+services:
+  loki:
+    image: grafana/loki:3.3.0
+    command: -config.file=/etc/loki/loki-config.yaml
+    restart: unless-stopped
+    volumes:
+      - ./infra/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    expose:
+      - "3100"
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.106.1
+    command:
+      - -storageDataPath=/vmdata
+      - -retentionPeriod=14d
+      - -promscrape.config=/etc/vm/scrape.yml
+      - -promscrape.config.strictParse=false
+    restart: unless-stopped
+    volumes:
+      - ./infra/victoriametrics/scrape.yml:/etc/vm/scrape.yml:ro
+      - vm-data:/vmdata
+    expose:
+      - "8428"
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: "30000"
+    expose:
+      - "16686"  # query UI + API
+      - "4317"   # OTLP gRPC
+      - "4318"   # OTLP HTTP
+
+  vector:
+    image: timberio/vector:0.43.1-alpine
+    restart: unless-stopped
+    volumes:
+      - ./infra/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vector-data:/vector-data
+    command: --config /etc/vector/vector.yaml
+    expose:
+      - "9598"
+    depends_on:
+      - loki
+
+  api:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: api
+      ERROR_RATE: "0.05"
+      BASE_LATENCY_MS: "55"
+      OTLP_ENDPOINT: http://jaeger:4318
+    expose:
+      - "9100"
+    depends_on:
+      - jaeger
+      - payments
+
+  payments:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: payments
+      ERROR_RATE: "0.07"
+      BASE_LATENCY_MS: "90"
+      OTLP_ENDPOINT: http://jaeger:4318
+    expose:
+      - "9100"
+    depends_on:
+      - jaeger
+      - worker
+
+  worker:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: worker
+      ERROR_RATE: "0.03"
+      BASE_LATENCY_MS: "130"
+      CRASH_MEAN_MIN: "18"
+      OTLP_ENDPOINT: http://jaeger:4318
+    expose:
+      - "9100"
+    depends_on:
+      - jaeger
+
+  backwork:
+    build: ./dashboard
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOKI_URL: http://loki:3100
+      VM_URL: http://victoriametrics:8428
+      JAEGER_URL: http://jaeger:16686
+      DATA_DIR: /data
+    volumes:
+      - backwork-data:/data
+    expose:
+      - "3000"
+    depends_on:
+      - loki
+      - victoriametrics
+      - jaeger
+
+volumes:
+  loki-data:
+  vm-data:
+  vector-data:
+  backwork-data:
