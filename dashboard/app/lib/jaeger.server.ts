@@ -1,11 +1,13 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
 import type { Tenant } from "./tenant.server";
+import { orgTraceServices } from "./otlp-tag.server";
 
-// Traces aren't org-tagged at OTLP ingest yet, so customer orgs see no traces
-// (no leak); platform sees all. Per-org trace tagging is the next increment.
-function blocked(t?: Tenant): boolean {
-  return !!t && !t.platform;
+// Traces are stamped with an enforced org_id (resource + every span) at the OTLP
+// proxy. Customer queries filter by that tag server-side AND are re-verified
+// client-side so a tag-search miss can never leak another org's traces.
+function orgTagParam(t?: Tenant): string | null {
+  return t && !t.platform ? JSON.stringify({ org_id: t.orgId }) : null;
 }
 
 export type TraceSummary = {
@@ -31,11 +33,17 @@ export type Span = {
 };
 
 export function services(tenant?: Tenant): Promise<string[]> {
-  if (blocked(tenant)) return Promise.resolve([]);
+  // No per-tenant /api/services in Jaeger; customer orgs use the proxy's
+  // org→services registry built as their traces are ingested.
+  if (tenant && !tenant.platform) return Promise.resolve(orgTraceServices(tenant.orgId));
   return cached("jaeger:services", 30000, async () => {
     const res = await fetchJson<{ data: string[] }>(`${config.jaegerUrl}/api/services`);
     return (res.data || []).filter((s) => s && s !== "jaeger-all-in-one").sort();
   });
+}
+
+function traceHasOrg(tr: RawTrace, orgId: string): boolean {
+  return (tr.spans || []).some((s) => (s.tags || []).some((t) => t.key === "org_id" && String(t.value) === orgId));
 }
 
 type RawTrace = {
@@ -67,7 +75,6 @@ export async function recentTraces(
   opts: { service?: string; limit?: number; lookbackHours?: number } = {},
   tenant?: Tenant
 ): Promise<TraceSummary[]> {
-  if (blocked(tenant)) return [];
   const lookback = (opts.lookbackHours ?? 1) * 3600 * 1e6; // micros
   const end = Date.now() * 1000;
   const params = new URLSearchParams({
@@ -77,11 +84,15 @@ export async function recentTraces(
     end: String(end),
   });
   if (opts.service) params.set("service", opts.service);
+  const orgTag = orgTagParam(tenant);
+  if (orgTag) params.set("tags", orgTag);
   const res = await fetchJson<{ data: RawTrace[] }>(
     `${config.jaegerUrl}/api/traces?${params.toString()}`
   );
+  let raw = res.data || [];
+  if (tenant && !tenant.platform) raw = raw.filter((tr) => traceHasOrg(tr, tenant.orgId));
   const out: TraceSummary[] = [];
-  for (const tr of res.data || []) {
+  for (const tr of raw) {
     if (!tr.spans?.length) continue;
     const svcSet = new Set<string>();
     let minStart = Infinity;
@@ -137,7 +148,6 @@ export async function recentRequests(
   opts: { service?: string; limit?: number; lookbackHours?: number } = {},
   tenant?: Tenant
 ): Promise<RequestRow[]> {
-  if (blocked(tenant)) return [];
   const lb = opts.lookbackHours ?? 1;
   const end = Date.now() * 1000;
   const params = new URLSearchParams({
@@ -147,9 +157,13 @@ export async function recentRequests(
     end: String(end),
   });
   if (opts.service) params.set("service", opts.service);
+  const orgTag = orgTagParam(tenant);
+  if (orgTag) params.set("tags", orgTag);
   const res = await fetchJson<{ data: RawTrace[] }>(`${config.jaegerUrl}/api/traces?${params.toString()}`);
+  let raw = res.data || [];
+  if (tenant && !tenant.platform) raw = raw.filter((tr) => traceHasOrg(tr, tenant.orgId));
   const rows: RequestRow[] = [];
-  for (const tr of res.data || []) {
+  for (const tr of raw) {
     if (!tr.spans?.length) continue;
     const root = tr.spans.find((s) => !s.references || s.references.length === 0) || tr.spans[0];
     const method = tagVal(root.tags, ["http.method", "http.request.method"]);
@@ -212,7 +226,8 @@ export async function getTrace(id: string): Promise<{ spans: Span[]; durationMs:
 }
 
 export async function dependencies(lookbackHours = 24, tenant?: Tenant): Promise<Array<{ parent: string; child: string; callCount: number }>> {
-  if (blocked(tenant)) return [];
+  // Jaeger's dependency graph isn't tag-scopable; customer orgs get none for now.
+  if (tenant && !tenant.platform) return [];
   const end = Date.now();
   const params = new URLSearchParams({
     endTs: String(end),
