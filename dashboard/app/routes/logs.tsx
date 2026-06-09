@@ -1,12 +1,12 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Form, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Await, Form, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Suspense } from "react";
 import { Search } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
-import { safe } from "~/lib/config.server";
 import { cached } from "~/lib/cache.server";
 import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 
@@ -35,9 +35,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const start = end - mins * 60 * 1000;
   const query = buildQuery(service, level, q);
   const ck = `logs:${rangeKey}:${query}`;
-  const services = await safe(() => loki.services(), [] as string[]); // fast (cached)
   return defer({
-    services: services.data,
+    services: loki.services().catch(() => [] as string[]),
     query,
     filters: { service, level, q, range: rangeKey },
     entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 })),
@@ -65,7 +64,9 @@ export default function Logs() {
         </div>
         <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
           <option value="all">all services</option>
-          {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
+          <Suspense fallback={f.service !== "all" ? <option value={f.service}>{f.service}</option> : null}>
+            <Await resolve={d.services}>{(svcs: string[]) => <>{svcs.map((s) => <option key={s} value={s}>{s}</option>)}</>}</Await>
+          </Suspense>
         </select>
         <select name="level" defaultValue={f.level} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
           {LEVELS.map((l) => <option key={l} value={l}>{l === "all" ? "all levels" : l}</option>)}
