@@ -1,8 +1,9 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { defer } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
+import { Deferred, RowsSkeleton } from "~/components/defer";
 import { config } from "~/lib/config.server";
 import * as vm from "~/lib/vm.server";
 import * as jaeger from "~/lib/jaeger.server";
@@ -25,24 +26,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const settingsKey = process.env.SETTINGS_KEY || "";
   const showToken = !settingsKey || url.searchParams.get("key") === settingsKey;
 
-  const [lokiUp, targets, jaegerSvcs] = await Promise.all([
+  const health = Promise.all([
     // /ready can flap 503; the labels API is a truer "is Loki serving" check
     ping(`${config.lokiUrl}/loki/api/v1/labels`),
     vm.targetsUp().then((t) => ({ ok: true, t })).catch(() => ({ ok: false, t: {} as Record<string, boolean> })),
     jaeger.services().then(() => true).catch(() => false),
-  ]);
+  ]).then(([lokiUp, targets, jaegerSvcs]) => ({
+    loki: lokiUp,
+    victoriametrics: targets.ok,
+    cadvisor: !!targets.t["cadvisor"],
+    vector: !!targets.t["vector"],
+    jaeger: jaegerSvcs,
+  }));
 
-  return json({
+  return defer({
     publicUrl: config.publicUrl,
     token: showToken ? config.ingestToken : "",
     tokenGated: !!settingsKey && !showToken,
-    health: {
-      loki: lokiUp,
-      victoriametrics: targets.ok,
-      cadvisor: !!targets.t["cadvisor"],
-      vector: !!targets.t["vector"],
-      jaeger: jaegerSvcs,
-    },
+    health,
     retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", traces: "in-memory, ~20k (Jaeger)" },
   });
 }
@@ -86,13 +87,17 @@ OTEL_SERVICE_NAME=<your-service>`;
 
       <Card>
         <CardHead title="Backend health" sub="the storage + collection layer" />
-        <ul className="divide-y divide-border">
-          <HealthRow name="Loki" up={d.health.loki} note="log storage · LogQL" />
-          <HealthRow name="VictoriaMetrics" up={d.health.victoriametrics} note="metrics · PromQL" />
-          <HealthRow name="cAdvisor" up={d.health.cadvisor} note="per-container metrics (scrape target)" />
-          <HealthRow name="Vector" up={d.health.vector} note="log collector (scrape target)" />
-          <HealthRow name="Jaeger" up={d.health.jaeger} note="traces · OTLP" />
-        </ul>
+        <Deferred resolve={d.health} fallback={<RowsSkeleton rows={5} />}>
+          {(h) => (
+            <ul className="divide-y divide-border">
+              <HealthRow name="Loki" up={h.loki} note="log storage · LogQL" />
+              <HealthRow name="VictoriaMetrics" up={h.victoriametrics} note="metrics · PromQL" />
+              <HealthRow name="cAdvisor" up={h.cadvisor} note="per-container metrics (scrape target)" />
+              <HealthRow name="Vector" up={h.vector} note="log collector (scrape target)" />
+              <HealthRow name="Jaeger" up={h.jaeger} note="traces · OTLP" />
+            </ul>
+          )}
+        </Deferred>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">

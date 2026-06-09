@@ -1,24 +1,20 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { defer, json, redirect } from "@remix-run/node";
 import { Form, useFetcher, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import { Check, Plus, Send, Trash2, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
+import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as alerts from "~/lib/alerts.server";
 import * as channels from "~/lib/channels.server";
-import { safe } from "~/lib/config.server";
 import { cn, fmtNum } from "~/lib/utils";
 
 export async function loader(_args: LoaderFunctionArgs) {
-  const [states, chans] = await Promise.all([
-    safe(() => alerts.evaluate(), [] as alerts.AlertState[]),
-    safe(() => channels.loadChannels(), [] as channels.Channel[]),
-  ]);
-  return json({
-    states: states.data,
-    error: states.error,
+  return defer({
+    data: Promise.all([alerts.evaluate(), channels.loadChannels()])
+      .then(([states, chans]) => ({ states, channels: chans.map(channels.redact) }))
+      .catch(() => ({ states: [] as alerts.AlertState[], channels: [] as ReturnType<typeof channels.redact>[] })),
     meta: alerts.METRIC_META,
-    channels: chans.data.map(channels.redact),
     channelTypes: channels.CHANNEL_TYPES,
   });
 }
@@ -137,18 +133,23 @@ function AddChannelForm({ types }: { types: Record<string, { label: string; hint
 
 export default function Alerts() {
   const d = useLoaderData<typeof loader>();
-  const firing = d.states.filter((s) => s.firing).length;
-  const enabled = d.states.filter((s) => s.enabled).length;
-  const chanName = (id: string) => d.channels.find((c) => c.id === id)?.name || id;
-
   return (
     <div className="space-y-5 animate-fade-in">
       <PageTitle title="Alerts" sub="Thresholds on real metrics and log rates, evaluated live and delivered to your channels (webhook, Slack, Discord, email, SMS)." />
 
+      <Deferred resolve={d.data} fallback={<Card><RowsSkeleton rows={8} /></Card>}>
+        {(dd) => {
+          const states = dd.states;
+          const channels = dd.channels;
+          const firing = states.filter((s) => s.firing).length;
+          const enabled = states.filter((s) => s.enabled).length;
+          const chanName = (id: string) => channels.find((c) => c.id === id)?.name || id;
+          return (
+            <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card className="px-4 py-3.5">
           <div className="text-2xs uppercase tracking-wide text-faint">Rules</div>
-          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{d.states.length}</div>
+          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{states.length}</div>
         </Card>
         <Card className="px-4 py-3.5">
           <div className="text-2xs uppercase tracking-wide text-faint">Firing now</div>
@@ -160,13 +161,13 @@ export default function Alerts() {
         </Card>
         <Card className="px-4 py-3.5">
           <div className="text-2xs uppercase tracking-wide text-faint">Channels</div>
-          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{d.channels.length}</div>
+          <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">{channels.length}</div>
         </Card>
       </div>
 
       <Card>
         <CardHead title="Rules" sub="condition, live value, status, channels" />
-        {d.states.length === 0 ? (
+        {states.length === 0 ? (
           <Empty title="No alert rules">Add one below.</Empty>
         ) : (
           <div className="overflow-x-auto scroll-thin">
@@ -182,7 +183,7 @@ export default function Alerts() {
                 </tr>
               </thead>
               <tbody>
-                {d.states.map((s) => {
+                {states.map((s) => {
                   const meta = d.meta[s.metric];
                   return (
                     <tr key={s.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
@@ -221,11 +222,11 @@ export default function Alerts() {
             <label className="lg:col-span-1 text-2xs font-medium text-muted">Value<input name="threshold" type="number" step="any" defaultValue="2" className={cn(FIELD, "mt-1 font-mono")} /></label>
             <div className="lg:col-span-2"><button type="submit" className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90"><Plus className="h-4 w-4" /> Add rule</button></div>
           </div>
-          {d.channels.length > 0 ? (
+          {channels.length > 0 ? (
             <div>
               <div className="mb-1.5 text-2xs font-medium text-muted">Notify channels</div>
               <div className="flex flex-wrap gap-3">
-                {d.channels.map((c) => (
+                {channels.map((c) => (
                   <label key={c.id} className="inline-flex items-center gap-1.5 text-[13px]">
                     <input type="checkbox" name="channelIds" value={c.id} className="accent-[oklch(0.6_0.18_16)]" />
                     {c.name} <span className="text-2xs text-faint">{c.type}</span>
@@ -241,11 +242,11 @@ export default function Alerts() {
 
       <Card>
         <CardHead title="Channels" sub="where firing alerts are delivered" />
-        {d.channels.length === 0 ? (
+        {channels.length === 0 ? (
           <Empty title="No channels yet">Add a webhook, Slack, Discord, email or SMS channel below.</Empty>
         ) : (
           <ul className="divide-y divide-border">
-            {d.channels.map((c) => (
+            {channels.map((c) => (
               <li key={c.id} className="flex items-center gap-3 px-4 py-2.5">
                 <Badge tone="info">{c.type}</Badge>
                 <span className="font-medium">{c.name}</span>
@@ -266,6 +267,10 @@ export default function Alerts() {
         <CardHead title="New channel" sub="webhook · Slack · Discord · email · SMS — you supply the destination/credentials" />
         <AddChannelForm types={d.channelTypes} />
       </Card>
+            </div>
+          );
+        }}
+      </Deferred>
     </div>
   );
 }

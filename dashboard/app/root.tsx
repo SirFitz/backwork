@@ -42,7 +42,26 @@ export const meta: MetaFunction = () => [
   { name: "description", content: "Self-hosted log aggregation and application performance monitoring." },
 ];
 
+// Temporary HTTP basic-auth gate for the (currently public) dashboard UI.
+// Enabled by setting BASIC_AUTH_USER + BASIC_AUTH_PASS. Only runs for document
+// loads (this root loader); the machine endpoints (/ingest, /otlp, /install.sh,
+// /healthz) are resource routes that don't invoke the root loader, so agents
+// keep working. Superseded by the real multi-tenant auth.
+function requireBasicAuth(request: Request) {
+  const user = process.env.BASIC_AUTH_USER;
+  const pass = process.env.BASIC_AUTH_PASS;
+  if (!user || !pass) return;
+  const expected = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+  if ((request.headers.get("authorization") || "") !== expected) {
+    throw new Response("Authentication required", {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Basic realm="backwork.dev", charset="UTF-8"' },
+    });
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
+  requireBasicAuth(request);
   ensureEvaluator(); // start the background alert evaluator once
   const { getTheme } = await themeSessionResolver(request);
   // Light is the default. Dark is an explicit, persisted choice.
