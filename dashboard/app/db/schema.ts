@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
 export const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
@@ -92,6 +92,14 @@ export const alertChannels = pgTable("alert_channels", {
   data: jsonb("data").$type<Record<string, unknown>>().notNull(),
   ...ts(),
 }, (t) => ({ orgIdx: index("alert_channels_org_idx").on(t.orgId) }));
+
+// Which service names each org's traces carry (Jaeger has no per-tenant
+// /api/services); upserted at OTLP ingest, read for the customer trace dropdown.
+export const traceServices = pgTable("trace_services", {
+  orgId: text("org_id").notNull(),
+  service: text("service").notNull(),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.service] }) }));
 
 export const migrations = pgTable("migrations", {
   name: text("name").primaryKey(),

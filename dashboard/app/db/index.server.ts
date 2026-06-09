@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS alert_channels (
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS alert_channels_org_idx ON alert_channels (org_id);
 
+CREATE TABLE IF NOT EXISTS trace_services (
+  org_id text NOT NULL, service text NOT NULL,
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, service));
+
 CREATE TABLE IF NOT EXISTS migrations (
   name text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
 

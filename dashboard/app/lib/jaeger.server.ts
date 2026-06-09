@@ -35,7 +35,7 @@ export type Span = {
 export function services(tenant?: Tenant): Promise<string[]> {
   // No per-tenant /api/services in Jaeger; customer orgs use the proxy's
   // org→services registry built as their traces are ingested.
-  if (tenant && !tenant.platform) return Promise.resolve(orgTraceServices(tenant.orgId));
+  if (tenant && !tenant.platform) return orgTraceServices(tenant.orgId);
   return cached("jaeger:services", 30000, async () => {
     const res = await fetchJson<{ data: string[] }>(`${config.jaegerUrl}/api/services`);
     return (res.data || []).filter((s) => s && s !== "jaeger-all-in-one").sort();

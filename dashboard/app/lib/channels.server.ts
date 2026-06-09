@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { alertChannels } from "~/db/schema";
+import { encryptSecret, decryptSecret } from "./crypto.server";
 
 export type ChannelType = "webhook" | "slack" | "discord" | "email" | "sms";
 
@@ -54,18 +55,27 @@ export const CHANNEL_TYPES: Record<ChannelType, { label: string; hint: string; f
   },
 };
 
+// Encrypt/decrypt the secret-flagged config fields of a channel in place (copy).
+function cryptChannel(c: Channel, fn: (v: string) => string): Channel {
+  const secrets = new Set((CHANNEL_TYPES[c.type]?.fields || []).filter((f) => f.secret).map((f) => f.key));
+  const config: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c.config || {})) config[k] = secrets.has(k) ? fn(v) : v;
+  return { ...c, config };
+}
+
 export async function loadChannels(orgId: string): Promise<Channel[]> {
   await ensureSchema();
   const rows = await db.select({ data: alertChannels.data }).from(alertChannels).where(eq(alertChannels.orgId, orgId));
-  return rows.map((r) => r.data as unknown as Channel);
+  return rows.map((r) => cryptChannel(r.data as unknown as Channel, (v) => decryptSecret(v)));
 }
 
 export async function saveChannels(orgId: string, channels: Channel[]): Promise<void> {
   await ensureSchema();
+  const encrypted = channels.map((c) => cryptChannel(c, (v) => encryptSecret(v)));
   await db.transaction(async (tx) => {
     await tx.delete(alertChannels).where(eq(alertChannels.orgId, orgId));
-    if (channels.length) {
-      await tx.insert(alertChannels).values(channels.map((c) => ({ id: c.id, orgId, data: c as unknown as Record<string, unknown> })));
+    if (encrypted.length) {
+      await tx.insert(alertChannels).values(encrypted.map((c) => ({ id: c.id, orgId, data: c as unknown as Record<string, unknown> })));
     }
   });
 }
