@@ -31,7 +31,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     rows = r.data;
     error = r.error;
   }
-  return json({ services: list, rows, error, service: chosen });
+  const capped = chosen === "all" ? rows.length >= 200 : rows.length >= 120;
+  return json({ services: list, rows, error, service: chosen, capped });
 }
 
 function statusTone(s: number | null) {
@@ -133,6 +134,7 @@ export default function Requests() {
           <Card>
             <CardHead title="Recent requests" sub={`${d.service === "all" ? "all instrumented services" : d.service} · last 1h`} right={<Badge tone="neutral">{rows.length}</Badge>} />
             <ErrorNote error={d.error} />
+            {d.capped ? <div className="px-4 pt-2 text-2xs text-faint">Showing the newest {rows.length} requests from the last hour — filter by service to see a specific one in full.</div> : null}
             {rows.length === 0 ? (
               <Empty title="No matching requests">Adjust the filters or widen the service selection.</Empty>
             ) : (

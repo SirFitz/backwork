@@ -13,8 +13,8 @@ import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, memberships: mems } = await requireUser(request);
-  if (mems.length > 0) throw redirect("/");
-  return json({ name: user.name });
+  // allow creating additional organizations (not just the first) — M8
+  return json({ name: user.name, first: mems.length === 0 });
 }
 
 async function uniqueSlug(base: string): Promise<string> {

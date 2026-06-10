@@ -9,6 +9,7 @@ import { db } from "~/db/index.server";
 import { memberships, users, invitations, type Role } from "~/db/schema";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
+import { sendMail } from "~/lib/mailer.server";
 import { config } from "~/lib/config.server";
 import { cn } from "~/lib/utils";
 
@@ -39,14 +40,18 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "invite") {
     const email = String(fd.get("email") || "").trim().toLowerCase();
     const role = (String(fd.get("role") || "member") as Role);
-    if (!email) return json({ error: "Email is required." }, { status: 400 });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Enter a valid email address." }, { status: 400 });
+    if (!(["owner", "admin", "member", "viewer"] as Role[]).includes(role)) return json({ error: "Invalid role." }, { status: 400 });
     if (role === "owner") requireRole(ctx, "owner");
     const token = ulid() + ulid();
     await db.insert(invitations).values({
       id: ulid(), orgId: ctx.org.id, email, role, token, invitedByUserId: ctx.user.id,
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
     });
-    return json({ inviteLink: `${config.publicUrl}/invite/${token}` });
+    const inviteLink = `${config.publicUrl}/invite/${token}`;
+    // actually deliver the invite (M3); the link is also shown to the inviter as a fallback
+    await sendMail(email, `You've been invited to ${ctx.org.name} on backwork`, `${ctx.user.name || ctx.user.email} invited you to join "${ctx.org.name}" on backwork.\n\nAccept the invite (valid 7 days):\n${inviteLink}\n\nIf you don't have an account yet, you'll be able to create one.`);
+    return json({ inviteLink });
   }
 
   if (intent === "change-role") {

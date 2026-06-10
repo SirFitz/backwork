@@ -52,9 +52,9 @@ export default function Register() {
   return (
     <AuthCard title="Create your account" sub="Start monitoring in minutes." footer={<>Already have an account? <Link to="/login" className="font-medium text-brand hover:underline">Sign in</Link></>}>
       <Form method="post" className="space-y-3">
-        <input name="name" type="text" autoComplete="name" placeholder="Your name" className={AUTH_FIELD} />
-        <input name="email" type="email" autoComplete="email" required placeholder="you@example.com" className={AUTH_FIELD} />
-        <input name="password" type="password" autoComplete="new-password" required placeholder="Password (10+ chars)" className={AUTH_FIELD} />
+        <input name="name" type="text" autoComplete="name" placeholder="Your name" aria-label="Your name" className={AUTH_FIELD} />
+        <input name="email" type="email" autoComplete="email" required placeholder="you@example.com" aria-label="Email address" className={AUTH_FIELD} />
+        <input name="password" type="password" autoComplete="new-password" required placeholder="Password (10+ chars)" aria-label="Password" className={AUTH_FIELD} />
         {data?.error ? <p className="text-[13px] text-err">{data.error}</p> : null}
         <button type="submit" disabled={nav.state !== "idle"} className="h-10 w-full rounded-lg bg-brand text-[14px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
           {nav.state !== "idle" ? "Creating…" : "Create account"}

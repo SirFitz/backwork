@@ -60,6 +60,7 @@ export default function Traces() {
           <Card>
             <CardHead title="Recent traces" sub={`${d.service} · last 1h`} right={<Badge tone="neutral">{d.traces.length}</Badge>} />
             <ErrorNote error={d.error} />
+            {d.traces.length >= 40 ? <div className="px-4 pt-2 text-2xs text-faint">Showing the 40 most recent traces from the last hour — pick a service to narrow.</div> : null}
             {d.traces.length === 0 ? (
               <Empty title="No traces in range">Nothing from this service in the last hour.</Empty>
             ) : (

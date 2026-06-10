@@ -22,7 +22,12 @@ function buildQuery(service: string, level: string, q: string): string {
   if (level && level !== "all") m.push(`level="${level}"`);
   if (m.length === 0) m.push(`service=~".+"`);
   let query = `{${m.join(",")}}`;
-  if (q.trim()) query += ` |~ "(?i)${q.trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // literal, case-insensitive substring match — escape regex metacharacters so
+  // a user search like "GET /x?y=1" or "(foo)" doesn't break the LogQL query (M9)
+  if (q.trim()) {
+    const esc = q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/"/g, '\\"');
+    query += ` |~ "(?i)${esc}"`;
+  }
   return query;
 }
 
@@ -102,6 +107,7 @@ export default function Logs() {
                     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg/90">{e.message}</span>
                   </div>
                 ))}
+                {entries.length >= 200 ? <div className="border-t border-border/40 px-4 py-1.5 text-2xs text-faint">Showing the newest 200 lines — narrow by service, level, or time range to see more.</div> : null}
               </div>
             )
           }
