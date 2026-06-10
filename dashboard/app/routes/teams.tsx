@@ -67,8 +67,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "remove-member") {
-    // org-scope the delete: only team_members of a team in THIS org (H5 IDOR)
-    await db.delete(teamMembers).where(and(eq(teamMembers.id, String(fd.get("id"))), inArray(teamMembers.teamId, db.select({ id: teams.id }).from(teams).where(eq(teams.orgId, ctx.org.id)))));
+    // org-scope the delete: only team_members whose team belongs to THIS org (H5 IDOR).
+    // .returning() lets us 404 when nothing matched, so a cross-tenant or bogus id can't
+    // report success. Both cases return the same 404 — no existence oracle for other orgs' ids.
+    const removed = await db
+      .delete(teamMembers)
+      .where(and(eq(teamMembers.id, String(fd.get("id"))), inArray(teamMembers.teamId, db.select({ id: teams.id }).from(teams).where(eq(teams.orgId, ctx.org.id)))))
+      .returning({ id: teamMembers.id });
+    if (!removed.length) return json({ error: "Member not found." }, { status: 404 });
     return json({ ok: true });
   }
 
