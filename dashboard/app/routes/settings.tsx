@@ -94,7 +94,7 @@ OTEL_SERVICE_NAME=<your-service>`;
       <PageTitle title="Settings" sub="Connect more sources, check backend health, and see retention. Everything backwork ingests is real host telemetry." />
 
       <Card>
-        <CardHead title="Backend health" sub="the storage + collection layer" />
+        <CardHead title={d.isPlatform ? "Backend health" : "backwork platform status"} sub={d.isPlatform ? "the storage + collection layer" : "the shared backend — not a check of your own data flow"} />
         <Deferred resolve={d.health} fallback={<RowsSkeleton rows={5} />}>
           {(h) => (
             <ul className="divide-y divide-border">

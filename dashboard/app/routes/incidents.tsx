@@ -19,6 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const end = Date.now();
   const start = end - 6 * 3600 * 1000;
   return defer({
+    isPlatform: t.platform,
     incidents: analysis.getIncidents(t),
     errors: cached(`inc:errors:${t.orgId}`, 8000, () => loki.queryRange('{level="error"}', { start, end, limit: 120 }, t)),
   });
@@ -38,7 +39,7 @@ export default function Incidents() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Incidents" sub="Crashes, OOM kills, failing healthchecks, restart loops and error spikes, detected automatically from container state, metrics and logs." />
+      <PageTitle title="Incidents" sub={d.isPlatform ? "Crashes, OOM kills, failing healthchecks, restart loops and error spikes, detected automatically from container state, metrics and logs." : "Error spikes detected from your logs, plus OOM/restart signals when you ship container metrics. Crash/healthcheck detection needs the host agent."} />
 
       <Deferred resolve={d.incidents} fallback={<div className="grid grid-cols-3 gap-3">{Array.from({ length: 3 }).map((_, i) => <Card key={i} className="px-4 py-3.5"><Skeleton className="h-2.5 w-16" /><Skeleton className="mt-2 h-6 w-10" /></Card>)}</div>}>
         {(incidents) => {
@@ -54,7 +55,7 @@ export default function Incidents() {
       </Deferred>
 
       <Card>
-        <CardHead title="Open incidents" sub="derived from live container state, cAdvisor and logs" />
+        <CardHead title="Open incidents" sub={d.isPlatform ? "derived from live container state, cAdvisor and logs" : "derived from your logs (and metrics, if shipped)"} />
         <Deferred resolve={d.incidents} fallback={<RowsSkeleton rows={5} />}>
           {(incidents) =>
             incidents.length === 0 ? (

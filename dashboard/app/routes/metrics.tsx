@@ -18,15 +18,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const t = tenantOf(ctx.org.id);
   const end = Date.now();
   const start = end - 60 * 60 * 1000;
-  const named = (rows: vm.Series[]) => rows.map((r, i) => ({ name: r.metric[KEY] || "other", color: PALETTE[i % PALETTE.length], points: r.points }));
+  // Group by the Coolify resource label on the platform host; on customer hosts
+  // that label doesn't exist (vanilla cAdvisor), so group by container `name`
+  // instead — otherwise every customer container collapses into one bucket (C3).
+  const grp = t.platform ? KEY : "name";
+  const label = (m: Record<string, string>) => m[KEY] || m.name || "other";
+  const named = (rows: vm.Series[]) => rows.map((r, i) => ({ name: label(r.metric), color: PALETTE[i % PALETTE.length], points: r.points }));
 
   const cadvisor = Promise.all([
-    vm.range(`topk(7, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, { start, end, step: "120s" }, t),
-    vm.range(`topk(7, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`, { start, end, step: "120s" }, t),
+    vm.range(`topk(7, sum by (${grp})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, { start, end, step: "120s" }, t),
+    vm.range(`topk(7, sum by (${grp})(container_memory_working_set_bytes{name!=""}))`, { start, end, step: "120s" }, t),
     vm.range(`sum(rate(container_network_receive_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }, t),
     vm.range(`sum(rate(container_network_transmit_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }, t),
-    vm.instant(`topk(10, sum by (${KEY})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, undefined, t),
-    vm.instant(`topk(10, sum by (${KEY})(container_memory_working_set_bytes{name!=""}))`, undefined, t),
+    vm.instant(`topk(10, sum by (${grp})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, undefined, t),
+    vm.instant(`topk(10, sum by (${grp})(container_memory_working_set_bytes{name!=""}))`, undefined, t),
   ]).then(([cpuTop, memTop, netRx, netTx, cpuNow, memNow]) => ({
     cpuTop: named(cpuTop),
     memTop: named(memTop),
@@ -34,8 +39,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       { name: "rx", color: PALETTE[1], points: netRx[0]?.points ?? [] },
       { name: "tx", color: PALETTE[0], points: netTx[0]?.points ?? [] },
     ],
-    cpuNow: cpuNow.map((r) => ({ name: r.metric[KEY] || "other", v: r.value })).sort((a, b) => b.v - a.v),
-    memNow: memNow.map((r) => ({ name: r.metric[KEY] || "other", v: r.value })).sort((a, b) => b.v - a.v),
+    cpuNow: cpuNow.map((r) => ({ name: label(r.metric), v: r.value })).sort((a, b) => b.v - a.v),
+    memNow: memNow.map((r) => ({ name: label(r.metric), v: r.value })).sort((a, b) => b.v - a.v),
     empty: cpuTop.length === 0 && memTop.length === 0,
   }));
 
