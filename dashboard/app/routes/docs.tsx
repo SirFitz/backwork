@@ -79,7 +79,23 @@ export default function Docs() {
           <P>Logs appear under <span className="font-mono text-[13px]">Logs</span>; host metrics (node-exporter) and per-container metrics (cAdvisor) under <span className="font-mono text-[13px]">Metrics</span>.</P>
 
           <H2 id="traces">Traces (OpenTelemetry)</H2>
-          <P>backwork speaks OTLP natively. Point any OpenTelemetry SDK or Collector at one endpoint with your token — no Collector config required:</P>
+          <P>The fastest path is the backwork SDK — it wires OpenTelemetry to your project in one line. Install it, set <span className="font-mono text-[13px]">BACKWORK_TOKEN</span> to your project token, and preload it:</P>
+          <Code>{`# Node
+npm i @sirfitz/backwork
+BACKWORK_TOKEN=<YOUR_INGEST_TOKEN> BACKWORK_SERVICE=my-api \\
+  node --import @sirfitz/backwork/register server.js
+
+# Bun
+bun add @sirfitz/backwork
+BACKWORK_TOKEN=<YOUR_INGEST_TOKEN> bun --preload @sirfitz/backwork/start run server.ts`}</Code>
+          <P><span className="font-medium text-fg">Elixir</span> — add <span className="font-mono text-[13px]">{"{:backwork, \"~> 0.1\"}"}</span> to your deps, then:</P>
+          <Code>{`# config/runtime.exs
+config :opentelemetry, traces_exporter: :otlp
+config :opentelemetry_exporter, Backwork.exporter_config()
+
+# application.ex — before your supervisor children
+Backwork.setup(phoenix_adapter: :bandit, ecto: [[:my_app, :repo]])`}</Code>
+          <P>Prefer raw OpenTelemetry? backwork speaks OTLP natively — point any OTel SDK or Collector at one endpoint with your token, no SDK required:</P>
           <Code>{`OTEL_EXPORTER_OTLP_ENDPOINT=https://backwork.dev/otlp
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <YOUR_INGEST_TOKEN>
