@@ -1,13 +1,14 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ulid } from "ulid";
 import { Plus, Trash2, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { db } from "~/db/index.server";
 import { teams, teamMembers, memberships, users } from "~/db/schema";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 import { slugify } from "~/lib/utils";
 import { cn } from "~/lib/utils";
 
@@ -29,6 +30,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const ctx = await requireOrg(request);
   requireRole(ctx, "admin");
   const fd = await request.formData();
@@ -65,7 +67,8 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "remove-member") {
-    await db.delete(teamMembers).where(eq(teamMembers.id, String(fd.get("id"))));
+    // org-scope the delete: only team_members of a team in THIS org (H5 IDOR)
+    await db.delete(teamMembers).where(and(eq(teamMembers.id, String(fd.get("id"))), inArray(teamMembers.teamId, db.select({ id: teams.id }).from(teams).where(eq(teams.orgId, ctx.org.id)))));
     return json({ ok: true });
   }
 
@@ -82,7 +85,7 @@ export default function Teams() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Teams" sub="Group members into teams. Teams will scope which projects each group can see." />
+      <PageTitle title="Teams" sub="Group members into teams. (Grouping only for now — teams don't yet restrict access to projects or data.)" />
 
       {data && "error" in data && data.error ? <div className="rounded-lg border border-err/30 bg-err/5 px-4 py-2.5 text-[13px] text-err">{data.error}</div> : null}
 
@@ -106,7 +109,7 @@ export default function Teams() {
           const addable = d.orgMembers.filter((m) => !memberIds.has(m.userId));
           return (
             <Card key={t.id}>
-              <CardHead title={t.name} sub={`${mem.length} member${mem.length === 1 ? "" : "s"}`} right={canManage ? <Form method="post"><input type="hidden" name="intent" value="delete-team" /><input type="hidden" name="teamId" value={t.id} /><button className="text-2xs text-faint hover:text-err">delete team</button></Form> : null} />
+              <CardHead title={t.name} sub={`${mem.length} member${mem.length === 1 ? "" : "s"}`} right={canManage ? <Form method="post" onSubmit={(e) => { if (!confirm(`Delete team "${t.name}"? This can't be undone.`)) e.preventDefault(); }}><input type="hidden" name="intent" value="delete-team" /><input type="hidden" name="teamId" value={t.id} /><button className="text-2xs text-faint hover:text-err">delete team</button></Form> : null} />
               <ul className="divide-y divide-border">
                 {mem.length === 0 ? <li className="px-4 py-3 text-[13px] text-faint">No members in this team.</li> : mem.map((m) => (
                   <li key={m.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">

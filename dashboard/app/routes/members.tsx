@@ -8,6 +8,7 @@ import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { db } from "~/db/index.server";
 import { memberships, users, invitations, type Role } from "~/db/schema";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 import { config } from "~/lib/config.server";
 import { cn } from "~/lib/utils";
 
@@ -28,6 +29,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const ctx = await requireOrg(request);
   requireRole(ctx, "admin");
   const fd = await request.formData();
@@ -110,7 +112,7 @@ export default function Members() {
                   <td className="px-4 py-2.5 font-mono text-2xs text-muted">{m.email}</td>
                   <td className="px-4 py-2.5">
                     {canManage && m.userId !== d.meId ? (
-                      <Form method="post" className="inline">
+                      <Form method="post" className="inline" onSubmit={(e) => { if (!confirm(`Change ${m.email}'s role?`)) e.preventDefault(); }}>
                         <input type="hidden" name="intent" value="change-role" />
                         <input type="hidden" name="membershipId" value={m.membershipId} />
                         <select name="role" defaultValue={m.role} onChange={(e) => e.currentTarget.form?.requestSubmit()} className={cn(FIELD, "h-8 py-0")}>
@@ -121,7 +123,7 @@ export default function Members() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     {canManage && !(m.userId === d.meId) ? (
-                      <Form method="post"><input type="hidden" name="intent" value="remove-member" /><input type="hidden" name="membershipId" value={m.membershipId} /><button className="text-faint hover:text-err" aria-label="remove member"><Trash2 className="h-3.5 w-3.5" /></button></Form>
+                      <Form method="post" onSubmit={(e) => { if (!confirm(`Remove ${m.email} from this organization?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="remove-member" /><input type="hidden" name="membershipId" value={m.membershipId} /><button className="text-faint hover:text-err" aria-label="remove member"><Trash2 className="h-3.5 w-3.5" /></button></Form>
                     ) : null}
                   </td>
                 </tr>
@@ -152,7 +154,7 @@ export default function Members() {
                 <span className="font-mono text-muted">{iv.email}</span>
                 <Badge tone="neutral">{iv.role}</Badge>
                 <span className="ml-auto text-2xs text-faint">expires {new Date(iv.expiresAt).toLocaleDateString()}</span>
-                {canManage ? <Form method="post"><input type="hidden" name="intent" value="revoke-invite" /><input type="hidden" name="id" value={iv.id} /><button className="text-faint hover:text-err" aria-label="revoke"><Trash2 className="h-3.5 w-3.5" /></button></Form> : null}
+                {canManage ? <Form method="post" onSubmit={(e) => { if (!confirm(`Revoke the invite for ${iv.email}?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="revoke-invite" /><input type="hidden" name="id" value={iv.id} /><button className="text-faint hover:text-err" aria-label="revoke"><Trash2 className="h-3.5 w-3.5" /></button></Form> : null}
               </li>
             ))}
           </ul>

@@ -207,7 +207,7 @@ export default function Alerts() {
                       <td className="px-4 py-2.5">
                         <div className="flex items-center justify-end gap-3">
                           <Form method="post"><input type="hidden" name="intent" value="toggle" /><input type="hidden" name="id" value={s.id} /><button className="text-2xs text-muted hover:text-fg">{s.enabled ? "disable" : "enable"}</button></Form>
-                          <Form method="post"><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={s.id} /><button className="text-faint hover:text-err" aria-label="delete rule"><Trash2 className="h-3.5 w-3.5" /></button></Form>
+                          <Form method="post" onSubmit={(e) => { if (!confirm(`Delete alert rule "${s.name}"?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={s.id} /><button className="text-faint hover:text-err" aria-label="delete rule"><Trash2 className="h-3.5 w-3.5" /></button></Form>
                         </div>
                       </td>
                     </tr>
@@ -264,7 +264,7 @@ export default function Alerts() {
                 <div className="ml-auto flex items-center gap-4">
                   <TestButton id={c.id} />
                   <Form method="post"><input type="hidden" name="intent" value="toggle_channel" /><input type="hidden" name="id" value={c.id} /><button className="text-2xs text-muted hover:text-fg">{c.enabled ? "disable" : "enable"}</button></Form>
-                  <Form method="post"><input type="hidden" name="intent" value="delete_channel" /><input type="hidden" name="id" value={c.id} /><button className="text-faint hover:text-err" aria-label="delete channel"><Trash2 className="h-3.5 w-3.5" /></button></Form>
+                  <Form method="post" onSubmit={(e) => { if (!confirm(`Delete channel "${c.name}"?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="delete_channel" /><input type="hidden" name="id" value={c.id} /><button className="text-faint hover:text-err" aria-label="delete channel"><Trash2 className="h-3.5 w-3.5" /></button></Form>
                 </div>
               </li>
             ))}
