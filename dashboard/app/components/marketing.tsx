@@ -225,15 +225,6 @@ function HeroVisual() {
 }
 
 /* ---------- features ---------- */
-const PILLARS = [
-  { icon: ScrollText, name: "Logs", line: "Every line, searchable.", body: "Full-text and LogQL search across every container, with level, service and time filters and a live volume chart." },
-  { icon: Activity, name: "Metrics", line: "Host to container to app.", body: "node-exporter and cAdvisor metrics plus RED rates derived from real traces — PromQL under the hood, no dashboards to wire." },
-  { icon: GitBranch, name: "Traces", line: "Follow every request.", body: "OpenTelemetry-native distributed traces with a span waterfall and a service dependency map." },
-  { icon: Network, name: "Requests", line: "RED, at a glance.", body: "A flat HTTP feed — method, route, status and latency — that jumps straight to the underlying trace." },
-  { icon: AlertTriangle, name: "Incidents", line: "It tells you first.", body: "Crash, OOM, restart-loop and error-spike detection derived from real container state, metrics and logs." },
-  { icon: BellRing, name: "Alerts", line: "Routed where you'll see them.", body: "Rules to Slack, Discord, webhook, email or SMS — with a no-data state so an outage never fakes “all clear.”" },
-];
-
 const DIFFS = [
   { icon: Server, title: "Own your data", body: "Self-hosted on your own box with one Docker command. Your telemetry never leaves your infrastructure — no per-GB bill, no third-party retention." },
   { icon: Layers, title: "Multi-tenant, SaaS-ready", body: "Organizations, teams, roles and per-project ingest tokens. Every tenant's logs, metrics and traces are isolated to the byte." },
@@ -306,55 +297,108 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
         </div>
       </Section>
 
-      {/* features grid */}
+      {/* features — bento with live product previews */}
       <Section id="features" className="py-8">
-        <div data-reveal className="mb-10 text-center">
+        <div data-reveal className="mb-10 max-w-2xl">
           <Eyebrow>One tool, the whole picture</Eyebrow>
           <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Everything you need to watch a system.</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-[15px] text-muted">Logs, metrics and traces share one timeline, one search, and one set of alerts — no tab-juggling.</p>
+          <p className="mt-4 text-[15px] text-muted">Logs, metrics and traces share one timeline, one search and one set of alerts — no tab-juggling.</p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {PILLARS.map((p) => (
-            <div key={p.name} data-reveal className="group rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong hover:shadow-sm">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand/10 text-brand transition group-hover:scale-105"><p.icon className="h-5 w-5" /></span>
-              <h3 className="mt-4 text-[15px] font-semibold">{p.name} <span className="font-normal text-muted">— {p.line}</span></h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{p.body}</p>
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      {/* differentiators */}
-      <Section className="py-20">
-        <div className="grid gap-4 md:grid-cols-2">
-          {DIFFS.map((d) => (
-            <div key={d.title} data-reveal className="flex gap-4 rounded-2xl border border-border bg-surface p-6">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand"><d.icon className="h-5 w-5" /></span>
-              <div>
-                <h3 className="text-base font-semibold">{d.title}</h3>
-                <p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{d.body}</p>
+        <div className="grid gap-3 lg:grid-cols-6">
+          {/* Logs — wide */}
+          <BentoTile span="lg:col-span-4" wide icon={ScrollText} name="Logs" line="Every line, searchable."
+            body="Full-text and LogQL search across every container, with level, service and time filters and a live volume chart."
+            visual={
+              <div className="space-y-1.5 rounded-lg border border-border bg-bg p-3 font-mono text-[10.5px] leading-snug">
+                {[["12:04:21", "INFO", "GET /checkout 200 · 142ms", "text-info"], ["12:04:21", "WARN", "retry upstream payments (1/3)", "text-warn"], ["12:04:20", "ERR", "POST /charge 500 · timeout", "text-err"], ["12:04:19", "INFO", "cache hit user:8842", "text-info"], ["12:04:18", "INFO", "GET /api/orders 200", "text-info"]].map((l, i) => (
+                  <div key={i} className="flex items-center gap-2"><span className="text-faint">{l[0]}</span><span className={cn("w-8 font-semibold", l[3])}>{l[1]}</span><span className="truncate text-fg/80">{l[2]}</span></div>
+                ))}
               </div>
-            </div>
-          ))}
+            } />
+          {/* Metrics */}
+          <BentoTile span="lg:col-span-2" icon={Activity} name="Metrics" line="Host to container to app."
+            body="node-exporter and cAdvisor metrics plus RED rates from real traces — PromQL underneath."
+            visual={
+              <div className="rounded-lg border border-border bg-bg p-2">
+                <svg viewBox="0 0 200 52" className="h-14 w-full" preserveAspectRatio="none" aria-hidden>
+                  <defs><linearGradient id="mkm" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="oklch(var(--brand))" stopOpacity="0.25" /><stop offset="100%" stopColor="oklch(var(--brand))" stopOpacity="0" /></linearGradient></defs>
+                  <path d="M0,40 C18,36 28,18 46,22 C66,27 76,44 96,38 C118,31 130,10 150,16 C172,22 184,30 200,26 L200,52 L0,52 Z" fill="url(#mkm)" />
+                  <path d="M0,40 C18,36 28,18 46,22 C66,27 76,44 96,38 C118,31 130,10 150,16 C172,22 184,30 200,26" fill="none" stroke="oklch(var(--brand))" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </div>
+            } />
+          {/* Traces */}
+          <BentoTile span="lg:col-span-2" icon={GitBranch} name="Traces" line="Follow every request."
+            body="OpenTelemetry-native spans with a waterfall and a dependency map."
+            visual={
+              <div className="space-y-1.5 rounded-lg border border-border bg-bg p-3 font-mono text-[10px]">
+                {[["checkout-api", 2, 52], ["auth", 12, 20], ["payments", 28, 44], ["postgres", 40, 16]].map(([s, l, w], i) => (
+                  <div key={i} className="flex items-center gap-2"><span className="w-16 truncate text-faint">{s}</span><div className="relative h-2 flex-1 rounded bg-surface-2"><div className="absolute h-2 rounded bg-brand/70" style={{ left: `${l}%`, width: `${w}%` }} /></div></div>
+                ))}
+              </div>
+            } />
+          {/* Requests */}
+          <BentoTile span="lg:col-span-2" icon={Network} name="Requests" line="RED, at a glance."
+            body="A flat HTTP feed that jumps straight to the trace."
+            visual={
+              <div className="flex flex-wrap gap-1.5">
+                {[["GET", "/checkout", "200", "ok"], ["POST", "/charge", "500", "err"], ["GET", "/orders", "200", "ok"], ["GET", "/cart", "304", "muted"]].map((r, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg px-2 py-1 font-mono text-[10px]"><span className="font-semibold text-fg/70">{r[0]}</span><span className="text-muted">{r[1]}</span><span className={r[3] === "ok" ? "text-ok" : r[3] === "err" ? "text-err" : "text-faint"}>{r[2]}</span></span>
+                ))}
+              </div>
+            } />
+          {/* Incidents */}
+          <BentoTile span="lg:col-span-2" icon={AlertTriangle} name="Incidents" line="It tells you first."
+            body="Crash, OOM, restart-loop and error-spike detection from real signals."
+            visual={
+              <div className="rounded-lg border border-err/30 bg-err/5 p-3">
+                <div className="flex items-center gap-2 text-[12px] font-medium"><span className="h-2 w-2 rounded-full bg-err" />Error spike <span className="ml-auto rounded bg-err/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-err">critical</span></div>
+                <div className="mt-1.5 font-mono text-[10px] text-faint">checkout-api · 5xx rate ↑ · detected 2m ago</div>
+              </div>
+            } />
+          {/* Alerts — wide */}
+          <BentoTile span="lg:col-span-6" wide icon={BellRing} name="Alerts" line="Routed where you'll see them."
+            body="Rules to Slack, Discord, webhook, email or SMS — with a no-data state so an outage never fakes “all clear.”"
+            visual={
+              <div className="flex flex-wrap items-center gap-2">
+                {["Slack", "Discord", "Webhook", "Email", "SMS"].map((c) => <span key={c} className="rounded-md border border-border bg-bg px-2.5 py-1.5 text-[11px] font-medium text-muted">{c}</span>)}
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-warn/10 px-2.5 py-1.5 text-[11px] font-medium text-warn"><span className="h-1.5 w-1.5 rounded-full bg-warn" />no data → suppressed</span>
+              </div>
+            } />
         </div>
       </Section>
 
-      {/* how it works */}
+      {/* differentiators — editorial */}
+      <Section className="py-20">
+        <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
+          <div data-reveal className="h-max lg:sticky lg:top-24">
+            <Eyebrow>Why backwork</Eyebrow>
+            <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Built different, on purpose.</h2>
+            <p className="mt-4 text-[15px] leading-relaxed text-muted">Four decisions that set it apart from the per-gigabyte status quo.</p>
+          </div>
+          <div className="divide-y divide-border">
+            {DIFFS.map((d, i) => (
+              <div key={d.title} data-reveal className="flex items-start gap-4 py-6 first:pt-0 sm:gap-5">
+                <span className="pt-0.5 font-mono text-[13px] tabular-nums text-faint">0{i + 1}</span>
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand"><d.icon className="h-5 w-5" /></span>
+                <div><h3 className="text-base font-semibold">{d.title}</h3><p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{d.body}</p></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      {/* how it works — connected flow */}
       <Section id="how" className="py-20">
-        <div data-reveal className="mb-10 text-center">
+        <div data-reveal className="mb-12 text-center">
           <Eyebrow>How it works</Eyebrow>
           <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Live in three steps.</h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Step n="1" title="Create a project" body="Spin up an organization and get a per-project ingest token, scoped to your tenant.">
-            <code className="text-brand">backwork.dev/projects</code> → <span className="text-fg">New project</span>
-          </Step>
-          <Step n="2" title="Ship your telemetry" body="One command for logs + metrics on any host. One env var for OpenTelemetry traces.">
-            curl -fsSL backwork.dev/install.sh | sh
-          </Step>
-          <Step n="3" title="Watch it live" body="A unified dashboard that auto-refreshes, detects incidents, and routes alerts where you'll see them.">
-            OTEL_EXPORTER_OTLP_ENDPOINT=<span className="text-brand">backwork.dev/otlp</span>
-          </Step>
+        <div className="relative grid gap-8 md:grid-cols-3 md:gap-6">
+          <div className="absolute inset-x-[16%] top-4 hidden h-px bg-gradient-to-r from-border via-border to-border md:block" aria-hidden />
+          <FlowStep n="1" title="Create a project" body="Spin up an organization and get a per-project ingest token, scoped to your tenant." code={<><span className="text-faint"># in the dashboard</span>{"\n"}Projects → <span className="text-brand">New project</span></>} />
+          <FlowStep n="2" title="Ship your telemetry" body="One command for logs &amp; metrics on any host. One env var for OpenTelemetry traces." code={<>curl -fsSL <span className="text-brand">backwork.dev/install.sh</span> | sh</>} />
+          <FlowStep n="3" title="Watch it live" body="A unified dashboard that auto-refreshes, detects incidents and routes alerts where you'll see them." code={<>OTEL_EXPORTER_OTLP_ENDPOINT=<span className="text-brand">/otlp</span></>} />
         </div>
       </Section>
 
@@ -415,13 +459,37 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
   );
 }
 
-function Step({ n, title, body, children }: { n: string; title: string; body: string; children: ReactNode }) {
+function BentoTile({ span, icon: Icon, name, line, body, visual, wide }: { span: string; icon: any; name: string; line: string; body: string; visual: ReactNode; wide?: boolean }) {
+  const head = (
+    <div className={wide ? "" : "mt-4"}>
+      <div className="flex items-center gap-2"><Icon className="h-4 w-4 text-brand" /><h3 className="text-[15px] font-semibold">{name}</h3><span className="text-[13px] text-muted">{line}</span></div>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{body}</p>
+    </div>
+  );
   return (
-    <div data-reveal className="rounded-2xl border border-border bg-surface p-6">
-      <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand font-mono text-sm font-bold text-brand-fg">{n}</span>
+    <div data-reveal className={cn("group rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong", span)}>
+      {wide ? (
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+          <div className="sm:w-[44%]">{head}</div>
+          <div className="sm:flex-1">{visual}</div>
+        </div>
+      ) : (
+        <>{visual}{head}</>
+      )}
+    </div>
+  );
+}
+
+function FlowStep({ n, title, body, code }: { n: string; title: string; body: string; code: ReactNode }) {
+  return (
+    <div data-reveal className="flex flex-col items-center text-center">
+      <span className="relative z-10 grid h-8 w-8 place-items-center rounded-full bg-brand font-mono text-sm font-bold text-brand-fg ring-4 ring-bg">{n}</span>
       <h3 className="mt-4 text-base font-semibold">{title}</h3>
-      <p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{body}</p>
-      <pre className="mt-4 overflow-x-auto scroll-thin rounded-lg border border-border bg-bg px-3 py-2.5 font-mono text-[11px] leading-relaxed text-fg/90">{children}</pre>
+      <p className="mt-1.5 max-w-xs text-[13.5px] leading-relaxed text-muted">{body}</p>
+      <div className="mt-4 w-full overflow-hidden rounded-xl border border-border bg-bg text-left">
+        <div className="flex gap-1.5 border-b border-border px-3 py-2"><span className="h-2 w-2 rounded-full bg-err/50" /><span className="h-2 w-2 rounded-full bg-warn/50" /><span className="h-2 w-2 rounded-full bg-ok/50" /></div>
+        <pre className="overflow-x-auto scroll-thin px-3 py-3 font-mono text-[11px] leading-relaxed text-fg/90">{code}</pre>
+      </div>
     </div>
   );
 }
