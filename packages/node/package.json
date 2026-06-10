@@ -1,0 +1,42 @@
+{
+  "name": "@backwork/node",
+  "version": "0.1.0",
+  "description": "One-line OpenTelemetry tracing for backwork.dev — works with Node and Bun.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./start": "./start.mjs",
+    "./register": "./register.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "start.mjs",
+    "register.mjs",
+    "config.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "opentelemetry",
+    "otel",
+    "tracing",
+    "observability",
+    "backwork",
+    "apm"
+  ],
+  "homepage": "https://backwork.dev/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SirFitz/backwork.git",
+    "directory": "packages/node"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.76.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.218.0",
+    "@opentelemetry/sdk-node": "^0.218.0"
+  }
+}
