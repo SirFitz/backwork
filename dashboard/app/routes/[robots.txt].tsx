@@ -3,8 +3,12 @@ export function loader() {
   const body = [
     "User-agent: *",
     "Allow: /$",
+    "Allow: /docs",
     "Allow: /pricing",
     "Allow: /security",
+    "Allow: /about",
+    "Allow: /privacy",
+    "Allow: /terms",
     // the product itself is private (auth-gated); keep it out of the index
     "Disallow: /login",
     "Disallow: /register",

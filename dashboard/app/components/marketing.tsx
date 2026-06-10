@@ -59,7 +59,7 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
           <Link to="/" aria-label="backwork home"><Logo /></Link>
           <nav className="hidden items-center gap-7 md:flex">
             <Link to="/#features" className={cn(navLink, active === "features" && "text-fg")}>Features</Link>
-            <Link to="/#how" className={navLink}>How it works</Link>
+            <Link to="/docs" className={cn(navLink, active === "docs" && "text-fg")}>Docs</Link>
             <Link to="/pricing" className={cn(navLink, active === "pricing" && "text-fg")}>Pricing</Link>
             <Link to="/security" className={cn(navLink, active === "security" && "text-fg")}>Security</Link>
             <a href={REPO} target="_blank" rel="noreferrer" className={cn(navLink, "inline-flex items-center gap-1.5")}><Github className="h-4 w-4" /> GitHub</a>
@@ -84,9 +84,9 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
             <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-muted">{TAGLINE}</p>
             <a href={REPO} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted hover:text-fg"><Github className="h-4 w-4" /> Star on GitHub</a>
           </div>
-          <FooterCol title="Product" links={[["Features", "/#features"], ["How it works", "/#how"], ["Pricing", "/pricing"], ["Security", "/security"]]} />
-          <FooterCol title="Get started" links={[["Create account", "/register"], ["Sign in", "/login"], ["Install agent", "/security"]]} />
-          <FooterCol title="Project" links={[["GitHub", REPO], ["Open standards", "/#stack"], ["Changelog", REPO + "/commits/main"]]} />
+          <FooterCol title="Product" links={[["Features", "/#features"], ["Pricing", "/pricing"], ["Security", "/security"], ["Sign in", "/login"]]} />
+          <FooterCol title="Resources" links={[["Docs", "/docs"], ["GitHub", REPO], ["Changelog", REPO + "/commits/main"]]} />
+          <FooterCol title="Company" links={[["About", "/about"], ["Privacy", "/privacy"], ["Terms", "/terms"]]} />
         </div>
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 border-t border-border/70 px-5 py-5 text-2xs text-faint sm:flex-row sm:px-6">
           <span>© {2026} backwork · self-hosted observability</span>
@@ -123,6 +123,24 @@ function Eyebrow({ children }: { children: ReactNode }) {
 }
 function Section({ id, className, children }: { id?: string; className?: string; children: ReactNode }) {
   return <section id={id} className={cn("mx-auto max-w-6xl px-5 sm:px-6", className)}>{children}</section>;
+}
+
+/** Shared layout for legal pages (privacy, terms). */
+export function LegalArticle({ title, effective, sections }: { title: string; effective: string; sections: [string, string[]][] }) {
+  return (
+    <article className="mx-auto max-w-3xl px-5 py-14 sm:px-6 lg:py-20">
+      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
+      <p className="mt-2 text-[13px] text-faint">Effective {effective}</p>
+      <div className="mt-8 space-y-8">
+        {sections.map(([h, paras]) => (
+          <section key={h}>
+            <h2 className="text-base font-semibold">{h}</h2>
+            {paras.map((p, i) => <p key={i} className="mt-2 text-[14px] leading-relaxed text-muted">{p}</p>)}
+          </section>
+        ))}
+      </div>
+    </article>
+  );
 }
 
 /* ---------- hero visual: a live "backwork" dashboard mock ---------- */
