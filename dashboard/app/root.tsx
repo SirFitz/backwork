@@ -42,7 +42,7 @@ import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-
 import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
 import { ensureEvaluator } from "~/lib/evaluator.server";
-import { requireOrg } from "~/lib/auth/context.server";
+import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
 
 type AuthData = {
@@ -63,6 +63,8 @@ export const meta: MetaFunction = () => [
 // machine endpoints (/ingest, /otlp, /install.sh, /healthz) are resource routes
 // that never invoke this root loader, so agents are unaffected.
 const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
+// Public marketing pages: render bare (own chrome), never require a session.
+const MARKETING_PATHS = new Set(["/pricing", "/security"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
   ensureEvaluator(); // start the background alert evaluator once
@@ -70,7 +72,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite") || path.startsWith("/reset");
   const { getTheme } = await themeSessionResolver(request);
   const theme = getTheme() ?? Theme.LIGHT;
-  if (isPublic) return json({ theme, auth: null as AuthData });
+  if (isPublic || MARKETING_PATHS.has(path)) return json({ theme, auth: null as AuthData });
+  // "/" is dual: the marketing landing for logged-out visitors, the dashboard for
+  // signed-in users. Only fall through to requireOrg (app shell) when signed in.
+  if (path === "/" && !(await getUser(request))) return json({ theme, auth: null as AuthData });
   const ctx = await requireOrg(request); // redirects to /login or /onboarding
   return json({
     theme,
@@ -304,6 +309,8 @@ function Document({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
         <Meta />
         <PreventFlashOnWrongTheme ssrTheme={Boolean(data.theme)} />
         <Links />

@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { defer } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { defer, json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { Activity, ArrowRight, Boxes, CheckCircle2, Gauge, TriangleAlert, Zap } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle, Skeleton, StatusDot, StatusPill } from "~/components/ui";
@@ -10,11 +10,17 @@ import * as apm from "~/lib/apm.server";
 import * as vm from "~/lib/vm.server";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
-import { requireOrg } from "~/lib/auth/context.server";
+import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct, fmtRate } from "~/lib/utils";
+import { MarketingLanding, seo, TAGLINE } from "~/components/marketing";
+
+export const meta: MetaFunction = () =>
+  seo({ title: "backwork — self-hosted logs, metrics & traces in one honest pane", description: TAGLINE, path: "/" });
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  // logged-out visitors see the marketing landing; signed-in users get the dashboard
+  if (!(await getUser(request))) return json({ marketing: true as const });
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
   const end = Date.now();
@@ -79,8 +85,10 @@ function Vital({ label, value, tone }: { label: string; value: string; tone?: st
   );
 }
 
-export default function Overview() {
-  const d = useLoaderData<typeof loader>();
+export default function Index() {
+  const data = useLoaderData<typeof loader>();
+  if ("marketing" in data) return <MarketingLanding />;
+  const d = data;
 
   return (
     <div className="space-y-6 animate-fade-in">
