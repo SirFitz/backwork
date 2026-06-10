@@ -64,7 +64,7 @@ export const meta: MetaFunction = () => [
 // that never invoke this root loader, so agents are unaffected.
 const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 // Public marketing pages: render bare (own chrome), never require a session.
-const MARKETING_PATHS = new Set(["/pricing", "/security", "/docs", "/about", "/privacy", "/terms"]);
+const MARKETING_PATHS = new Set(["/pricing", "/security", "/docs", "/about", "/privacy", "/terms", "/changelog"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
   ensureEvaluator(); // start the background alert evaluator once

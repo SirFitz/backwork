@@ -105,7 +105,7 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
             <a href={REPO} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted hover:text-fg"><Github className="h-4 w-4" /> Star on GitHub</a>
           </div>
           <FooterCol title="Product" links={[["Features", "/#features"], ["Pricing", "/pricing"], ["Security", "/security"], ["Sign in", "/login"]]} />
-          <FooterCol title="Resources" links={[["Docs", "/docs"], ["GitHub", REPO], ["Changelog", REPO + "/commits/main"]]} />
+          <FooterCol title="Resources" links={[["Docs", "/docs"], ["Changelog", "/changelog"], ["GitHub", REPO]]} />
           <FooterCol title="Company" links={[["About", "/about"], ["Privacy", "/privacy"], ["Terms", "/terms"]]} />
         </div>
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 border-t border-border/70 px-5 py-5 text-2xs text-faint sm:flex-row sm:px-6">

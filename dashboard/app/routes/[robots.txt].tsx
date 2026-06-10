@@ -6,6 +6,7 @@ export function loader() {
     "Allow: /docs",
     "Allow: /pricing",
     "Allow: /security",
+    "Allow: /changelog",
     "Allow: /about",
     "Allow: /privacy",
     "Allow: /terms",
