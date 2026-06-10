@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Link } from "@remix-run/react";
+import { useEffect, type ReactNode } from "react";
+import { Link, useLocation } from "@remix-run/react";
 import {
   Activity, AlertTriangle, ArrowRight, BellRing, Check, Github, GitBranch,
   Network, ScrollText, ShieldCheck, Terminal, Boxes, Zap, Lock, Server, Layers,
@@ -38,7 +38,25 @@ function JsonLd({ data }: { data: object }) {
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;
 }
 
-const REVEAL_JS = `(function(){try{var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('is-in');io.unobserve(e.target);}})},{rootMargin:'0px 0px -8% 0px'});document.querySelectorAll('[data-reveal]').forEach(function(el){io.observe(el)});}catch(e){document.querySelectorAll('[data-reveal]').forEach(function(el){el.classList.add('is-in')})}})();`;
+/** Reveal-on-scroll that re-runs on every client-side navigation (not just full
+ *  loads) — otherwise sections stay opacity:0 after a Remix Link nav until reload. */
+function useScrollReveal(key: string) {
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]"));
+    if (!els.length) return;
+    let io: IntersectionObserver | undefined;
+    try {
+      io = new IntersectionObserver(
+        (entries) => entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("is-in"); io!.unobserve(e.target); } }),
+        { rootMargin: "0px 0px -8% 0px" }
+      );
+      els.forEach((el) => io!.observe(el));
+    } catch {
+      els.forEach((el) => el.classList.add("is-in")); // no IO support: just show
+    }
+    return () => io?.disconnect();
+  }, [key]);
+}
 
 function Logo({ className }: { className?: string }) {
   return (
@@ -52,6 +70,8 @@ function Logo({ className }: { className?: string }) {
 const navLink = "text-[13.5px] font-medium text-muted transition-colors hover:text-fg";
 
 export function MarketingShell({ authed, active, children }: { authed?: boolean; active?: string; children: ReactNode }) {
+  const location = useLocation();
+  useScrollReveal(location.pathname);
   return (
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-40 border-b border-border/70 bg-bg/80 backdrop-blur">
