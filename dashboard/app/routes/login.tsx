@@ -7,6 +7,7 @@ import { users, memberships } from "~/db/schema";
 import { verifyPassword } from "~/lib/auth/password.server";
 import { createUserSession } from "~/lib/auth/session.server";
 import { getUser } from "~/lib/auth/context.server";
+import { assertSameOrigin, clientIp, rateLimit, safeRedirect } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -15,12 +16,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   await ensureSchema();
   const fd = await request.formData();
   const email = String(fd.get("email") || "").trim().toLowerCase();
   const password = String(fd.get("password") || "");
-  const next = String(fd.get("next") || "/") || "/";
+  const next = safeRedirect(fd.get("next"));
   if (!email || !password) return json({ error: "Email and password are required." }, { status: 400 });
+
+  const ip = clientIp(request);
+  const limited = !rateLimit(`login:ip:${ip}`, 20, 10 * 60 * 1000).ok || !rateLimit(`login:email:${email}`, 8, 10 * 60 * 1000).ok;
+  if (limited) return json({ error: "Too many attempts. Please wait a few minutes and try again." }, { status: 429 });
 
   const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
   const user = rows[0];
@@ -29,7 +35,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   const mem = await db.select({ orgId: memberships.orgId }).from(memberships).where(eq(memberships.userId, user.id)).limit(1);
-  return createUserSession(user.id, mem[0]?.orgId ?? null, mem.length ? next : "/onboarding");
+  return createUserSession(user.id, mem[0]?.orgId ?? null, mem.length ? next : "/onboarding", user.tokenVersion);
 }
 
 export default function Login() {

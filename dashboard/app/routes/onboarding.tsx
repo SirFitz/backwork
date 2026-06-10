@@ -7,6 +7,7 @@ import { db } from "~/db/index.server";
 import { orgs, memberships } from "~/db/schema";
 import { requireUser } from "~/lib/auth/context.server";
 import { setActiveOrg } from "~/lib/auth/session.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 import { slugify } from "~/lib/utils";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 
@@ -27,10 +28,12 @@ async function uniqueSlug(base: string): Promise<string> {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const { user } = await requireUser(request);
   const fd = await request.formData();
   const name = String(fd.get("name") || "").trim();
   if (!name) return json({ error: "Organization name is required." }, { status: 400 });
+  if (name.length > 80) return json({ error: "Organization name is too long (80 max)." }, { status: 400 });
 
   const orgId = ulid();
   await db.insert(orgs).values({ id: orgId, name, slug: await uniqueSlug(name) });

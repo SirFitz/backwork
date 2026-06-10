@@ -8,6 +8,8 @@ import { db } from "~/db/index.server";
 import { users } from "~/db/schema";
 import { requireUser } from "~/lib/auth/context.server";
 import { hashPassword, verifyPassword, passwordError } from "~/lib/auth/password.server";
+import { reissueTokenVersion } from "~/lib/auth/session.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user } = await requireUser(request);
@@ -15,6 +17,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const { user } = await requireUser(request);
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
@@ -34,8 +37,9 @@ export async function action({ request }: ActionFunctionArgs) {
     if (pwErr) return json({ error: pwErr, scope: "password" }, { status: 400 });
     if (next !== confirm) return json({ error: "New passwords don't match.", scope: "password" }, { status: 400 });
     if (next === current) return json({ error: "New password must be different from the current one.", scope: "password" }, { status: 400 });
-    await db.update(users).set({ passwordHash: await hashPassword(next), updatedAt: new Date() }).where(eq(users.id, user.id));
-    return json({ ok: "Password changed.", scope: "password" });
+    const newVersion = user.tokenVersion + 1; // invalidate other devices' sessions
+    await db.update(users).set({ passwordHash: await hashPassword(next), tokenVersion: newVersion, updatedAt: new Date() }).where(eq(users.id, user.id));
+    return json({ ok: "Password changed. Other devices have been signed out.", scope: "password" }, { headers: { "Set-Cookie": await reissueTokenVersion(request, newVersion) } });
   }
 
   return json({ error: "Unknown action.", scope: "" }, { status: 400 });

@@ -13,7 +13,13 @@ export async function getUser(request: Request): Promise<SessionUser | null> {
   const uid = s.get("userId");
   if (!uid) return null;
   const rows = await db.select().from(users).where(eq(users.id, uid)).limit(1);
-  return rows[0] ?? null;
+  const user = rows[0];
+  if (!user) return null;
+  // server-side session revocation: a logout or password change bumps the user's
+  // token_version, invalidating older cookies. Sessions issued before this
+  // feature (no "tv") are treated as stale and must re-authenticate once.
+  if ((s.get("tv") ?? -1) !== user.tokenVersion) return null;
+  return user;
 }
 
 async function loadMemberships(userId: string): Promise<OrgMembership[]> {

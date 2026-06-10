@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_verified_at timestamptz, last_login_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_uniq ON users (lower(email));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS orgs (
   id text PRIMARY KEY, name text NOT NULL, slug text NOT NULL,

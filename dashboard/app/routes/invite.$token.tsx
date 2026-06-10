@@ -7,6 +7,7 @@ import { db, ensureSchema } from "~/db/index.server";
 import { invitations, memberships, orgs } from "~/db/schema";
 import { getUser, requireUser } from "~/lib/auth/context.server";
 import { setActiveOrg } from "~/lib/auth/session.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 import { AuthCard } from "~/components/authcard";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -34,6 +35,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const { user } = await requireUser(request);
   const token = params.token!;
   const inv = await db.select().from(invitations).where(eq(invitations.token, token)).limit(1);

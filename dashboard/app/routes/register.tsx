@@ -8,6 +8,7 @@ import { users } from "~/db/schema";
 import { hashPassword, passwordError } from "~/lib/auth/password.server";
 import { createUserSession } from "~/lib/auth/session.server";
 import { getUser } from "~/lib/auth/context.server";
+import { assertSameOrigin, clientIp, rateLimit } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -16,12 +17,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
+  if (await getUser(request)) throw redirect("/"); // guard the action, not just the loader (login-CSRF / session swap)
   await ensureSchema();
+  const ip = clientIp(request);
+  if (!rateLimit(`register:ip:${ip}`, 10, 60 * 60 * 1000).ok) return json({ error: "Too many sign-ups from this network. Please try again later." }, { status: 429 });
   const fd = await request.formData();
   const name = String(fd.get("name") || "").trim();
   const email = String(fd.get("email") || "").trim().toLowerCase();
   const password = String(fd.get("password") || "");
-  if (!email) return json({ error: "Email is required." }, { status: 400 });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Enter a valid email address." }, { status: 400 });
   const pwErr = passwordError(password);
   if (pwErr) return json({ error: pwErr }, { status: 400 });
 
@@ -38,7 +43,7 @@ export async function action({ request }: ActionFunctionArgs) {
     isPlatformAdmin: anyUser.length === 0, // first user bootstraps as platform admin
     emailVerifiedAt: new Date(),
   });
-  return createUserSession(id, null, "/onboarding");
+  return createUserSession(id, null, "/onboarding", 0);
 }
 
 export default function Register() {
