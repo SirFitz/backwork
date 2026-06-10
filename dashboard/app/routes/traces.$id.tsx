@@ -48,12 +48,12 @@ export default function TraceDetail() {
               </span>
             ))}
           </div>
-          <div className="space-y-0.5 p-3 font-mono text-2xs">
+          <div className="space-y-0.5 overflow-x-auto scroll-thin p-3 font-mono text-2xs">
             {t.spans.map((s) => {
               const offset = t.durationMs > 0 ? ((s.startMs - t.startMs) / t.durationMs) * 100 : 0;
               const width = t.durationMs > 0 ? Math.max(0.5, (s.durationMs / t.durationMs) * 100) : 1;
               return (
-                <div key={s.spanID} className="flex items-center gap-2 rounded px-1 py-1 hover:bg-surface-2/50">
+                <div key={s.spanID} className="flex min-w-[460px] items-center gap-2 rounded px-1 py-1 hover:bg-surface-2/50">
                   <div className="w-[38%] truncate" style={{ paddingLeft: s.depth * 14 }}>
                     {s.error ? <Badge tone="err" className="mr-1.5">!</Badge> : null}
                     <span className="text-accent">{s.service}</span>

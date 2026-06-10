@@ -245,18 +245,18 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
             <AuthMenu auth={auth} />
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-6 pb-24 sm:px-6 lg:py-6">{children}</main>
       </div>
 
-      {/* mobile nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-around border-t border-border bg-surface/95 px-1 py-1 backdrop-blur lg:hidden">
-        {NAV.slice(0, 6).map((n) => (
+      {/* mobile nav — all destinations reachable; horizontally scrollable when they don't fit */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto scroll-thin border-t border-border bg-surface/95 px-1 py-1 backdrop-blur lg:hidden">
+        {NAV.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
             end={n.end}
             className={({ isActive }) =>
-              cn("flex flex-col items-center gap-0.5 rounded-md px-3 py-1.5 text-[10px]", isActive ? "text-brand" : "text-muted")
+              cn("flex shrink-0 flex-1 min-w-[58px] flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-[10px]", isActive ? "text-brand" : "text-muted")
             }
           >
             <n.icon className="h-4 w-4" />

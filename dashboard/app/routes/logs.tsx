@@ -95,10 +95,10 @@ export default function Logs() {
             ) : (
               <div className={cn("max-h-[62vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
                 {entries.map((e, i) => (
-                  <div key={i} className="flex gap-3 border-b border-border/40 px-4 py-1 hover:bg-surface-2/50">
+                  <div key={i} className="flex gap-2 border-b border-border/40 px-3 py-1 hover:bg-surface-2/50 sm:gap-3 sm:px-4">
                     <span className="shrink-0 tabular-nums text-faint">{fmtClock(e.ts)}</span>
-                    <span className={cn("w-11 shrink-0 font-semibold uppercase", LEVEL_TEXT[e.level] || "text-faint")}>{e.level}</span>
-                    <span className="w-40 shrink-0 truncate text-accent" title={e.service}>{e.service}</span>
+                    <span className={cn("w-9 shrink-0 font-semibold uppercase sm:w-11", LEVEL_TEXT[e.level] || "text-faint")}>{e.level}</span>
+                    <span className="hidden w-40 shrink-0 truncate text-accent sm:block" title={e.service}>{e.service}</span>
                     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg/90">{e.message}</span>
                   </div>
                 ))}
