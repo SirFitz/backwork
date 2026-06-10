@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
 import { alertRules, alertChannels, migrations } from "~/db/schema";
@@ -22,7 +22,7 @@ export type AlertRule = {
   enabled: boolean;
 };
 
-export type AlertState = AlertRule & { firing: boolean; value: number };
+export type AlertState = AlertRule & { firing: boolean; value: number; noData: boolean };
 
 export const METRIC_META: Record<AlertMetric, { label: string; hint: string; unit: string; source: "vm" | "loki" }> = {
   cpu: { label: "CPU usage (cores)", hint: "container CPU, in cores", unit: " cores", source: "vm" },
@@ -85,18 +85,42 @@ export async function evaluate(tenant: Tenant): Promise<AlertState[]> {
   const rules = await loadRules(tenant.orgId);
   const out = await Promise.all(
     rules.map(async (rule) => {
+      // Tri-state: a backend error / unknown metric is "no data", NOT a literal 0.
+      // This stops a data-source outage from false-firing `<` rules and silently
+      // suppressing `>` rules (H7).
       let value = 0;
+      let noData = false;
       try {
-        value = await evalRule(rule, tenant);
+        const v = await evalRule(rule, tenant);
+        if (v === undefined || !Number.isFinite(v)) noData = true;
+        else value = v;
       } catch {
-        value = 0;
+        noData = true;
       }
-      if (!Number.isFinite(value)) value = 0;
-      const firing = rule.enabled && (rule.comparator === ">" ? value > rule.threshold : value < rule.threshold);
-      return { ...rule, value, firing };
+      const firing = !noData && rule.enabled && (rule.comparator === ">" ? value > rule.threshold : value < rule.threshold);
+      return { ...rule, value, firing, noData };
     })
   );
   return out;
+}
+
+// Granular, single-row DB ops (avoid the read-all/delete-all/insert-all
+// lost-update race when two writes overlap — H8).
+export async function insertRule(orgId: string, rule: AlertRule): Promise<void> {
+  await ensureSchema();
+  await db.insert(alertRules).values({ id: rule.id, orgId, data: rule as unknown as Record<string, unknown> });
+}
+export async function toggleRule(orgId: string, id: string): Promise<void> {
+  await ensureSchema();
+  const rows = await db.select({ data: alertRules.data }).from(alertRules).where(and(eq(alertRules.id, id), eq(alertRules.orgId, orgId))).limit(1);
+  if (!rows.length) return;
+  const r = rows[0].data as unknown as AlertRule;
+  r.enabled = !r.enabled;
+  await db.update(alertRules).set({ data: r as unknown as Record<string, unknown>, updatedAt: new Date() }).where(and(eq(alertRules.id, id), eq(alertRules.orgId, orgId)));
+}
+export async function deleteRule(orgId: string, id: string): Promise<void> {
+  await ensureSchema();
+  await db.delete(alertRules).where(and(eq(alertRules.id, id), eq(alertRules.orgId, orgId)));
 }
 
 /** Org ids that have at least one alert rule (for the background evaluator). */

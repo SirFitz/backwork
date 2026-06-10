@@ -37,6 +37,7 @@ async function tick() {
     const chans = await channels.loadChannels(orgId).catch(() => [] as channels.Channel[]);
     const byId = new Map(chans.map((c) => [c.id, c]));
     for (const s of states) {
+      if (s.noData) continue; // data source unavailable: don't transition (no false fire/resolve)
       const k = `${orgId}:${s.id}`;
       const was = lastFiring.get(k) || false;
       if (s.firing && !was) await notify(s, byId, "firing");
@@ -53,6 +54,7 @@ async function notify(
   kind: "firing" | "resolved"
 ) {
   const meta = alerts.METRIC_META[rule.metric];
+  if (!meta) return; // unknown/invalid metric — don't crash the notifier
   const scope = rule.service === "*" ? "any service" : rule.service;
   const title = kind === "firing" ? `FIRING: ${rule.name}` : `RESOLVED: ${rule.name}`;
   const body =

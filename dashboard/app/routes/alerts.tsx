@@ -7,8 +7,9 @@ import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as alerts from "~/lib/alerts.server";
 import * as channels from "~/lib/channels.server";
-import { requireOrg } from "~/lib/auth/context.server";
+import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
+import { assertSameOrigin } from "~/lib/auth/security.server";
 import { cn, fmtNum } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -24,29 +25,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
   const ctx = await requireOrg(request);
+  requireRole(ctx, "member"); // viewers are read-only (H6)
+  const orgId = ctx.org.id;
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
 
   // ---- channel intents ----
   if (intent.endsWith("_channel")) {
-    const chans = await channels.loadChannels(ctx.org.id);
     if (intent === "add_channel") {
       const type = String(fd.get("type") || "webhook") as channels.ChannelType;
+      const def = channels.CHANNEL_TYPES[type];
+      if (!def) return redirect("/alerts");
       const cfg: Record<string, string> = {};
-      for (const f of channels.CHANNEL_TYPES[type]?.fields || []) cfg[f.key] = String(fd.get(f.key) || "");
-      chans.push({ id: "c" + Date.now().toString(36), name: String(fd.get("name") || channels.CHANNEL_TYPES[type].label), type, enabled: true, config: cfg });
-      await channels.saveChannels(ctx.org.id, chans);
+      for (const f of def.fields) cfg[f.key] = String(fd.get(f.key) || "").slice(0, 2000);
+      const name = String(fd.get("name") || def.label).trim().slice(0, 80) || def.label;
+      await channels.insertChannel(orgId, { id: "c" + Date.now().toString(36), name, type, enabled: true, config: cfg });
     } else if (intent === "toggle_channel") {
-      const c = chans.find((x) => x.id === String(fd.get("id")));
-      if (c) c.enabled = !c.enabled;
-      await channels.saveChannels(ctx.org.id, chans);
+      await channels.toggleChannel(orgId, String(fd.get("id")));
     } else if (intent === "delete_channel") {
-      const i = chans.findIndex((x) => x.id === String(fd.get("id")));
-      if (i >= 0) chans.splice(i, 1);
-      await channels.saveChannels(ctx.org.id, chans);
+      await channels.deleteChannel(orgId, String(fd.get("id")));
     } else if (intent === "test_channel") {
-      const c = chans.find((x) => x.id === String(fd.get("id")));
+      const c = await channels.getChannel(orgId, String(fd.get("id")));
       if (!c) return json({ test: { ok: false, error: "channel not found" } });
       const res = await channels.send(c, {
         title: "backwork test alert",
@@ -59,26 +60,28 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   // ---- rule intents ----
-  const rules = await alerts.loadRules(ctx.org.id);
   if (intent === "add") {
-    rules.push({
+    const metric = String(fd.get("metric") || "");
+    const comparator = String(fd.get("comparator") || "");
+    const threshold = Number(fd.get("threshold"));
+    if (!(metric in alerts.METRIC_META)) return json({ formError: "Pick a valid metric." }, { status: 400 });
+    if (comparator !== ">" && comparator !== "<") return json({ formError: "Pick a valid comparator." }, { status: 400 });
+    if (!Number.isFinite(threshold)) return json({ formError: "Threshold must be a number." }, { status: 400 });
+    await alerts.insertRule(orgId, {
       id: "r" + Date.now().toString(36),
-      name: String(fd.get("name") || "Untitled alert"),
-      metric: (fd.get("metric") as alerts.AlertMetric) || "error_rate",
-      service: String(fd.get("service") || "*").trim() || "*",
-      comparator: (fd.get("comparator") as ">" | "<") || ">",
-      threshold: Number(fd.get("threshold") || 0),
+      name: String(fd.get("name") || "Untitled alert").trim().slice(0, 80) || "Untitled alert",
+      metric: metric as alerts.AlertMetric,
+      service: String(fd.get("service") || "*").trim().slice(0, 120) || "*",
+      comparator: comparator as ">" | "<",
+      threshold,
       channelIds: fd.getAll("channelIds").map(String),
       enabled: true,
     });
   } else if (intent === "toggle") {
-    const r = rules.find((x) => x.id === String(fd.get("id")));
-    if (r) r.enabled = !r.enabled;
+    await alerts.toggleRule(orgId, String(fd.get("id")));
   } else if (intent === "delete") {
-    const i = rules.findIndex((x) => x.id === String(fd.get("id")));
-    if (i >= 0) rules.splice(i, 1);
+    await alerts.deleteRule(orgId, String(fd.get("id")));
   }
-  await alerts.saveRules(ctx.org.id, rules);
   return redirect("/alerts");
 }
 
@@ -190,16 +193,17 @@ export default function Alerts() {
               <tbody>
                 {states.map((s) => {
                   const meta = d.meta[s.metric];
+                  const unit = meta?.unit ?? "";
                   return (
                     <tr key={s.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
                       <td className="px-4 py-2.5 font-medium">{s.name}</td>
-                      <td className="px-4 py-2.5 font-mono text-2xs text-muted">{s.service === "*" ? "any" : s.service} · {meta.label} {s.comparator} {s.threshold}{meta.unit}</td>
+                      <td className="px-4 py-2.5 font-mono text-2xs text-muted">{s.service === "*" ? "any" : s.service} · {meta?.label ?? s.metric} {s.comparator} {s.threshold}{unit}</td>
                       <td className="px-4 py-2.5 text-2xs">
                         {(s.channelIds || []).length === 0 ? <span className="text-faint">none</span> :
                           <span className="flex flex-wrap gap-1">{(s.channelIds || []).map((id) => <Badge key={id} tone="info">{chanName(id)}</Badge>)}</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums">{fmtNum(s.value, 2)}{meta.unit}</td>
-                      <td className="px-4 py-2.5">{!s.enabled ? <Badge>disabled</Badge> : s.firing ? <Badge tone="err">firing</Badge> : <Badge tone="ok">ok</Badge>}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums">{s.noData ? <span className="text-faint">—</span> : <>{fmtNum(s.value, 2)}{unit}</>}</td>
+                      <td className="px-4 py-2.5">{!s.enabled ? <Badge>disabled</Badge> : s.noData ? <Badge tone="warn">no data</Badge> : s.firing ? <Badge tone="err">firing</Badge> : <Badge tone="ok">ok</Badge>}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center justify-end gap-3">
                           <Form method="post"><input type="hidden" name="intent" value="toggle" /><input type="hidden" name="id" value={s.id} /><button className="text-2xs text-muted hover:text-fg">{s.enabled ? "disable" : "enable"}</button></Form>

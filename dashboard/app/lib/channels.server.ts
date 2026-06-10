@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import net from "node:net";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { alertChannels } from "~/db/schema";
 import { encryptSecret, decryptSecret } from "./crypto.server";
@@ -119,6 +119,31 @@ export async function saveChannels(orgId: string, channels: Channel[]): Promise<
       await tx.insert(alertChannels).values(encrypted.map((c) => ({ id: c.id, orgId, data: c as unknown as Record<string, unknown> })));
     }
   });
+}
+
+// Granular single-row ops (avoid the read-all/save-all lost-update race — H8).
+export async function insertChannel(orgId: string, c: Channel): Promise<void> {
+  await ensureSchema();
+  const enc = cryptChannel(c, (v) => encryptSecret(v));
+  await db.insert(alertChannels).values({ id: c.id, orgId, data: enc as unknown as Record<string, unknown> });
+}
+export async function toggleChannel(orgId: string, id: string): Promise<void> {
+  await ensureSchema();
+  const rows = await db.select({ data: alertChannels.data }).from(alertChannels).where(and(eq(alertChannels.id, id), eq(alertChannels.orgId, orgId))).limit(1);
+  if (!rows.length) return;
+  const c = rows[0].data as unknown as Channel; // secrets stay encrypted; only flip enabled
+  c.enabled = !c.enabled;
+  await db.update(alertChannels).set({ data: c as unknown as Record<string, unknown>, updatedAt: new Date() }).where(and(eq(alertChannels.id, id), eq(alertChannels.orgId, orgId)));
+}
+export async function deleteChannel(orgId: string, id: string): Promise<void> {
+  await ensureSchema();
+  await db.delete(alertChannels).where(and(eq(alertChannels.id, id), eq(alertChannels.orgId, orgId)));
+}
+export async function getChannel(orgId: string, id: string): Promise<Channel | null> {
+  await ensureSchema();
+  const rows = await db.select({ data: alertChannels.data }).from(alertChannels).where(and(eq(alertChannels.id, id), eq(alertChannels.orgId, orgId))).limit(1);
+  if (!rows.length) return null;
+  return cryptChannel(rows[0].data as unknown as Channel, (v) => decryptSecret(v));
 }
 
 /** Redacted view for the client (no secret values leak to the browser). */
