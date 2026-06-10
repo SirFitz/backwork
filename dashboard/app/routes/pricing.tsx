@@ -96,15 +96,20 @@ export default function Pricing() {
         ))}
       </section>
 
-      <section className="mx-auto max-w-3xl px-5 py-14 sm:px-6">
-        <h2 className="text-center text-2xl font-semibold tracking-tight">Pricing questions</h2>
-        <div className="mt-7 divide-y divide-border rounded-2xl border border-border bg-surface">
-          {FAQ.map(([q, a]) => (
-            <details key={q} className="group px-5 py-4">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-[14.5px] font-medium">{q}<span className="ml-4 text-muted transition group-open:rotate-45">+</span></summary>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-muted">{a}</p>
-            </details>
-          ))}
+      <section className="mx-auto max-w-5xl px-5 py-14 sm:px-6">
+        <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+          <div data-reveal className="h-max lg:sticky lg:top-24">
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Pricing questions</h2>
+            <p className="mt-3 text-[14px] leading-relaxed text-muted">Straight answers on plans and billing — no asterisks.</p>
+          </div>
+          <div data-reveal className="divide-y divide-border border-y border-border">
+            {FAQ.map(([q, a]) => (
+              <details key={q} className="group py-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[14.5px] font-medium">{q}<span className="text-lg leading-none text-muted transition group-open:rotate-45">+</span></summary>
+                <p className="mt-2.5 text-[13.5px] leading-relaxed text-muted">{a}</p>
+              </details>
+            ))}
+          </div>
         </div>
       </section>
     </MarketingShell>

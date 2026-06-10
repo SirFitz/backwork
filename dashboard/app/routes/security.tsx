@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { ArrowRight, Server, Layers, Lock, KeyRound, ShieldAlert, Eye } from "lucide-react";
+import { ArrowRight, Server, Layers, Lock, KeyRound, ShieldAlert, ShieldCheck, Eye } from "lucide-react";
 import { getUser } from "~/lib/auth/context.server";
 import { MarketingShell, seo } from "~/components/marketing";
 
@@ -29,24 +29,32 @@ export default function Security() {
   const { authed } = useLoaderData<typeof loader>();
   return (
     <MarketingShell authed={authed} active="security">
-      <section className="mx-auto max-w-6xl px-5 pt-16 pb-10 text-center sm:px-6 lg:pt-24">
+      <section className="relative mx-auto max-w-6xl px-5 pt-16 pb-12 text-center sm:px-6 lg:pt-24">
+        <div className="pointer-events-none absolute left-1/2 top-8 -z-10 h-64 w-64 -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,oklch(var(--brand)/0.16),transparent)]" aria-hidden />
         <div data-reveal>
+          <div className="relative mx-auto mb-6 grid h-14 w-14 place-items-center rounded-2xl border border-border-strong bg-surface text-brand shadow-sm">
+            <span className="absolute inset-0 rounded-2xl ring-1 ring-brand/20" />
+            <ShieldCheck className="h-7 w-7" />
+          </div>
           <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><span className="h-1.5 w-1.5 rounded-full bg-brand" />Security</div>
           <h1 className="mx-auto mt-5 max-w-2xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">Your telemetry, under your control.</h1>
           <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">Observability data is some of the most sensitive you hold — it describes exactly how your systems work. backwork is built so it stays yours, isolated, and honest.</p>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-6xl gap-4 px-5 pb-14 sm:px-6 md:grid-cols-2">
-        {PRINCIPLES.map((p) => (
-          <div key={p.title} data-reveal className="flex gap-4 rounded-2xl border border-border bg-surface p-6">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand"><p.icon className="h-5 w-5" /></span>
-            <div>
-              <h2 className="text-base font-semibold">{p.title}</h2>
-              <p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{p.body}</p>
+      {/* principles — spec-sheet (top-ruled, not boxed cards) */}
+      <section className="mx-auto max-w-5xl px-5 pb-16 sm:px-6">
+        <div className="grid gap-x-12 gap-y-9 sm:grid-cols-2">
+          {PRINCIPLES.map((p) => (
+            <div key={p.title} data-reveal className="border-t border-border pt-5">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand"><p.icon className="h-4 w-4" /></span>
+                <h2 className="text-[15px] font-semibold">{p.title}</h2>
+              </div>
+              <p className="mt-2.5 text-[13.5px] leading-relaxed text-muted">{p.body}</p>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </section>
 
       <section className="mx-auto max-w-3xl px-5 pb-20 sm:px-6">

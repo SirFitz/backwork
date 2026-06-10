@@ -43,10 +43,13 @@ export default function About() {
       </section>
 
       <section className="mx-auto max-w-5xl px-5 py-14 sm:px-6">
-        <div className="grid gap-4 md:grid-cols-3">
-          {VALUES.map((v) => (
-            <div key={v.title} data-reveal className="rounded-2xl border border-border bg-surface p-6">
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-brand/10 text-brand"><v.icon className="h-5 w-5" /></span>
+        <div className="grid divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface md:grid-cols-3 md:divide-x md:divide-y-0">
+          {VALUES.map((v, i) => (
+            <div key={v.title} data-reveal className="p-6">
+              <div className="flex items-center gap-3">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand/10 text-brand"><v.icon className="h-5 w-5" /></span>
+                <span className="font-mono text-[13px] text-faint">0{i + 1}</span>
+              </div>
               <h2 className="mt-4 text-base font-semibold">{v.title}</h2>
               <p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{v.body}</p>
             </div>
