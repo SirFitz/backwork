@@ -6,11 +6,16 @@ import { Badge, Card, CardHead, Empty } from "~/components/ui";
 import { PALETTE } from "~/components/charts";
 import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
+import { requireOrg } from "~/lib/auth/context.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtMs } from "~/lib/utils";
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ request, params }: LoaderFunctionArgs) {
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
   const id = params.id!;
-  const trace = await safe(() => jaeger.getTrace(id), null);
+  // scope by tenant: a customer can only open a trace tagged with its own org_id
+  const trace = await safe(() => jaeger.getTrace(id, t), null);
   return json({ id, trace: trace.data, error: trace.error });
 }
 

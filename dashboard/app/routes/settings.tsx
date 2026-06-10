@@ -143,20 +143,14 @@ OTEL_SERVICE_NAME=<your-service>`;
         </ul>
       </Card>
 
-      <div className="rounded-xl border border-warn/30 bg-warn/5 px-4 py-3">
-        <div className="flex items-start gap-2.5">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
-          <div className="text-[13px]">
-            <p className="font-medium text-warn">This dashboard has no authentication yet.</p>
-            <p className="mt-0.5 text-muted">
-              Anyone who can reach it can see your logs/metrics and {d.tokenGated ? "request" : "read"} the ingest token above.
-              {d.tokenGated
-                ? " The token is hidden because SETTINGS_KEY is set — append ?key=… to reveal it."
-                : " Put it behind HTTP basic auth (Coolify supports this) or set a SETTINGS_KEY env to hide the token here."}
-            </p>
+      {d.isPlatform && d.token ? (
+        <div className="rounded-xl border border-border bg-surface-2/40 px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-faint" />
+            <p className="text-[13px] text-muted">Keep the ingest token secret — anyone who has it can write telemetry into this organization. Rotate it if it leaks.</p>
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

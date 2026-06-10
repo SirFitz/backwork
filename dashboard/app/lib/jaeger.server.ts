@@ -185,10 +185,13 @@ export async function recentRequests(
   return rows;
 }
 
-export async function getTrace(id: string): Promise<{ spans: Span[]; durationMs: number; startMs: number } | null> {
+export async function getTrace(id: string, tenant?: Tenant): Promise<{ spans: Span[]; durationMs: number; startMs: number } | null> {
   const res = await fetchJson<{ data: RawTrace[] }>(`${config.jaegerUrl}/api/traces/${encodeURIComponent(id)}`);
   const tr = res.data?.[0];
   if (!tr) return null;
+  // tenant scoping: a customer org may only read a trace stamped with its org_id
+  // (platform org is unfiltered). Prevents cross-tenant trace reads by ID.
+  if (tenant && !tenant.platform && !traceHasOrg(tr, tenant.orgId)) return null;
   const byId: Record<string, RawTrace["spans"][number]> = {};
   for (const s of tr.spans) byId[s.spanID] = s;
   let minStart = Infinity;

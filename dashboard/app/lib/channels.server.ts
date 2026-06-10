@@ -1,7 +1,48 @@
+import { lookup } from "node:dns/promises";
+import net from "node:net";
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { alertChannels } from "~/db/schema";
 import { encryptSecret, decryptSecret } from "./crypto.server";
+
+// SSRF guard: alert destinations are user-controlled URLs hit by the server
+// (test button + background evaluator). Block anything that targets the host
+// itself, the docker network, link-local/metadata, or other internal services.
+function isPrivateV4(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return true;
+  const [a, b] = p;
+  return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+function isPrivateV6(ip: string): boolean {
+  const x = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (x === "::1" || x === "::" || x.startsWith("fc") || x.startsWith("fd") || x.startsWith("fe8") || x.startsWith("fe9") || x.startsWith("fea") || x.startsWith("feb")) return true;
+  const m = x.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  return m ? isPrivateV4(m[1]) : false;
+}
+function ipIsPrivate(ip: string): boolean {
+  return net.isIPv4(ip) ? isPrivateV4(ip) : isPrivateV6(ip);
+}
+
+/** Throws if the URL is not a safe, public http(s) destination. `allowHosts`
+ *  restricts to specific public domains (Slack/Discord). */
+async function assertSafeUrl(raw: string, allowHosts?: string[]): Promise<void> {
+  let u: URL;
+  try { u = new URL(raw); } catch { throw new Error("invalid URL"); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("only http(s) URLs are allowed");
+  const host = u.hostname.toLowerCase();
+  if (allowHosts) {
+    if (!allowHosts.some((h) => host === h || host.endsWith("." + h))) throw new Error(`host must be one of: ${allowHosts.join(", ")}`);
+  } else if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || !host.includes(".")) {
+    throw new Error("internal/single-label hosts are not allowed");
+  }
+  if (net.isIP(host)) {
+    if (ipIsPrivate(host)) throw new Error("private/loopback IPs are not allowed");
+    return;
+  }
+  const addrs = await lookup(host, { all: true }).catch(() => { throw new Error("DNS resolution failed"); });
+  if (!addrs.length || addrs.some((a) => ipIsPrivate(a.address))) throw new Error("host resolves to a private/loopback address");
+}
 
 export type ChannelType = "webhook" | "slack" | "discord" | "email" | "sms";
 
@@ -98,6 +139,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
     const c = channel.config;
     switch (channel.type) {
       case "webhook": {
+        await assertSafeUrl(c.url);
         const r = await fetch(c.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -106,6 +148,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
         return r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` };
       }
       case "slack": {
+        await assertSafeUrl(c.webhookUrl, ["slack.com"]);
         const r = await fetch(c.webhookUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -114,6 +157,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
         return r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` };
       }
       case "discord": {
+        await assertSafeUrl(c.webhookUrl, ["discord.com", "discordapp.com"]);
         const r = await fetch(c.webhookUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
