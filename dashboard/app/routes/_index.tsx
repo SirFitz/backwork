@@ -90,14 +90,29 @@ export default function Overview() {
       <Deferred resolve={d.cards} fallback={<div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)}</div>}>
         {(c) => {
           const a = c.apm;
+          const noServices = c.host.servicesActive === 0;
           return (
+            <>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-              <SummaryCard icon={Boxes} label="Services up" value={`${c.up}/${c.host.servicesActive}`} sub={`${c.host.servicesDown} down · ${c.host.servicesDegraded} degraded · ${c.host.servicesStopped} stopped`} tone={c.host.servicesDown > 0 ? "text-err" : c.host.servicesDegraded > 0 ? "text-warn" : "text-ok"} />
+              <SummaryCard icon={Boxes} label="Services up" value={noServices ? "—" : `${c.up}/${c.host.servicesActive}`} sub={noServices ? "no services reporting yet" : `${c.host.servicesDown} down · ${c.host.servicesDegraded} degraded · ${c.host.servicesStopped} stopped`} tone={noServices ? undefined : c.host.servicesDown > 0 ? "text-err" : c.host.servicesDegraded > 0 ? "text-warn" : "text-ok"} />
               <SummaryCard icon={Gauge} label="Request rate" value={a.services ? fmtRate(a.reqRate) : "—"} sub={a.services ? `${a.services} instrumented service${a.services > 1 ? "s" : ""}` : "instrument an app"} />
               <SummaryCard icon={TriangleAlert} label="Error rate" value={a.services ? fmtPct(a.errorRatePct) : "—"} sub="of traced requests" tone={a.errorRatePct >= 5 ? "text-err" : a.errorRatePct >= 1 ? "text-warn" : undefined} />
               <SummaryCard icon={Zap} label="Worst p95" value={a.services ? fmtMs(a.worstP95) : "—"} sub="tail latency" tone={a.worstP95 >= 1000 ? "text-err" : a.worstP95 >= 500 ? "text-warn" : undefined} />
               <SummaryCard icon={Activity} label="Active incidents" value={String(c.incidents)} sub={`${c.critical} critical`} tone={c.critical > 0 ? "text-err" : c.incidents > 0 ? "text-warn" : "text-ok"} to="/incidents" />
             </div>
+            {noServices && !a.services ? (
+              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand/5 px-5 py-4 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold">No telemetry yet</div>
+                  <p className="text-2xs text-muted">Create a project to get an ingest token, then ship logs &amp; traces from your app or server.</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Link to="/projects" className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90">Create a project</Link>
+                  <Link to="/settings" className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-[13px] font-medium hover:bg-surface-2">Install guide</Link>
+                </div>
+              </div>
+            ) : null}
+            </>
           );
         }}
       </Deferred>
