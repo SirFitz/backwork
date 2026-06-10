@@ -83,6 +83,10 @@ export default function Settings() {
   --token ${tok} \\
   --name $(hostname)`;
 
+  const sdkSnippet = `npm i @sirfitz/backwork
+BACKWORK_TOKEN=${tok} BACKWORK_SERVICE=my-api \\
+  node --import @sirfitz/backwork/register server.js`;
+
   const otlpEnv = `# add to any OpenTelemetry-instrumented app
 OTEL_EXPORTER_OTLP_ENDPOINT=${d.publicUrl}/otlp
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
@@ -118,10 +122,13 @@ OTEL_SERVICE_NAME=<your-service>`;
             </div>
           </Card>
           <Card>
-            <CardHead title="Send traces from an app" sub="OpenTelemetry over OTLP" />
+            <CardHead title="Send traces from an app" sub="one-line SDK, or raw OpenTelemetry" />
             <div className="space-y-2 p-4">
+              <div className="text-2xs font-medium text-muted">SDK (Node / Bun)</div>
+              <CodeBlock>{sdkSnippet}</CodeBlock>
+              <div className="pt-1 text-2xs font-medium text-muted">…or raw OpenTelemetry env</div>
               <CodeBlock>{otlpEnv}</CodeBlock>
-              <p className="text-2xs text-faint">Any OTel SDK works. Spans show up under Traces, Requests and Metrics → Application performance.</p>
+              <p className="text-2xs text-faint">Spans show up under Traces, Requests and Metrics → Application performance. Elixir: see <a href="/docs#traces" className="text-brand hover:underline">docs</a>.</p>
             </div>
           </Card>
         </div>

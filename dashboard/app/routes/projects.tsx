@@ -128,6 +128,7 @@ export default function Projects() {
   const tok = d.created?.token ?? null;
 
   const cmdFor = (t: string) => `curl -fsSL ${d.publicUrl}/install.sh | sh -s -- \\\n  --token ${t} \\\n  --name $(hostname)`;
+  const sdkFor = (t: string) => `npm i @sirfitz/backwork\nBACKWORK_TOKEN=${t} BACKWORK_SERVICE=my-api \\\n  node --import @sirfitz/backwork/register server.js`;
   const otlpFor = (t: string) => `OTEL_EXPORTER_OTLP_ENDPOINT=${d.publicUrl}/otlp\nOTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${t}\nOTEL_SERVICE_NAME=<your-service>`;
 
   return (
@@ -147,7 +148,11 @@ export default function Projects() {
               <CodeBlock>{cmdFor(tok)}</CodeBlock>
             </div>
             <div>
-              <div className="mb-1 text-2xs font-medium text-muted">Send traces from an app (OpenTelemetry)</div>
+              <div className="mb-1 text-2xs font-medium text-muted">Send traces from an app — SDK (recommended)</div>
+              <CodeBlock>{sdkFor(tok)}</CodeBlock>
+            </div>
+            <div>
+              <div className="mb-1 text-2xs font-medium text-muted">…or raw OpenTelemetry</div>
               <CodeBlock>{otlpFor(tok)}</CodeBlock>
             </div>
           </div>
@@ -205,7 +210,11 @@ export default function Projects() {
             <CodeBlock>{cmdFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
           </div>
           <div>
-            <div className="mb-1 text-2xs font-medium text-muted">Send traces from an app (OpenTelemetry)</div>
+            <div className="mb-1 text-2xs font-medium text-muted">Send traces from an app — SDK (recommended)</div>
+            <CodeBlock>{sdkFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-medium text-muted">…or raw OpenTelemetry</div>
             <CodeBlock>{otlpFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
           </div>
           <p className="text-2xs text-faint">Lost the token? Use “regenerate” above to mint a new one (it invalidates the old one).</p>
