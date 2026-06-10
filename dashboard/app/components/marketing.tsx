@@ -402,56 +402,89 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
         </div>
       </Section>
 
-      {/* honest-by-design band */}
-      <Section className="py-8">
-        <div data-reveal className="overflow-hidden rounded-3xl border border-border-strong bg-gradient-to-br from-brand/10 via-surface to-surface px-6 py-12 text-center sm:px-12">
-          <ShieldCheck className="mx-auto h-8 w-8 text-brand" />
-          <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold tracking-tight sm:text-3xl">It never shows you green when your pipeline is down.</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-relaxed text-muted">
-            Most tools coerce a missing metric to zero and paint it healthy. backwork distinguishes <span className="font-medium text-fg">no data</span> from <span className="font-medium text-fg">all clear</span> — across overview, incidents and alerts — so an outage in the telemetry path is visible, not hidden.
-          </p>
-        </div>
-      </Section>
-
-      {/* pricing teaser */}
-      <Section className="py-20 text-center">
-        <div data-reveal>
-          <Eyebrow>Pricing</Eyebrow>
-          <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Free to self-host. Pay only for convenience.</h2>
-          <p className="mx-auto mt-4 max-w-xl text-[15px] text-muted">Run the whole thing yourself at no cost, or let us host and scale it for you.</p>
-          <div className="mt-7 flex justify-center">
-            <Link to="/pricing" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border-strong px-5 text-sm font-semibold text-fg transition hover:bg-surface-2">See pricing <ArrowRight className="h-4 w-4" /></Link>
+      {/* honest-by-design — message + before/after comparison */}
+      <Section className="py-12">
+        <div data-reveal className="overflow-hidden rounded-3xl border border-border-strong bg-gradient-to-br from-brand/[0.07] via-surface to-surface">
+          <div className="grid items-center gap-8 p-8 sm:p-12 lg:grid-cols-2 lg:gap-12">
+            <div>
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><ShieldCheck className="h-3.5 w-3.5 text-brand" />Honest by design</div>
+              <h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">It never shows you green when your pipeline is down.</h2>
+              <p className="mt-4 text-[15px] leading-relaxed text-muted">Most tools coerce a missing metric to zero and paint it healthy. backwork distinguishes <span className="font-medium text-fg">no data</span> from <span className="font-medium text-fg">all clear</span> — across overview, incidents and alerts — so an outage in the telemetry path is visible, not hidden.</p>
+            </div>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border bg-bg p-4">
+                <div className="text-2xs font-medium uppercase tracking-wide text-faint">Typical tool — collector offline 6m</div>
+                <div className="mt-2.5 flex items-center justify-between">
+                  <span className="font-mono text-[12px]">checkout-api</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-ok/10 px-2 py-0.5 text-2xs font-medium text-ok"><span className="h-1.5 w-1.5 rounded-full bg-ok" />Operational</span>
+                </div>
+                <div className="mt-1.5 font-mono text-[10px] text-faint">metric coerced to 0 → looks healthy</div>
+              </div>
+              <div className="rounded-xl border border-warn/40 bg-warn/5 p-4 ring-1 ring-warn/10">
+                <div className="text-2xs font-medium uppercase tracking-wide text-warn">backwork — same outage</div>
+                <div className="mt-2.5 flex items-center justify-between">
+                  <span className="font-mono text-[12px]">checkout-api</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-warn/10 px-2 py-0.5 text-2xs font-medium text-warn"><span className="h-1.5 w-1.5 rounded-full bg-warn" />No data</span>
+                </div>
+                <div className="mt-1.5 font-mono text-[10px] text-faint">source unreachable → alert suppressed, not “OK”</div>
+              </div>
+            </div>
           </div>
         </div>
       </Section>
 
-      {/* FAQ */}
-      <Section className="py-12">
+      {/* pricing teaser — compact 3-tier preview */}
+      <Section className="py-20">
         <div data-reveal className="mb-8 text-center">
-          <Eyebrow>FAQ</Eyebrow>
-          <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Questions, answered.</h2>
+          <Eyebrow>Pricing</Eyebrow>
+          <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Free to self-host. Pay only for convenience.</h2>
+          <p className="mx-auto mt-4 max-w-xl text-[15px] text-muted">Run the whole thing yourself at no cost, or let us host and scale it for you.</p>
         </div>
-        <div className="mx-auto max-w-3xl divide-y divide-border rounded-2xl border border-border bg-surface">
-          {FAQ.map(([q, a]) => (
-            <details key={q} className="group px-5 py-4">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-[14.5px] font-medium">
-                {q}
-                <span className="ml-4 text-muted transition group-open:rotate-45">+</span>
-              </summary>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-muted">{a}</p>
-            </details>
+        <div className="mx-auto grid max-w-3xl gap-3 sm:grid-cols-3">
+          {[["Self-host", "Free", "your hardware, open source", false], ["Cloud", "$19", "managed, per host / mo", true], ["Enterprise", "Custom", "SSO, SLA & data residency", false]].map(([name, price, sub, hot]) => (
+            <div key={name as string} data-reveal className={cn("rounded-2xl border bg-surface p-5 text-center", hot ? "border-brand ring-1 ring-brand/20" : "border-border")}>
+              <div className="text-[13px] font-semibold">{name}</div>
+              <div className="mt-2 font-mono text-2xl font-semibold tracking-tight">{price}</div>
+              <div className="mt-1 text-2xs text-faint">{sub as string}</div>
+            </div>
           ))}
+        </div>
+        <div data-reveal className="mt-7 text-center">
+          <Link to="/pricing" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border-strong px-5 text-sm font-semibold text-fg transition hover:bg-surface-2">Compare plans <ArrowRight className="h-4 w-4" /></Link>
         </div>
       </Section>
 
-      {/* final CTA */}
+      {/* FAQ — editorial 2-column */}
+      <Section className="py-16">
+        <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+          <div data-reveal className="h-max lg:sticky lg:top-24">
+            <Eyebrow>FAQ</Eyebrow>
+            <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Questions, answered.</h2>
+            <p className="mt-4 text-[15px] leading-relaxed text-muted">Everything worth knowing before you deploy.</p>
+          </div>
+          <div data-reveal className="divide-y divide-border border-y border-border">
+            {FAQ.map(([q, a]) => (
+              <details key={q} className="group py-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[14.5px] font-medium">{q}<span className="text-lg leading-none text-muted transition group-open:rotate-45">+</span></summary>
+                <p className="mt-2.5 text-[13.5px] leading-relaxed text-muted">{a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      {/* final CTA — glow + grid backdrop */}
       <Section className="py-20">
-        <div data-reveal className="rounded-3xl border border-border-strong bg-surface px-6 py-14 text-center sm:px-12">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Stop renting your observability.</h2>
-          <p className="mx-auto mt-4 max-w-xl text-[15px] text-muted">Deploy backwork on your own host in minutes and own your telemetry end to end.</p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-            <Link to="/register" className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-brand-fg hover:opacity-90">Start free <ArrowRight className="h-4 w-4" /></Link>
-            <a href={REPO} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border-strong px-5 text-sm font-semibold text-fg hover:bg-surface-2"><Github className="h-4 w-4" /> Star on GitHub</a>
+        <div data-reveal className="relative overflow-hidden rounded-3xl border border-border-strong bg-surface px-6 py-16 text-center sm:px-12">
+          <div className="pointer-events-none absolute inset-0 opacity-[0.5]" style={{ backgroundImage: "linear-gradient(oklch(var(--border)) 1px, transparent 1px), linear-gradient(90deg, oklch(var(--border)) 1px, transparent 1px)", backgroundSize: "44px 44px", maskImage: "radial-gradient(closest-side at 50% 0%, black, transparent)", WebkitMaskImage: "radial-gradient(closest-side at 50% 0%, black, transparent)" }} aria-hidden />
+          <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-[90%] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[radial-gradient(closest-side,oklch(var(--brand)/0.18),transparent)]" aria-hidden />
+          <div className="relative">
+            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Stop renting your observability.</h2>
+            <p className="mx-auto mt-4 max-w-xl text-[15px] text-muted">Deploy backwork on your own host in minutes and own your telemetry end to end.</p>
+            <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+              <Link to="/register" className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-brand-fg shadow-sm hover:opacity-90">Start free <ArrowRight className="h-4 w-4" /></Link>
+              <a href={REPO} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border-strong px-5 text-sm font-semibold text-fg hover:bg-surface-2"><Github className="h-4 w-4" /> Star on GitHub</a>
+            </div>
           </div>
         </div>
       </Section>
