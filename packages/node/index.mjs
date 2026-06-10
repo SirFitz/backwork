@@ -7,7 +7,7 @@ let started = false;
 /**
  * Start backwork tracing programmatically (NodeSDK under the hood — works on
  * Node and Bun). Usually you don't call this directly; prefer importing
- * "@backwork/node/register" (Node) or "@backwork/node/start" (Bun) as a preload.
+ * "@sirfitz/backwork/register" (Node) or "@sirfitz/backwork/start" (Bun) as a preload.
  *
  * @param {{ token?: string, service?: string, endpoint?: string }} [overrides]
  */

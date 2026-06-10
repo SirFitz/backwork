@@ -32,9 +32,10 @@ defmodule Backwork.MixProject do
 
   defp package do
     [
+      maintainers: ["SirFitz"],
       licenses: ["MIT"],
       links: %{"backwork" => "https://backwork.dev", "GitHub" => "https://github.com/SirFitz/backwork"},
-      files: ~w(lib mix.exs README.md)
+      files: ~w(lib mix.exs README.md LICENSE)
     ]
   end
 end

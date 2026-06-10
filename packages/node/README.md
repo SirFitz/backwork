@@ -1,4 +1,4 @@
-# @backwork/node
+# @sirfitz/backwork
 
 One-line OpenTelemetry tracing for [backwork.dev](https://backwork.dev). Works with **Node** and **Bun** — it wires OpenTelemetry auto-instrumentation to your backwork project with sane defaults, so you don't touch raw OTel config.
 
@@ -7,8 +7,8 @@ One-line OpenTelemetry tracing for [backwork.dev](https://backwork.dev). Works w
 ## Install
 
 ```bash
-npm i @backwork/node      # or:  pnpm add / yarn add
-bun add @backwork/node    # Bun
+npm i @sirfitz/backwork      # or:  pnpm add / yarn add
+bun add @sirfitz/backwork    # Bun
 ```
 
 ## Use
@@ -19,26 +19,26 @@ bun add @backwork/node    # Bun
 **Node** — preload with `--import` (fullest coverage):
 ```bash
 BACKWORK_TOKEN=bw_… BACKWORK_SERVICE=my-api \
-  node --import @backwork/node/register server.js
+  node --import @sirfitz/backwork/register server.js
 ```
 …or make it the very first import in your entry file:
 ```js
-import "@backwork/node/register";
+import "@sirfitz/backwork/register";
 ```
 …or, if your start command is fixed, use the env var:
 ```bash
-NODE_OPTIONS="--import @backwork/node/register"
+NODE_OPTIONS="--import @sirfitz/backwork/register"
 ```
 
 **Bun** — preload with `--preload`:
 ```bash
 BACKWORK_TOKEN=bw_… BACKWORK_SERVICE=my-api \
-  bun --preload @backwork/node/start run server.ts
+  bun --preload @sirfitz/backwork/start run server.ts
 ```
 
 **Programmatic** (if you'd rather call it yourself):
 ```js
-import { start } from "@backwork/node";
+import { start } from "@sirfitz/backwork";
 await start({ service: "my-api" }); // before you import instrumented libs
 ```
 

@@ -1,5 +1,5 @@
 {
-  "name": "@backwork/node",
+  "name": "@sirfitz/backwork",
   "version": "0.1.0",
   "description": "One-line OpenTelemetry tracing for backwork.dev — works with Node and Bun.",
   "license": "MIT",
@@ -38,5 +38,12 @@
     "@opentelemetry/auto-instrumentations-node": "^0.76.0",
     "@opentelemetry/exporter-trace-otlp-proto": "^0.218.0",
     "@opentelemetry/sdk-node": "^0.218.0"
+  },
+  "author": "SirFitz",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/SirFitz/backwork/issues"
   }
 }
