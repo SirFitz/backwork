@@ -5,7 +5,7 @@ defmodule Backwork.MixProject do
     [
       app: :backwork,
       version: "0.1.0",
-      elixir: "~> 1.15",
+      elixir: "~> 1.14",
       description: "One-call OpenTelemetry tracing for backwork.dev.",
       package: package(),
       deps: deps(),
