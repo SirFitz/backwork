@@ -113,7 +113,6 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
           <span className="font-mono">Loki · VictoriaMetrics · Jaeger · OpenTelemetry · Vector</span>
         </div>
       </footer>
-      <script dangerouslySetInnerHTML={{ __html: REVEAL_JS }} />
     </div>
   );
 }
