@@ -17,7 +17,7 @@ export function CardHead({
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
       <div className="min-w-0">
-        <h2 className="truncate text-[13px] font-semibold">{title}</h2>
+        <h2 className="truncate text-[15px] font-semibold tracking-tight">{title}</h2>
         {sub ? <p className="mt-0.5 truncate text-2xs text-faint">{sub}</p> : null}
       </div>
       {right ? <div className="shrink-0">{right}</div> : null}
@@ -28,7 +28,7 @@ export function CardHead({
 export function PageTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="mb-5">
-      <h1 className="text-[19px] font-semibold tracking-tight">{title}</h1>
+      <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
       {sub ? <p className="mt-1 max-w-[70ch] text-[13.5px] text-muted">{sub}</p> : null}
     </div>
   );
@@ -109,11 +109,13 @@ export function KeyStat({
   );
 }
 
-export function Empty({ title, children }: { title?: string; children?: ReactNode }) {
+export function Empty({ icon, title, children, cta }: { icon?: ReactNode; title?: string; children?: ReactNode; cta?: ReactNode }) {
   return (
     <div className="px-4 py-12 text-center">
+      {icon ? <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand/10 text-brand/70">{icon}</div> : null}
       {title ? <p className="text-sm font-medium text-fg">{title}</p> : null}
       {children ? <p className="mx-auto mt-1 max-w-[48ch] text-[13px] text-muted">{children}</p> : null}
+      {cta ? <div className="mt-4 flex flex-wrap items-center justify-center gap-2">{cta}</div> : null}
     </div>
   );
 }

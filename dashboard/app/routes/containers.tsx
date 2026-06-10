@@ -90,7 +90,7 @@ function ContainersTable({ health, cpuSpark, memSpark }: { health: Health[]; cpu
       </div>
       <Card>
         {rows.length === 0 ? (
-          <Empty title="No matching containers">Try clearing the filter.</Empty>
+          <Empty icon={<Search className="h-5 w-5" />} title="No matching containers">Try clearing the filter.</Empty>
         ) : (
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-[13px]">

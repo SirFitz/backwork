@@ -30,6 +30,7 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
+  MoreHorizontal,
   Network,
   Pause,
   Play,
@@ -133,7 +134,7 @@ function LiveStatus() {
       <button
         type="button"
         onClick={() => setPaused((p) => !p)}
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
         title={paused ? "Resume live updates" : "Pause live updates"}
       >
         {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
@@ -160,10 +161,10 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
   const link = "flex items-center gap-2 rounded px-2 py-1.5 text-[13px] text-fg hover:bg-surface-2";
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-2xs font-medium text-muted hover:bg-surface-2 hover:text-fg">
-        <Building2 className="h-3.5 w-3.5" />
-        <span className="max-w-[120px] truncate text-fg">{auth.org.name}</span>
-        <ChevronDown className="h-3 w-3" />
+      <button onClick={() => setOpen((o) => !o)} className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-2xs font-medium text-muted hover:bg-surface-2 hover:text-fg">
+        <Building2 className="h-3.5 w-3.5 shrink-0" />
+        <span className="hidden max-w-[120px] truncate text-fg sm:inline">{auth.org.name}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
       </button>
       {open ? (
         <div className="absolute right-0 z-40 mt-1.5 w-60 rounded-lg border border-border bg-surface p-1 shadow-lg">
@@ -228,7 +229,7 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
         </nav>
         <div className="px-5 py-4 text-2xs leading-relaxed text-faint">
           <div className="mb-1 flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+            <span className="h-1.5 w-1.5 rounded-full bg-faint" />
             Loki · VictoriaMetrics · cAdvisor
           </div>
           self-hosted observability
@@ -251,23 +252,47 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
         <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-6 pb-24 sm:px-6 lg:py-6">{children}</main>
       </div>
 
-      {/* mobile nav — all destinations reachable; horizontally scrollable when they don't fit */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto scroll-thin border-t border-border bg-surface/95 px-1 py-1 backdrop-blur lg:hidden">
-        {NAV.map((n) => (
-          <NavLink
-            key={n.to}
-            to={n.to}
-            end={n.end}
-            className={({ isActive }) =>
-              cn("flex shrink-0 flex-1 min-w-[58px] flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-[10px]", isActive ? "text-brand" : "text-muted")
-            }
-          >
+      <MobileNav />
+    </div>
+  );
+}
+
+function MobileNav() {
+  const [more, setMore] = useState(false);
+  const primary = NAV.slice(0, 5);
+  const rest = NAV.slice(5);
+  const tab = (active: boolean) => cn("flex flex-1 flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-[10px]", active ? "text-brand" : "text-muted");
+  return (
+    <>
+      {more ? (
+        <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setMore(false)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+          <div className="absolute inset-x-0 bottom-[52px] rounded-t-2xl border-t border-border-strong bg-surface p-2 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="px-2 py-1.5 text-2xs font-medium uppercase tracking-wide text-faint">More</div>
+            <div className="grid grid-cols-3 gap-1 pb-1">
+              {rest.map((n) => (
+                <NavLink key={n.to} to={n.to} end={n.end} onClick={() => setMore(false)} className={({ isActive }) => cn("flex flex-col items-center gap-1.5 rounded-lg px-2 py-3 text-2xs", isActive ? "bg-brand/10 text-brand" : "text-muted hover:bg-surface-2")}>
+                  <n.icon className="h-[18px] w-[18px]" />
+                  {n.label}
+                </NavLink>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface/95 px-1 py-1 backdrop-blur lg:hidden">
+        {primary.map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => tab(isActive)}>
             <n.icon className="h-4 w-4" />
             {n.label}
           </NavLink>
         ))}
+        <button type="button" onClick={() => setMore((m) => !m)} className={tab(more)} aria-label="More navigation">
+          <MoreHorizontal className="h-4 w-4" />
+          More
+        </button>
       </nav>
-    </div>
+    </>
   );
 }
 

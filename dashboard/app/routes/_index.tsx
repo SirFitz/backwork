@@ -55,20 +55,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 function SummaryCard({ icon: Icon, label, value, sub, tone, to }: { icon: any; label: string; value: string; sub?: string; tone?: string; to?: string }) {
   const inner = (
-    <Card className="flex h-full items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/40">
+    <div className="flex h-full min-w-[160px] flex-1 items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/40">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-muted"><Icon className="h-4 w-4" /></span>
       <div className="min-w-0">
         <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
         <div className={cn("font-mono text-xl font-semibold leading-tight tabular-nums", tone)}>{value}</div>
         {sub ? <div className="truncate text-2xs text-faint">{sub}</div> : null}
       </div>
-    </Card>
+    </div>
   );
-  return to ? <Link to={to} className="block">{inner}</Link> : inner;
+  return to ? <Link to={to} className="block min-w-[160px] flex-1">{inner}</Link> : inner;
 }
 
 function CardSkeleton() {
-  return <Card className="flex h-full items-center gap-3 px-4 py-3.5"><Skeleton className="h-9 w-9 rounded-lg" /><div className="flex-1 space-y-1.5"><Skeleton className="h-2.5 w-16" /><Skeleton className="h-5 w-12" /></div></Card>;
+  return <div className="flex h-full min-w-[160px] flex-1 items-center gap-3 px-4 py-3.5"><Skeleton className="h-9 w-9 rounded-lg" /><div className="flex-1 space-y-1.5"><Skeleton className="h-2.5 w-16" /><Skeleton className="h-5 w-12" /></div></div>;
 }
 function Vital({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -86,20 +86,20 @@ export default function Overview() {
     <div className="space-y-6 animate-fade-in">
       <PageTitle title="Overview" sub="What's healthy and what needs attention across every container on this host, in one place." />
 
-      {/* summary cards */}
-      <Deferred resolve={d.cards} fallback={<div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)}</div>}>
+      {/* summary strip */}
+      <Deferred resolve={d.cards} fallback={<Card className="flex flex-wrap divide-x divide-border">{Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)}</Card>}>
         {(c) => {
           const a = c.apm;
           const noServices = c.host.servicesActive === 0;
           return (
             <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+            <Card className="flex flex-wrap divide-x divide-y divide-border xl:divide-y-0">
               <SummaryCard icon={Boxes} label="Services up" value={noServices ? "—" : `${c.up}/${c.host.servicesActive}`} sub={noServices ? "no services reporting yet" : `${c.host.servicesDown} down · ${c.host.servicesDegraded} degraded · ${c.host.servicesStopped} stopped`} tone={noServices ? undefined : c.host.servicesDown > 0 ? "text-err" : c.host.servicesDegraded > 0 ? "text-warn" : "text-ok"} />
               <SummaryCard icon={Gauge} label="Request rate" value={a.services ? fmtRate(a.reqRate) : "—"} sub={a.services ? `${a.services} instrumented service${a.services > 1 ? "s" : ""}` : "instrument an app"} />
               <SummaryCard icon={TriangleAlert} label="Error rate" value={a.services ? fmtPct(a.errorRatePct) : "—"} sub="of traced requests" tone={a.errorRatePct >= 5 ? "text-err" : a.errorRatePct >= 1 ? "text-warn" : undefined} />
               <SummaryCard icon={Zap} label="Worst p95" value={a.services ? fmtMs(a.worstP95) : "—"} sub="tail latency" tone={a.worstP95 >= 1000 ? "text-err" : a.worstP95 >= 500 ? "text-warn" : undefined} />
-              <SummaryCard icon={Activity} label="Active incidents" value={String(c.incidents)} sub={`${c.critical} critical`} tone={c.critical > 0 ? "text-err" : c.incidents > 0 ? "text-warn" : "text-ok"} to="/incidents" />
-            </div>
+              <SummaryCard icon={Activity} label="Active incidents" value={String(c.incidents)} sub={`${c.critical} critical`} tone={c.critical > 0 ? "text-err" : undefined} to="/incidents" />
+            </Card>
             {noServices && !a.services ? (
               <div className="mt-3 flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand/5 px-5 py-4 sm:flex-row sm:items-center">
                 <div className="min-w-0 flex-1">

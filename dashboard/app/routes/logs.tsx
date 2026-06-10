@@ -96,7 +96,7 @@ export default function Logs() {
         <Deferred resolve={d.entries} fallback={<RowsSkeleton rows={10} />}>
           {(entries) =>
             entries.length === 0 ? (
-              <Empty title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
+              <Empty icon={<Search className="h-5 w-5" />} title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
             ) : (
               <div className={cn("max-h-[62vh] overflow-auto scroll-thin font-mono text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
                 {entries.map((e, i) => (

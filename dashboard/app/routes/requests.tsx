@@ -136,7 +136,7 @@ export default function Requests() {
             <ErrorNote error={d.error} />
             {d.capped ? <div className="px-4 pt-2 text-2xs text-faint">Showing the newest {rows.length} requests from the last hour — filter by service to see a specific one in full.</div> : null}
             {rows.length === 0 ? (
-              <Empty title="No matching requests">Adjust the filters or widen the service selection.</Empty>
+              <Empty icon={<Network className="h-5 w-5" />} title="No matching requests">Adjust the filters or widen the service selection.</Empty>
             ) : (
               <div className="max-h-[64vh] overflow-auto scroll-thin">
                 <table className="w-full text-[13px]">

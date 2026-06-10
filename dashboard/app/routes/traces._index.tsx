@@ -62,7 +62,7 @@ export default function Traces() {
             <ErrorNote error={d.error} />
             {d.traces.length >= 40 ? <div className="px-4 pt-2 text-2xs text-faint">Showing the 40 most recent traces from the last hour — pick a service to narrow.</div> : null}
             {d.traces.length === 0 ? (
-              <Empty title="No traces in range">Nothing from this service in the last hour.</Empty>
+              <Empty icon={<GitBranch className="h-5 w-5" />} title="No traces in range">Nothing from this service in the last hour.</Empty>
             ) : (
               <table className="w-full text-[13px]">
                 <thead>

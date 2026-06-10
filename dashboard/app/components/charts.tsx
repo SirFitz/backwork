@@ -35,14 +35,17 @@ function useChartTheme() {
   return c;
 }
 
+// Categorical series palette. Brand coral is intentionally NOT first — it should
+// not auto-attach to "the primary series", and it sits ~9° from --err (red), so
+// it's pushed to the end to avoid coral/red confusion in multi-series charts.
 export const PALETTE = [
-  "oklch(0.62 0.18 16)", // coral
   "oklch(0.58 0.13 240)", // blue
-  "oklch(0.6 0.13 150)", // green
-  "oklch(0.7 0.13 75)", // amber
   "oklch(0.55 0.17 290)", // violet
   "oklch(0.62 0.1 200)", // teal
+  "oklch(0.6 0.13 150)", // green
+  "oklch(0.7 0.13 75)", // amber
   "oklch(0.64 0.16 40)", // orange
+  "oklch(0.62 0.18 16)", // coral (brand) — last
 ];
 
 export type Series = { name: string; color: string; points: Array<{ t: number; v: number }> };
