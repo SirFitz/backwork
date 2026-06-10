@@ -76,7 +76,7 @@
     background-repeat: no-repeat;
     background-position: right 0.55rem center;
     background-size: 1rem;
-    padding-right: 1.9rem;
+    padding-right: 1.9rem !important; /* beat utility px-3 so the chevron clears the text */
   }
 }
 
