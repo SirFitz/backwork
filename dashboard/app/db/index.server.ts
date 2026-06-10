@@ -88,6 +88,13 @@ CREATE TABLE IF NOT EXISTS trace_services (
 CREATE TABLE IF NOT EXISTS migrations (
   name text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
 
+CREATE TABLE IF NOT EXISTS password_resets (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash text NOT NULL, expires_at timestamptz NOT NULL, used_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS password_resets_token_uniq ON password_resets (token_hash);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id text PRIMARY KEY,
   org_id text REFERENCES orgs(id) ON DELETE CASCADE,

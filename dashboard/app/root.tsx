@@ -65,7 +65,7 @@ const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 export async function loader({ request }: LoaderFunctionArgs) {
   ensureEvaluator(); // start the background alert evaluator once
   const path = new URL(request.url).pathname;
-  const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite");
+  const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite") || path.startsWith("/reset");
   const { getTheme } = await themeSessionResolver(request);
   const theme = getTheme() ?? Theme.LIGHT;
   if (isPublic) return json({ theme, auth: null as AuthData });

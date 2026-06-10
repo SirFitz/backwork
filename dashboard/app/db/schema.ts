@@ -107,6 +107,15 @@ export const migrations = pgTable("migrations", {
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const passwordResets = pgTable("password_resets", {
+  id: id(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ tokenUniq: uniqueIndex("password_resets_token_uniq").on(t.tokenHash) }));
+
 export const auditLog = pgTable("audit_log", {
   id: id(),
   orgId: text("org_id").references(() => orgs.id, { onDelete: "cascade" }),

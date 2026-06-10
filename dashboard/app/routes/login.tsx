@@ -43,12 +43,15 @@ export default function Login() {
   const nav = useNavigation();
   const [params] = useSearchParams();
   const next = params.get("next") || "/";
+  const justReset = params.get("reset") === "1";
   return (
     <AuthCard title="Sign in" sub="Welcome back to backwork." footer={<>No account? <Link to="/register" className="font-medium text-brand hover:underline">Create one</Link></>}>
       <Form method="post" className="space-y-3">
         <input type="hidden" name="next" value={next} />
         <input name="email" type="email" autoComplete="email" required placeholder="you@example.com" className={AUTH_FIELD} />
         <input name="password" type="password" autoComplete="current-password" required placeholder="Password" className={AUTH_FIELD} />
+        {justReset ? <p className="text-[13px] text-ok">Password updated — sign in with your new password.</p> : null}
+        <div className="text-right"><Link to="/forgot" className="text-2xs text-muted hover:text-brand hover:underline">Forgot password?</Link></div>
         {data?.error ? <p className="text-[13px] text-err">{data.error}</p> : null}
         <button type="submit" disabled={nav.state !== "idle"} className="h-10 w-full rounded-lg bg-brand text-[14px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
           {nav.state !== "idle" ? "Signing in…" : "Sign in"}
