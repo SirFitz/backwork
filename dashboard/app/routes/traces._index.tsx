@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, Link, useLoaderData, useSubmit } from "@remix-run/react";
+import { Form, Link, useLoaderData, useNavigate, useSubmit } from "@remix-run/react";
 import { GitBranch } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import * as jaeger from "~/lib/jaeger.server";
@@ -26,6 +26,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function Traces() {
   const d = useLoaderData<typeof loader>();
   const submit = useSubmit();
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -78,7 +79,7 @@ export default function Traces() {
                 </thead>
                 <tbody>
                   {d.traces.map((t) => (
-                    <tr key={t.traceID} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
+                    <tr key={t.traceID} onClick={() => navigate(`/traces/${t.traceID}`)} className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-surface-2/50">
                       <td className="px-4 py-2.5">
                         <Link to={`/traces/${t.traceID}`} className="font-mono hover:text-brand">
                           {t.error ? <Badge tone="err" className="mr-2">error</Badge> : null}

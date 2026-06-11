@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, Link, useLoaderData, useSubmit } from "@remix-run/react";
+import { Form, Link, useLoaderData, useNavigate, useSubmit } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import { Network, Search } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
@@ -63,6 +63,7 @@ const FILTERS = ["all", "2xx", "3xx", "4xx", "5xx"] as const;
 export default function Requests() {
   const d = useLoaderData<typeof loader>();
   const submit = useSubmit();
+  const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState<(typeof FILTERS)[number]>("all");
   const [method, setMethod] = useState("all");
   const [q, setQ] = useState("");
@@ -159,7 +160,7 @@ export default function Requests() {
                   </thead>
                   <tbody className="font-mono">
                     {rows.map((r, i) => (
-                      <tr key={r.traceID + i} className="border-b border-border/40 last:border-0 hover:bg-surface-2/50">
+                      <tr key={r.traceID + i} onClick={() => navigate(`/traces/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
                         <td className="px-4 py-1.5 tabular-nums text-faint">{fmtClock(r.startMs)}</td>
                         <td className="px-4 py-1.5 text-accent">{r.service}</td>
                         <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
