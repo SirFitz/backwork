@@ -167,6 +167,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
         await assertSafeUrl(c.url);
         const r = await fetch(c.url, {
           method: "POST",
+          redirect: "manual", // don't follow a 30x to an internal target (SSRF)
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ ...msg, source: "backwork.dev", ts: new Date().toISOString() }),
         });
@@ -176,6 +177,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
         await assertSafeUrl(c.webhookUrl, ["slack.com"]);
         const r = await fetch(c.webhookUrl, {
           method: "POST",
+          redirect: "manual", // don't follow a 30x to an internal target (SSRF)
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text: `*${msg.title}*\n${msg.body}` }),
         });
@@ -185,6 +187,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
         await assertSafeUrl(c.webhookUrl, ["discord.com", "discordapp.com"]);
         const r = await fetch(c.webhookUrl, {
           method: "POST",
+          redirect: "manual", // don't follow a 30x to an internal target (SSRF)
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ content: `**${msg.title}**\n${msg.body}` }),
         });
