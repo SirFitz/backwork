@@ -128,3 +128,32 @@ export const auditLog = pgTable("audit_log", {
   ip: text("ip"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ orgIdx: index("audit_log_org_idx").on(t.orgId) }));
+
+// Error tracking (CMP-1): one error_group per unique fingerprint per org;
+// error_events are the individual occurrences (bounded by retention).
+export const errorGroups = pgTable("error_groups", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  project: text("project").notNull().default(""),
+  fingerprint: text("fingerprint").notNull(),
+  type: text("type").notNull().default("Error"),
+  message: text("message").notNull().default(""),
+  service: text("service").notNull().default(""),
+  level: text("level").notNull().default("error"),
+  status: text("status").$type<"open" | "resolved" | "ignored">().notNull().default("open"),
+  count: integer("count").notNull().default(0),
+  sample: jsonb("sample").$type<Record<string, unknown>>().default({}),
+  firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgFp: uniqueIndex("error_groups_org_fp_uniq").on(t.orgId, t.fingerprint),
+  orgLast: index("error_groups_org_last_idx").on(t.orgId, t.lastSeen),
+}));
+
+export const errorEvents = pgTable("error_events", {
+  id: id(),
+  groupId: text("group_id").notNull().references(() => errorGroups.id, { onDelete: "cascade" }),
+  orgId: text("org_id").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ groupIdx: index("error_events_group_idx").on(t.groupId, t.createdAt) }));

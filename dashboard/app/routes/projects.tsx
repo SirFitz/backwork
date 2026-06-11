@@ -135,6 +135,7 @@ export default function Projects() {
   const cmdFor = (t: string) => `curl -fsSL ${d.publicUrl}/install.sh | sh -s -- \\\n  --token ${t} \\\n  --name $(hostname)`;
   const sdkFor = (t: string) => `npm i @sirfitz/backwork\nBACKWORK_TOKEN=${t} BACKWORK_SERVICE=my-api \\\n  node --import @sirfitz/backwork/register server.js`;
   const otlpFor = (t: string) => `OTEL_EXPORTER_OTLP_ENDPOINT=${d.publicUrl}/otlp\nOTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${t}\nOTEL_SERVICE_NAME=<your-service>`;
+  const errFor = (t: string) => `curl -X POST ${d.publicUrl}/ingest/errors \\\n  -H "Authorization: Bearer ${t}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"type":"TypeError","message":"Cannot read x of undefined","service":"my-api","stack":"...","environment":"production"}'`;
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -221,6 +222,10 @@ export default function Projects() {
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">…or raw OpenTelemetry</div>
             <CodeBlock>{otlpFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-medium text-muted">Report an exception → <a href="/errors" className="text-brand hover:underline">Errors</a></div>
+            <CodeBlock>{errFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
           </div>
           <p className="text-2xs text-faint">Lost the token? Use “regenerate” above to mint a new one (it invalidates the old one).</p>
         </div>

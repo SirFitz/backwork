@@ -16,6 +16,7 @@ export function loader() {
     "Disallow: /onboarding",
     "Disallow: /forgot",
     "Disallow: /audit",
+    "Disallow: /errors",
     "Disallow: /reset",
     "Disallow: /invite",
     "Disallow: /account",

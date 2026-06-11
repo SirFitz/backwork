@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action text NOT NULL, target jsonb DEFAULT '{}'::jsonb, ip text,
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS audit_log_org_idx ON audit_log (org_id);
+
+CREATE TABLE IF NOT EXISTS error_groups (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project text NOT NULL DEFAULT '',
+  fingerprint text NOT NULL,
+  type text NOT NULL DEFAULT 'Error',
+  message text NOT NULL DEFAULT '',
+  service text NOT NULL DEFAULT '',
+  level text NOT NULL DEFAULT 'error',
+  status text NOT NULL DEFAULT 'open',
+  count integer NOT NULL DEFAULT 0,
+  sample jsonb DEFAULT '{}'::jsonb,
+  first_seen timestamptz NOT NULL DEFAULT now(),
+  last_seen timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS error_groups_org_fp_uniq ON error_groups (org_id, fingerprint);
+CREATE INDEX IF NOT EXISTS error_groups_org_last_idx ON error_groups (org_id, last_seen);
+CREATE TABLE IF NOT EXISTS error_events (
+  id text PRIMARY KEY,
+  group_id text NOT NULL REFERENCES error_groups(id) ON DELETE CASCADE,
+  org_id text NOT NULL,
+  payload jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS error_events_group_idx ON error_events (group_id, created_at);
 `;
 
 declare global {
