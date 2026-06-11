@@ -144,6 +144,34 @@ function tagVal(tags: Array<{ key: string; value: any }> | undefined, keys: stri
 }
 
 /** Flat list of recent HTTP requests, extracted from each trace's root span. */
+// Resolve the real route for a request. Prefer a non-wildcard `http.route` (some
+// frameworks set a templated route like `/orders/:id`); otherwise fall back to the
+// actual request path (query-stripped). remix-serve/express report `http.route: *`
+// for their single catch-all handler, so the wildcard must never win — we look at
+// every span for `http.target`/`url.path`/`http.url` so the chosen root span being
+// the express layer (which only knows "*") doesn't hide the real path.
+function routeForRequest(
+  spans: Array<{ tags?: Array<{ key: string; value: any }> }>,
+  root: { tags?: Array<{ key: string; value: any }>; operationName: string }
+): string {
+  const r = tagVal(root.tags, ["http.route"]);
+  if (r && r !== "*" && r !== "/*" && r !== "/**") return String(r);
+  const clean = (p: string) => p.split("?")[0].split("#")[0] || "/";
+  for (const s of [root, ...spans]) {
+    const t = tagVal(s.tags, ["http.target", "url.path"]);
+    if (t) return clean(String(t));
+    const full = tagVal(s.tags, ["http.url", "url.full"]);
+    if (full) {
+      try {
+        return clean(new URL(String(full)).pathname);
+      } catch {
+        /* not a full URL */
+      }
+    }
+  }
+  return root.operationName;
+}
+
 export async function recentRequests(
   opts: { service?: string; limit?: number; lookbackHours?: number } = {},
   tenant?: Tenant
@@ -168,7 +196,7 @@ export async function recentRequests(
     const root = tr.spans.find((s) => !s.references || s.references.length === 0) || tr.spans[0];
     const method = tagVal(root.tags, ["http.method", "http.request.method"]);
     const statusRaw = tagVal(root.tags, ["http.status_code", "http.response.status_code"]);
-    const route = tagVal(root.tags, ["http.route", "http.target", "url.path"]) || root.operationName;
+    const route = routeForRequest(tr.spans, root);
     const status = statusRaw !== undefined ? Number(statusRaw) : null;
     rows.push({
       traceID: tr.traceID,
