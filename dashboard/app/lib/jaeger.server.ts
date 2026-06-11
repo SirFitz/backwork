@@ -110,7 +110,7 @@ export async function recentTraces(
     }
     out.push({
       traceID: tr.traceID,
-      root: rootSpan.operationName,
+      root: templateRoute(routeForRequest(tr.spans, rootSpan)),
       service: tr.processes[rootSpan.processID]?.serviceName || "unknown",
       spans: tr.spans.length,
       services: [...svcSet],
@@ -144,6 +144,26 @@ function tagVal(tags: Array<{ key: string; value: any }> | undefined, keys: stri
 }
 
 /** Flat list of recent HTTP requests, extracted from each trace's root span. */
+// Collapse id-like path segments to placeholders so routes group as patterns
+// (`/orders/01KTVP…/items/5` → `/orders/:id/items/:id`). Conservative: only clear
+// id formats (ULID, UUID, pure-int, long hex) are templated, so real route words
+// (e.g. `oauth2`, `subscriptions`) are left intact. No-ops on non-path strings
+// (worker op names etc.).
+function templateRoute(route: string): string {
+  if (!route || !route.includes("/")) return route;
+  return route
+    .split("/")
+    .map((seg) => {
+      if (!seg) return seg;
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)) return ":uuid";
+      if (/^[0-9A-HJKMNP-TV-Z]{26}$/i.test(seg)) return ":id"; // ULID (Crockford base32)
+      if (/^\d+$/.test(seg)) return ":id"; // numeric id
+      if (/^[0-9a-f]{24,}$/i.test(seg)) return ":id"; // long hex / mongo objectid / sha
+      return seg;
+    })
+    .join("/");
+}
+
 // Resolve the real route for a request. Prefer a non-wildcard `http.route` (some
 // frameworks set a templated route like `/orders/:id`); otherwise fall back to the
 // actual request path (query-stripped). remix-serve/express report `http.route: *`
@@ -196,7 +216,7 @@ export async function recentRequests(
     const root = tr.spans.find((s) => !s.references || s.references.length === 0) || tr.spans[0];
     const method = tagVal(root.tags, ["http.method", "http.request.method"]);
     const statusRaw = tagVal(root.tags, ["http.status_code", "http.response.status_code"]);
-    const route = routeForRequest(tr.spans, root);
+    const route = templateRoute(routeForRequest(tr.spans, root));
     const status = statusRaw !== undefined ? Number(statusRaw) : null;
     rows.push({
       traceID: tr.traceID,
