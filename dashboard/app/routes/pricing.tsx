@@ -29,28 +29,28 @@ const TIERS = [
   },
   {
     name: "Cloud",
-    price: "$19",
-    unit: "/ host / mo",
-    blurb: "Managed backwork — we run, scale and back it up.",
+    price: "Free",
+    unit: "in beta",
+    blurb: "Managed backwork, hosted by us — free while in beta.",
     cta: { label: "Start free", href: "/register", external: false },
     highlight: true,
-    features: ["Everything in Self-host, fully managed", "Automatic upgrades & backups", "14-day metrics / 7-day log retention", "Multi-tenant orgs & per-project tokens", "Email alert channels included", "Email support, 1-business-day"],
+    features: ["Everything in Self-host, fully managed", "14-day metrics / 7-day log retention", "Multi-tenant orgs & per-project tokens", "Email alert channels included", "Free during beta — usage-based plans planned", "Best-effort support"],
   },
   {
     name: "Enterprise",
-    price: "Custom",
-    unit: "annual",
-    blurb: "For teams with compliance, scale and SLA needs.",
-    cta: { label: "Contact sales", href: "mailto:hello@backwork.dev?subject=backwork%20Enterprise", external: true },
+    price: "Let's talk",
+    unit: "",
+    blurb: "Compliance, scale and SLA needs — on the roadmap.",
+    cta: { label: "Contact us", href: "mailto:hello@backwork.dev?subject=backwork%20Enterprise", external: true },
     highlight: false,
-    features: ["SSO / SAML & SCIM provisioning", "Custom retention & data residency", "Audit logs & role policies", "Priority support & uptime SLA", "Dedicated or air-gapped deployment", "Onboarding & migration help"],
+    features: ["SSO / SAML provisioning (planned)", "Custom retention & data residency", "Audit logs & role policies", "Priority support & uptime SLA", "Dedicated or air-gapped deployment", "Onboarding & migration help"],
   },
 ];
 
 const FAQ = [
   ["Is the self-hosted version really free?", "Yes — the full stack is open source. Clone the repo, run one Docker command, and use every feature with no license cost."],
-  ["What does “per host” mean on Cloud?", "A host is any server or machine sending telemetry to backwork. Containers and apps on the same host don't count separately."],
-  ["Do you charge per GB of logs?", "No. We price on hosts, not data volume, so a traffic spike never spikes your bill."],
+  ["Is the hosted Cloud free right now?", "Yes — Cloud is in beta and free to use today. Paid, usage-based plans are planned; we'll give plenty of notice before anything is charged."],
+  ["Will you charge per GB of logs?", "No. When paid plans arrive they'll be usage-based on hosts, not raw log volume, so a traffic spike won't spike your bill."],
   ["Can I move between self-host and Cloud?", "Anytime. It's the same software, so you can start self-hosted and switch to managed (or back) without changing your agents."],
 ];
 

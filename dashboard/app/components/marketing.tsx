@@ -441,7 +441,7 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
           <p className="mx-auto mt-4 max-w-xl text-[15px] text-muted">Run the whole thing yourself at no cost, or let us host and scale it for you.</p>
         </div>
         <div className="mx-auto grid max-w-3xl gap-3 sm:grid-cols-3">
-          {[["Self-host", "Free", "your hardware, open source", false], ["Cloud", "$19", "managed, per host / mo", true], ["Enterprise", "Custom", "SSO, SLA & data residency", false]].map(([name, price, sub, hot]) => (
+          {[["Self-host", "Free", "your hardware, open source", false], ["Cloud", "Free", "managed, free in beta", true], ["Enterprise", "Let's talk", "SSO, SLA & data residency", false]].map(([name, price, sub, hot]) => (
             <div key={name as string} data-reveal className={cn("rounded-2xl border bg-surface p-5 text-center", hot ? "border-brand ring-1 ring-brand/20" : "border-border")}>
               <div className="text-[13px] font-semibold">{name}</div>
               <div className="mt-2 font-mono text-2xl font-semibold tracking-tight">{price}</div>
