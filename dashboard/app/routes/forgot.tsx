@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useNavigation } from "@remix-run/react";
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
@@ -28,7 +28,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const generic = json({ sent: true });
   if (!email || !rateLimit(`forgot:ip:${ip}`, 10, 60 * 60 * 1000).ok || !rateLimit(`forgot:email:${email}`, 5, 60 * 60 * 1000).ok) return generic;
 
-  const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  const rows = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
   const user = rows[0];
   if (user) {
     const token = randomBytes(32).toString("hex");

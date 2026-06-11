@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useNavigation, useSearchParams } from "@remix-run/react";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { users, memberships } from "~/db/schema";
 import { verifyPassword } from "~/lib/auth/password.server";
@@ -29,7 +29,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const limited = !rateLimit(`login:ip:${ip}`, 20, 10 * 60 * 1000).ok || !rateLimit(`login:email:${email}`, 8, 10 * 60 * 1000).ok;
   if (limited) return json({ error: "Too many attempts. Please wait a few minutes and try again." }, { status: 429 });
 
-  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const rows = await db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
   const user = rows[0];
   const ok = user ? await verifyPassword(user.passwordHash, password) : false;
   if (!user || !ok) return json({ error: "Invalid email or password." }, { status: 400 });

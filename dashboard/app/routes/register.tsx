@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useNavigation } from "@remix-run/react";
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
 import { users } from "~/db/schema";
@@ -30,7 +30,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const pwErr = passwordError(password);
   if (pwErr) return json({ error: pwErr }, { status: 400 });
 
-  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  const existing = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
   if (existing.length) return json({ error: "An account with that email already exists." }, { status: 400 });
 
   const anyUser = await db.select({ id: users.id }).from(users).limit(1);

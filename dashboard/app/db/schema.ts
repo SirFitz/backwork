@@ -1,4 +1,5 @@
 import { pgTable, text, boolean, integer, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
 export const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
@@ -19,7 +20,7 @@ export const users = pgTable("users", {
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   ...ts(),
-}, (t) => ({ emailUniq: uniqueIndex("users_email_uniq").on(t.email) }));
+}, (t) => ({ emailUniq: uniqueIndex("users_email_uniq").on(sql`lower(${t.email})`) }));
 
 export const orgs = pgTable("orgs", {
   id: id(),
