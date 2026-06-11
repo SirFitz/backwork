@@ -14,31 +14,34 @@ import { cn, fmtClock, fmtMs, fmtPct } from "~/lib/utils";
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
-  const requested = new URL(request.url).searchParams.get("service") || "all";
+  const url = new URL(request.url);
+  const requested = url.searchParams.get("service") || "all";
+  const rangeKey = url.searchParams.get("range") || "1h";
+  const hrs = RANGES[rangeKey] ?? 1;
   // cache the Jaeger fan-out so the 10s live-poll doesn't re-fire up to 12 trace
   // queries every tick (PERF-3)
   const services = await cached(`req:svcs:${t.orgId}`, 30000, () => safe(() => jaeger.services(t), [] as string[]));
   const list = services.data;
   const chosen = requested === "all" ? "all" : list.includes(requested) ? requested : list[0] || "";
 
-  const { rows, error } = await cached(`req:rows:${t.orgId}:${chosen}`, 8000, async () => {
+  const { rows, error } = await cached(`req:rows:${t.orgId}:${chosen}:${rangeKey}`, 8000, async () => {
     let rows: jaeger.RequestRow[] = [];
     let error: string | null = null;
     if (chosen === "all" && list.length) {
       const batches = await Promise.all(
-        list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]))
+        list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: hrs }, t), [] as jaeger.RequestRow[]))
       );
       rows = batches.flatMap((b) => b.data).sort((a, b) => b.startMs - a.startMs).slice(0, 200);
       error = batches.find((b) => b.error)?.error ?? null;
     } else if (chosen) {
-      const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]);
+      const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: hrs }, t), [] as jaeger.RequestRow[]);
       rows = r.data;
       error = r.error;
     }
     return { rows, error };
   });
   const capped = chosen === "all" ? rows.length >= 200 : rows.length >= 120;
-  return json({ services: list, rows, error, service: chosen, capped });
+  return json({ services: list, rows, error, service: chosen, range: rangeKey, capped });
 }
 
 function statusTone(s: number | null) {
@@ -59,6 +62,7 @@ function pctl(nums: number[], p: number) {
 }
 
 const FILTERS = ["all", "2xx", "3xx", "4xx", "5xx"] as const;
+const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
 
 export default function Requests() {
   const d = useLoaderData<typeof loader>();
@@ -123,10 +127,13 @@ export default function Requests() {
 
           {/* controls */}
           <div className="flex flex-wrap items-center gap-2">
-            <Form method="get">
+            <Form method="get" className="flex items-center gap-2">
               <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
                 <option value="all">All instrumented</option>
                 {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <select name="range" defaultValue={d.range} onChange={(e) => submit(e.currentTarget.form)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
+                {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
               </select>
             </Form>
             <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-2xs">
@@ -146,7 +153,7 @@ export default function Requests() {
           </div>
 
           <Card>
-            <CardHead title="Recent requests" sub={`${d.service === "all" ? "all instrumented services" : d.service} · last 1h`} right={<Badge tone="neutral">{rows.length}</Badge>} />
+            <CardHead title="Recent requests" sub={`${d.service === "all" ? "all instrumented services" : d.service} · last ${d.range}`} right={<Badge tone="neutral">{rows.length}</Badge>} />
             <ErrorNote error={d.error} />
             {d.capped ? <div className="px-4 pt-2 text-2xs text-faint">Showing the newest {rows.length} requests from the last hour — filter by service to see a specific one in full.</div> : null}
             {rows.length === 0 ? (

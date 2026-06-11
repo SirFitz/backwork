@@ -10,17 +10,22 @@ import { tenantOf } from "~/lib/tenant.server";
 import { cached } from "~/lib/cache.server";
 import { cn, fmtMs, timeAgo } from "~/lib/utils";
 
+const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
-  const requested = new URL(request.url).searchParams.get("service") || "";
+  const url = new URL(request.url);
+  const requested = url.searchParams.get("service") || "";
+  const rangeKey = url.searchParams.get("range") || "1h";
+  const hrs = RANGES[rangeKey] ?? 1;
   // cache so the 10s live-poll doesn't re-query Jaeger every tick (PERF-4)
   const services = await cached(`tr:svcs:${t.orgId}`, 30000, () => safe(() => jaeger.services(t), [] as string[]));
   const chosen = requested || services.data[0] || "";
   const traces = chosen
-    ? await cached(`tr:list:${t.orgId}:${chosen}`, 8000, () => safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: 1 }, t), [] as jaeger.TraceSummary[]))
+    ? await cached(`tr:list:${t.orgId}:${chosen}:${rangeKey}`, 8000, () => safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: hrs }, t), [] as jaeger.TraceSummary[]))
     : { data: [] as jaeger.TraceSummary[], error: null as string | null };
-  return json({ services: services.data, traces: traces.data, error: traces.error, service: chosen });
+  return json({ services: services.data, traces: traces.data, error: traces.error, service: chosen, range: rangeKey });
 }
 
 export default function Traces() {
@@ -49,7 +54,7 @@ export default function Traces() {
         </Card>
       ) : (
         <>
-          <Form method="get">
+          <Form method="get" className="flex items-center gap-2">
             <select
               name="service"
               defaultValue={d.service}
@@ -58,12 +63,20 @@ export default function Traces() {
             >
               {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            <select
+              name="range"
+              defaultValue={d.range}
+              onChange={(e) => submit(e.currentTarget.form)}
+              className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
+            >
+              {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
+            </select>
           </Form>
 
           <Card>
-            <CardHead title="Recent traces" sub={`${d.service} · last 1h`} right={<Badge tone="neutral">{d.traces.length}</Badge>} />
+            <CardHead title="Recent traces" sub={`${d.service} · last ${d.range}`} right={<Badge tone="neutral">{d.traces.length}</Badge>} />
             <ErrorNote error={d.error} />
-            {d.traces.length >= 40 ? <div className="px-4 pt-2 text-2xs text-faint">Showing the 40 most recent traces from the last hour — pick a service to narrow.</div> : null}
+            {d.traces.length >= 40 ? <div className="px-4 pt-2 text-2xs text-faint">Showing the 40 most recent traces from the last {d.range} — pick a service to narrow.</div> : null}
             {d.traces.length === 0 ? (
               <Empty icon={<GitBranch className="h-5 w-5" />} title="No traces in range">Nothing from this service in the last hour.</Empty>
             ) : (
