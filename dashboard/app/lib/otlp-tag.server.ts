@@ -105,3 +105,35 @@ export function tagTraces(body: Buffer, orgId: string): Buffer {
     return body; // fail-safe
   }
 }
+
+/** Same enforced org_id injection for OTLP/HTTP JSON bodies. Without this, a
+ *  customer using a JSON exporter would ship UNTAGGED spans (invisible to their
+ *  own scoped view, leaking into the platform's unfiltered view). Fail-safe: any
+ *  parse error returns the original body. */
+export function tagTracesJson(body: Buffer, orgId: string): Buffer {
+  if (!orgId) return body;
+  try {
+    const msg = JSON.parse(body.toString("utf8"));
+    const kv = { key: "org_id", value: { stringValue: orgId } };
+    const seen = registry().get(orgId) || new Set<string>();
+    const batch = new Set<string>();
+    for (const rs of msg.resourceSpans || []) {
+      if (!rs.resource) rs.resource = {};
+      rs.resource.attributes = (rs.resource.attributes || []).filter((a: any) => a.key !== "org_id");
+      rs.resource.attributes.push(kv);
+      const svc = rs.resource.attributes.find((a: any) => a.key === "service.name")?.value?.stringValue;
+      if (svc) { seen.add(svc); batch.add(svc); }
+      for (const ss of rs.scopeSpans || []) {
+        for (const sp of ss.spans || []) {
+          sp.attributes = (sp.attributes || []).filter((a: any) => a.key !== "org_id");
+          sp.attributes.push(kv);
+        }
+      }
+    }
+    registry().set(orgId, seen);
+    if (batch.size) void recordOrgServices(orgId, [...batch]);
+    return Buffer.from(JSON.stringify(msg));
+  } catch {
+    return body;
+  }
+}

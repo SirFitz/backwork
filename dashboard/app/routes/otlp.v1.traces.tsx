@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { config } from "~/lib/config.server";
 import { resolveIngestToken } from "~/lib/tenant.server";
-import { tagTraces } from "~/lib/otlp-tag.server";
+import { tagTraces, tagTracesJson } from "~/lib/otlp-tag.server";
 
 // Authenticated OTLP/HTTP trace ingest. An app's OpenTelemetry exporter posts to
 // <PUBLIC_URL>/otlp/v1/traces with `Authorization: Bearer <token>` (legacy
@@ -15,7 +15,10 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!tenant) return new Response("unauthorized", { status: 401 });
   const ct = request.headers.get("content-type") || "application/x-protobuf";
   let body: Buffer = Buffer.from(await request.arrayBuffer());
+  // Enforce org_id on the spans for BOTH OTLP encodings — protobuf and JSON —
+  // so a JSON exporter can't ship untagged (cross-view-leaking) spans.
   if (ct.includes("protobuf")) body = tagTraces(body, tenant.orgId);
+  else if (ct.includes("json")) body = tagTracesJson(body, tenant.orgId);
   try {
     const res = await fetch(`${config.otlpHttp}/v1/traces`, {
       method: "POST",

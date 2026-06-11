@@ -59,10 +59,12 @@ export async function saveRules(orgId: string, rules: AlertRule[]): Promise<void
 function svcSel(service: string, extra = ""): string {
   if (service === "*") return extra ? `{${extra}}` : "";
   const e = extra ? `${extra},` : "";
-  return `{${e}${KEY}="${service}"}`;
+  // JSON.stringify escapes quotes/backslashes so a service value can't break out
+  // of the matcher; org_id scoping is still enforced by vm.applyScope / loki.scoped.
+  return `{${e}${KEY}=${JSON.stringify(service)}}`;
 }
 function lokiSel(service: string, extra = ""): string {
-  const parts = [extra, service === "*" ? `service=~".+"` : `service="${service}"`].filter(Boolean);
+  const parts = [extra, service === "*" ? `service=~".+"` : `service=${JSON.stringify(service)}`].filter(Boolean);
   return `{${parts.join(",")}}`;
 }
 

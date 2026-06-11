@@ -1,12 +1,20 @@
 import { createCookieSessionStorage, redirect } from "@remix-run/node";
 
+const DEV_SESSION_SECRET = "backwork-dev-session-secret";
+const SESSION_SECRET = process.env.SESSION_SECRET || DEV_SESSION_SECRET;
+// Fail fast: a production deploy without a real SESSION_SECRET would sign auth
+// cookies with a public constant → forgeable sessions. Crash loudly instead.
+if (process.env.NODE_ENV === "production" && SESSION_SECRET === DEV_SESSION_SECRET) {
+  throw new Error("SESSION_SECRET must be set in production (refusing to use the dev default).");
+}
+
 const storage = createCookieSessionStorage({
   cookie: {
     name: "backwork_auth",
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secrets: [process.env.SESSION_SECRET || "backwork-dev-session-secret"],
+    secrets: [SESSION_SECRET],
     secure: process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 24 * 30,
   },

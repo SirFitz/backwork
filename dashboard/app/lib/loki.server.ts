@@ -2,16 +2,48 @@ import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
 import type { Tenant } from "./tenant.server";
 
-/** Inject an org_id matcher into the first LogQL stream selector for non-platform
- *  tenants. Platform (and untenanted internal calls) are left unfiltered. */
+/** Inject an org_id matcher into EVERY LogQL stream selector for non-platform
+ *  tenants — not just the first. A LogQL query can carry multiple `{...}`
+ *  selectors (binary ops, e.g. `{a} or {b}`), and raw user queries / alert-rule
+ *  service fields are passed through; scoping only the first selector let a
+ *  customer read another tenant's logs via the second. Walks the string
+ *  quote-aware so braces inside line-filter strings (`|~ "(?i){x}"`) are ignored.
+ *  Platform (and untenanted internal calls) are left unfiltered. */
 function scoped(query: string, t?: Tenant): string {
   if (!t || t.platform) return query;
   const m = `org_id=${JSON.stringify(t.orgId)}`;
-  const i = query.indexOf("{");
-  if (i === -1) return query;
-  const j = query.indexOf("}", i);
-  const inner = query.slice(i + 1, j).trim();
-  return query.slice(0, i) + "{" + (inner ? `${m},${inner}` : m) + "}" + query.slice(j + 1);
+  let out = "";
+  let i = 0;
+  let inStr = false;
+  while (i < query.length) {
+    const c = query[i];
+    if (inStr) {
+      out += c;
+      if (c === "\\" && i + 1 < query.length) { out += query[i + 1]; i += 2; continue; }
+      if (c === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"') { inStr = true; out += c; i++; continue; }
+    if (c === "{") {
+      let j = i + 1;
+      let s = false;
+      while (j < query.length) {
+        const d = query[j];
+        if (s) { if (d === "\\") { j += 2; continue; } if (d === '"') s = false; j++; continue; }
+        if (d === '"') { s = true; j++; continue; }
+        if (d === "}") break;
+        j++;
+      }
+      const inner = query.slice(i + 1, j).trim();
+      out += "{" + (inner ? `${m},${inner}` : m) + "}";
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 export type LogEntry = {

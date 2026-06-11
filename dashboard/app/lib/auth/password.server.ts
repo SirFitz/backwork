@@ -1,6 +1,11 @@
 import { hash, verify } from "@node-rs/argon2";
 
-const PEPPER = process.env.AUTH_PEPPER || "backwork-dev-pepper";
+const DEV_PEPPER = "backwork-dev-pepper";
+const PEPPER = process.env.AUTH_PEPPER || DEV_PEPPER;
+// Fail fast: hashing prod passwords with a public pepper weakens them materially.
+if (process.env.NODE_ENV === "production" && PEPPER === DEV_PEPPER) {
+  throw new Error("AUTH_PEPPER must be set in production (refusing to use the dev default).");
+}
 const OPTS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 
 export function hashPassword(pw: string): Promise<string> {

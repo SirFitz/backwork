@@ -1,0 +1,10 @@
+{application,opentelemetry_phoenix,
+             [{applications,[kernel,stdlib,elixir,nimble_options,
+                             opentelemetry_api,opentelemetry_telemetry,
+                             opentelemetry_process_propagator,
+                             opentelemetry_semantic_conventions,otel_http,
+                             telemetry,plug]},
+              {description,"Trace Phoenix requests with OpenTelemetry."},
+              {modules,['Elixir.OpentelemetryPhoenix']},
+              {registered,[]},
+              {vsn,"2.0.1"}]}.
