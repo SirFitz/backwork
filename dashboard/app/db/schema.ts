@@ -158,3 +158,14 @@ export const errorEvents = pgTable("error_events", {
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ groupIdx: index("error_events_group_idx").on(t.groupId, t.createdAt) }));
+
+// Public read-API keys (DX-1): org-scoped, hashed at rest (bwk_… shown once).
+export const apiKeys = pgTable("api_keys", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  name: text("name").notNull().default(""),
+  keyHash: text("key_hash").notNull(),
+  createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ orgIdx: index("api_keys_org_idx").on(t.orgId), hashUniq: uniqueIndex("api_keys_hash_uniq").on(t.keyHash) }));

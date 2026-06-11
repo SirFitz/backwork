@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS error_events (
   payload jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS error_events_group_idx ON error_events (group_id, created_at);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name text NOT NULL DEFAULT '',
+  key_hash text NOT NULL,
+  created_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
+  last_used_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
+CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uniq ON api_keys (key_hash);
 `;
 
 declare global {

@@ -28,6 +28,7 @@ import {
   Cog,
   FolderKanban,
   GitBranch,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -202,6 +203,7 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
           <Link to="/members" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Members</Link>
           <Link to="/teams" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Teams</Link>
           {(auth.role === "owner" || auth.role === "admin") ? <Link to="/audit" onClick={() => setOpen(false)} className={link}><ScrollText className="h-3.5 w-3.5" /> Audit log</Link> : null}
+          {(auth.role === "owner" || auth.role === "admin") ? <Link to="/api-keys" onClick={() => setOpen(false)} className={link}><KeyRound className="h-3.5 w-3.5" /> API keys</Link> : null}
           <Link to="/account" onClick={() => setOpen(false)} className={link}><CircleUser className="h-3.5 w-3.5" /> Account</Link>
           <Link to="/onboarding" onClick={() => setOpen(false)} className={link}><Building2 className="h-3.5 w-3.5" /> New organization</Link>
           <div className="mt-1 border-t border-border pt-1">

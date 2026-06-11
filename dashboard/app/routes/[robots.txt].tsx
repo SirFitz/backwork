@@ -17,6 +17,8 @@ export function loader() {
     "Disallow: /forgot",
     "Disallow: /audit",
     "Disallow: /errors",
+    "Disallow: /api-keys",
+    "Disallow: /api/",
     "Disallow: /reset",
     "Disallow: /invite",
     "Disallow: /account",
