@@ -134,6 +134,10 @@ export default function ApiKeys() {
               <li><span className="text-accent">GET</span> /api/v1/services</li>
             </ul>
           </div>
+          <div className="text-2xs text-muted">
+            <div className="mb-1 font-medium text-fg">Or use the CLI</div>
+            <pre className="overflow-x-auto scroll-thin rounded-lg border border-border bg-surface-2 px-3.5 py-3 font-mono leading-relaxed text-fg/90">{`npm i -g @sirfitz/backwork-cli\nexport BACKWORK_API_KEY=<your key>\nbw errors`}</pre>
+          </div>
         </div>
       </Card>
     </div>

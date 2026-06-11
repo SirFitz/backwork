@@ -31,6 +31,7 @@ const TOC = [
   ["projects", "Projects & tokens"],
   ["logs-metrics", "Logs & metrics agent"],
   ["traces", "Traces (OpenTelemetry)"],
+  ["errors-api", "Errors & API"],
   ["concepts", "Concepts"],
   ["self-host", "Self-hosting"],
   ["tenancy", "Organizations & teams"],
@@ -101,6 +102,20 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <YOUR_INGEST_TOKEN>
 OTEL_SERVICE_NAME=your-service`}</Code>
           <P>Spans show up under <span className="font-mono text-[13px]">Traces</span> (with a waterfall), <span className="font-mono text-[13px]">Requests</span> (a flat RED feed) and <span className="font-mono text-[13px]">Metrics → Application performance</span>.</P>
+
+          <H2 id="errors-api">Errors &amp; API</H2>
+          <P><span className="font-medium text-fg">Report exceptions</span> by POSTing them with your project ingest token — backwork fingerprints and groups them under <span className="font-mono text-[13px]">Errors</span> (a new occurrence reopens a resolved group; ignored ones stay muted):</P>
+          <Code>{`curl -X POST https://backwork.dev/ingest/errors \\
+  -H "Authorization: Bearer <YOUR_INGEST_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"type":"TypeError","message":"Cannot read x of undefined","service":"my-api","stack":"...","environment":"production"}'`}</Code>
+          <P><span className="font-medium text-fg">Read your data over HTTP.</span> Create a read-only API key in the org menu under <span className="font-mono text-[13px]">API keys</span>, then query the bearer-authed, org-scoped JSON API:</P>
+          <Code>{`curl -H "Authorization: Bearer <API_KEY>" https://backwork.dev/api/v1/errors
+# also: /api/v1/me  ·  /api/v1/incidents  ·  /api/v1/services`}</Code>
+          <P>Or use the <span className="font-medium text-fg">CLI</span>:</P>
+          <Code>{`npm i -g @sirfitz/backwork-cli
+export BACKWORK_API_KEY=<API_KEY>
+bw errors --status open      # also: bw me · bw incidents · bw services · --json`}</Code>
 
           <H2 id="concepts">Concepts</H2>
           <P><span className="font-medium text-fg">Logs</span> are searchable with full-text or LogQL. <span className="font-medium text-fg">Metrics</span> are queried with PromQL under the hood. <span className="font-medium text-fg">Traces</span> follow a request across services. <span className="font-medium text-fg">Requests</span> distil traces into method/route/status/latency. <span className="font-medium text-fg">Incidents</span> are detected automatically from container state, metrics and logs. <span className="font-medium text-fg">Alerts</span> evaluate rules and notify via Slack, Discord, webhook, email or SMS — and report a no-data state rather than faking “all clear” during an outage.</P>
