@@ -67,6 +67,8 @@ export default function Requests() {
   const [statusFilter, setStatusFilter] = useState<(typeof FILTERS)[number]>("all");
   const [method, setMethod] = useState("all");
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<{ key: "time" | "status" | "latency" | null; dir: "asc" | "desc" }>({ key: null, dir: "desc" });
+  const toggleSort = (key: "time" | "status" | "latency") => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
 
   const methods = useMemo(() => ["all", ...Array.from(new Set(d.rows.map((r) => r.method).filter(Boolean))).sort()], [d.rows]);
 
@@ -78,8 +80,13 @@ export default function Requests() {
       const t = q.trim().toLowerCase();
       r = r.filter((x) => x.route.toLowerCase().includes(t) || x.service.toLowerCase().includes(t));
     }
+    if (sort.key) {
+      const m = sort.dir === "asc" ? 1 : -1;
+      const val = (x: jaeger.RequestRow) => (sort.key === "time" ? x.startMs : sort.key === "latency" ? x.durationMs : x.status ?? 0);
+      r = [...r].sort((a, b) => (val(a) - val(b)) * m);
+    }
     return r;
-  }, [d.rows, statusFilter, method, q]);
+  }, [d.rows, statusFilter, method, q, sort]);
 
   const summary = useMemo(() => {
     const total = rows.length;
@@ -149,12 +156,12 @@ export default function Requests() {
                 <table className="w-full text-[13px]">
                   <thead className="sticky top-0 bg-surface">
                     <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
-                      <th className="px-4 py-2 font-medium">Time</th>
+                      <th className="px-4 py-2 font-medium"><button onClick={() => toggleSort("time")} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-fg">Time{sort.key === "time" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
                       <th className="px-4 py-2 font-medium">Service</th>
                       <th className="px-4 py-2 font-medium">Method</th>
                       <th className="px-4 py-2 font-medium">Route</th>
-                      <th className="px-4 py-2 text-right font-medium">Status</th>
-                      <th className="px-4 py-2 text-right font-medium">Latency</th>
+                      <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort("status")} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Status{sort.key === "status" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
+                      <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort("latency")} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Latency{sort.key === "latency" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
                       <th className="px-4 py-2"></th>
                     </tr>
                   </thead>
