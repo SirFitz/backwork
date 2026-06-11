@@ -7,16 +7,18 @@ import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtMs, timeAgo } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
   const requested = new URL(request.url).searchParams.get("service") || "";
-  const services = await safe(() => jaeger.services(t), [] as string[]);
+  // cache so the 10s live-poll doesn't re-query Jaeger every tick (PERF-4)
+  const services = await cached(`tr:svcs:${t.orgId}`, 30000, () => safe(() => jaeger.services(t), [] as string[]));
   const chosen = requested || services.data[0] || "";
   const traces = chosen
-    ? await safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: 1 }, t), [] as jaeger.TraceSummary[])
+    ? await cached(`tr:list:${t.orgId}:${chosen}`, 8000, () => safe(() => jaeger.recentTraces({ service: chosen, limit: 40, lookbackHours: 1 }, t), [] as jaeger.TraceSummary[]))
     : { data: [] as jaeger.TraceSummary[], error: null as string | null };
   return json({ services: services.data, traces: traces.data, error: traces.error, service: chosen });
 }

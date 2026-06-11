@@ -63,7 +63,10 @@ export const projects = pgTable("projects", {
   slug: text("slug").notNull(),
   ingestTokenHash: text("ingest_token_hash"),
   ...ts(),
-}, (t) => ({ orgSlugUniq: uniqueIndex("projects_org_slug_uniq").on(t.orgId, t.slug) }));
+}, (t) => ({
+  orgSlugUniq: uniqueIndex("projects_org_slug_uniq").on(t.orgId, t.slug),
+  ingestTokenHashIdx: index("projects_ingest_token_hash_idx").on(t.ingestTokenHash),
+}));
 
 export const invitations = pgTable("invitations", {
   id: id(),

@@ -9,6 +9,7 @@ import * as apm from "~/lib/apm.server";
 import * as jaeger from "~/lib/jaeger.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct } from "~/lib/utils";
 
 const KEY = "container_label_coolify_resourceName";
@@ -25,7 +26,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const label = (m: Record<string, string>) => m[KEY] || m.name || "other";
   const named = (rows: vm.Series[]) => rows.map((r, i) => ({ name: label(r.metric), color: PALETTE[i % PALETTE.length], points: r.points }));
 
-  const cadvisor = Promise.all([
+  const cadvisor = cached(`metrics:cadvisor:${t.orgId}`, 12000, () => Promise.all([
     vm.range(`topk(7, sum by (${grp})(rate(container_cpu_usage_seconds_total{name!=""}[5m])))`, { start, end, step: "120s" }, t),
     vm.range(`topk(7, sum by (${grp})(container_memory_working_set_bytes{name!=""}))`, { start, end, step: "120s" }, t),
     vm.range(`sum(rate(container_network_receive_bytes_total{name!=""}[5m]))`, { start, end, step: "120s" }, t),
@@ -42,11 +43,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     cpuNow: cpuNow.map((r) => ({ name: label(r.metric), v: r.value })).sort((a, b) => b.v - a.v),
     memNow: memNow.map((r) => ({ name: label(r.metric), v: r.value })).sort((a, b) => b.v - a.v),
     empty: cpuTop.length === 0 && memTop.length === 0,
-  }));
+  })));
 
   const host = t.platform
     ? Promise.resolve(null)
-    : Promise.all([
+    : cached(`metrics:host:${t.orgId}`, 12000, () => Promise.all([
         vm.range('sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))', { start, end, step: "120s" }, t),
         vm.range("node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", { start, end, step: "120s" }, t),
         vm.range('sum(rate(node_network_receive_bytes_total{device!="lo"}[5m]))', { start, end, step: "120s" }, t),
@@ -61,7 +62,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
           ],
           empty: !(cpu[0]?.points?.length || mem[0]?.points?.length),
         }))
-        .catch(() => null);
+        .catch(() => null));
 
   return defer({
     isPlatform: t.platform,

@@ -88,6 +88,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
+// The dashboard polls every 10s (LiveStatus → revalidator.revalidate()), which
+// re-runs every loader including root (2 Postgres queries for nav/org). Root data
+// only changes on navigation or a mutation, so skip it for the same-path timed
+// poll — leaf loaders still refresh. (PERF-5)
+export function shouldRevalidate({ currentUrl, nextUrl, formMethod }: { currentUrl: URL; nextUrl: URL; formMethod?: string }) {
+  if (formMethod && formMethod.toUpperCase() !== "GET") return true; // mutations
+  if (currentUrl.pathname !== nextUrl.pathname) return true; // real navigation / redirects
+  return false; // same-path timed revalidation → skip root
+}
+
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
   { to: "/containers", label: "Containers", icon: Boxes },

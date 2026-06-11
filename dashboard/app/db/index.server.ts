@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name text NOT NULL, slug text NOT NULL, ingest_token_hash text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS projects_org_slug_uniq ON projects (org_id, slug);
+CREATE INDEX IF NOT EXISTS projects_ingest_token_hash_idx ON projects (ingest_token_hash);
 
 CREATE TABLE IF NOT EXISTS invitations (
   id text PRIMARY KEY,

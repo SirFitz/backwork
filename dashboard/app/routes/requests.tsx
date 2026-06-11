@@ -8,29 +8,35 @@ import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
+import { cached } from "~/lib/cache.server";
 import { cn, fmtClock, fmtMs, fmtPct } from "~/lib/utils";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
   const requested = new URL(request.url).searchParams.get("service") || "all";
-  const services = await safe(() => jaeger.services(t), [] as string[]);
+  // cache the Jaeger fan-out so the 10s live-poll doesn't re-fire up to 12 trace
+  // queries every tick (PERF-3)
+  const services = await cached(`req:svcs:${t.orgId}`, 30000, () => safe(() => jaeger.services(t), [] as string[]));
   const list = services.data;
   const chosen = requested === "all" ? "all" : list.includes(requested) ? requested : list[0] || "";
 
-  let rows: jaeger.RequestRow[] = [];
-  let error: string | null = null;
-  if (chosen === "all" && list.length) {
-    const batches = await Promise.all(
-      list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]))
-    );
-    rows = batches.flatMap((b) => b.data).sort((a, b) => b.startMs - a.startMs).slice(0, 200);
-    error = batches.find((b) => b.error)?.error ?? null;
-  } else if (chosen) {
-    const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]);
-    rows = r.data;
-    error = r.error;
-  }
+  const { rows, error } = await cached(`req:rows:${t.orgId}:${chosen}`, 8000, async () => {
+    let rows: jaeger.RequestRow[] = [];
+    let error: string | null = null;
+    if (chosen === "all" && list.length) {
+      const batches = await Promise.all(
+        list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]))
+      );
+      rows = batches.flatMap((b) => b.data).sort((a, b) => b.startMs - a.startMs).slice(0, 200);
+      error = batches.find((b) => b.error)?.error ?? null;
+    } else if (chosen) {
+      const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: 1 }, t), [] as jaeger.RequestRow[]);
+      rows = r.data;
+      error = r.error;
+    }
+    return { rows, error };
+  });
   const capped = chosen === "all" ? rows.length >= 200 : rows.length >= 120;
   return json({ services: list, rows, error, service: chosen, capped });
 }

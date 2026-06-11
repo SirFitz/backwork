@@ -1,10 +1,14 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
+import { lazy } from "react";
 import { Activity, ArrowRight, Boxes, CheckCircle2, Gauge, TriangleAlert, Zap } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle, Skeleton, StatusDot, StatusPill } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
-import { AreaSeries } from "~/components/charts";
+// Lazy so recharts (~108 KB gz) isn't bundled into the dual `/` route chunk and
+// shipped to logged-out marketing visitors; only loaded when the dashboard renders
+// a chart (always inside a <Deferred> Suspense boundary). (PERF-1)
+const AreaSeries = lazy(() => import("~/components/charts").then((m) => ({ default: m.AreaSeries })));
 import * as analysis from "~/lib/analysis.server";
 import * as apm from "~/lib/apm.server";
 import * as vm from "~/lib/vm.server";
