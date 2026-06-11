@@ -45,3 +45,17 @@ bun  --preload @sirfitz/backwork/start  run server.ts  # Bun
 
 (Ping Claude to flip the docs once published — held until then to avoid a broken
 `npm i` window.)
+
+## npm — `@sirfitz/backwork-cli` (the `bw` read-API CLI)
+
+```bash
+cd packages/cli
+npm whoami                      # should print: sirfitz  (else: npm login)
+npm publish --access public     # publishConfig.access=public is already set
+npm view @sirfitz/backwork-cli version
+npx @sirfitz/backwork-cli version    # smoke
+```
+
+Zero runtime deps; nothing to build. Wraps the public read API
+(`GET /api/v1/me|errors|incidents|services`, bearer `bwk_` key). If `npm whoami`
+401s, the `~/.npmrc` token is stale — `npm login` to refresh, then publish.

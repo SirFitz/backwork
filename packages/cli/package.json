@@ -1,0 +1,40 @@
+{
+  "name": "@sirfitz/backwork-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for the backwork.dev observability read API — errors, incidents, and service health from your terminal.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "bw": "bin/bw.mjs"
+  },
+  "files": [
+    "bin/bw.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "backwork",
+    "observability",
+    "cli",
+    "errors",
+    "exception-tracking",
+    "apm",
+    "incidents",
+    "monitoring"
+  ],
+  "homepage": "https://backwork.dev/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SirFitz/backwork.git",
+    "directory": "packages/cli"
+  },
+  "author": "SirFitz",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/SirFitz/backwork/issues"
+  }
+}
