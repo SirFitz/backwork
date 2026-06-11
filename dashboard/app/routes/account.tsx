@@ -9,6 +9,7 @@ import { users } from "~/db/schema";
 import { requireUser } from "~/lib/auth/context.server";
 import { hashPassword, verifyPassword, passwordError } from "~/lib/auth/password.server";
 import { reissueTokenVersion } from "~/lib/auth/session.server";
+import { logAudit } from "~/lib/audit.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -39,6 +40,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (next === current) return json({ error: "New password must be different from the current one.", scope: "password" }, { status: 400 });
     const newVersion = user.tokenVersion + 1; // invalidate other devices' sessions
     await db.update(users).set({ passwordHash: await hashPassword(next), tokenVersion: newVersion, updatedAt: new Date() }).where(eq(users.id, user.id));
+    void logAudit({ request, actorUserId: user.id, action: "auth.password_change" });
     return json({ ok: "Password changed. Other devices have been signed out.", scope: "password" }, { headers: { "Set-Cookie": await reissueTokenVersion(request, newVersion) } });
   }
 

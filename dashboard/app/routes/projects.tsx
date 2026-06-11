@@ -13,6 +13,7 @@ import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { getAuthSession, commitAuthSession } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { hashToken, tenantOf } from "~/lib/tenant.server";
+import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
 import { slugify, cn } from "~/lib/utils";
 
@@ -69,6 +70,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const token = newToken();
     await db.insert(projects).values({ id: ulid(), orgId: ctx.org.id, name, slug, ingestTokenHash: hashToken(token) });
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.create", target: { name, slug } });
     return redirectWithToken(token, slug);
   }
 
@@ -78,11 +80,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!proj.length) return json({ error: "Project not found." }, { status: 404 });
     const token = newToken();
     await db.update(projects).set({ ingestTokenHash: hashToken(token), updatedAt: new Date() }).where(eq(projects.id, id));
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.token_regenerate", target: { id, slug: proj[0].slug } });
     return redirectWithToken(token, proj[0].slug);
   }
 
   if (intent === "delete") {
-    await db.delete(projects).where(and(eq(projects.id, String(fd.get("id"))), eq(projects.orgId, ctx.org.id)));
+    const id = String(fd.get("id"));
+    await db.delete(projects).where(and(eq(projects.id, id), eq(projects.orgId, ctx.org.id)));
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.delete", target: { id } });
     return redirect("/projects");
   }
 

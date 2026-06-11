@@ -10,6 +10,7 @@ import { memberships, users, invitations, type Role } from "~/db/schema";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { sendMail } from "~/lib/mailer.server";
+import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
 import { cn } from "~/lib/utils";
 
@@ -51,6 +52,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const inviteLink = `${config.publicUrl}/invite/${token}`;
     // actually deliver the invite (M3); the link is also shown to the inviter as a fallback
     await sendMail(email, `You've been invited to ${ctx.org.name} on backwork`, `${ctx.user.name || ctx.user.email} invited you to join "${ctx.org.name}" on backwork.\n\nAccept the invite (valid 7 days):\n${inviteLink}\n\nIf you don't have an account yet, you'll be able to create one.`);
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "member.invite", target: { email, role } });
     return json({ inviteLink });
   }
 
@@ -63,6 +65,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (target[0].role === "owner" || role === "owner") requireRole(ctx, "owner");
     if (target[0].role === "owner" && role !== "owner" && owners.length <= 1) return json({ error: "Can't demote the last owner." }, { status: 400 });
     await db.update(memberships).set({ role, updatedAt: new Date() }).where(eq(memberships.id, membershipId));
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "member.role_change", target: { membershipId, role } });
     return json({ ok: true });
   }
 
@@ -75,6 +78,7 @@ export async function action({ request }: ActionFunctionArgs) {
       if (owners.length <= 1) return json({ error: "Can't remove the last owner." }, { status: 400 });
     }
     await db.delete(memberships).where(eq(memberships.id, membershipId));
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "member.remove", target: { membershipId } });
     return json({ ok: true });
   }
 

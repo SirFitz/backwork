@@ -7,6 +7,7 @@ import { users, memberships } from "~/db/schema";
 import { verifyPassword } from "~/lib/auth/password.server";
 import { createUserSession } from "~/lib/auth/session.server";
 import { getUser } from "~/lib/auth/context.server";
+import { logAudit } from "~/lib/audit.server";
 import { assertSameOrigin, clientIp, rateLimit, safeRedirect } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 
@@ -35,6 +36,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   const mem = await db.select({ orgId: memberships.orgId }).from(memberships).where(eq(memberships.userId, user.id)).limit(1);
+  void logAudit({ request, orgId: mem[0]?.orgId ?? null, actorUserId: user.id, action: "auth.login" });
   return createUserSession(user.id, mem[0]?.orgId ?? null, mem.length ? next : "/onboarding", user.tokenVersion);
 }
 
