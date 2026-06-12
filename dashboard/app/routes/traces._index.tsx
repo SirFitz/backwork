@@ -54,7 +54,7 @@ export default function Traces() {
         </Card>
       ) : (
         <>
-          <Form method="get" className="flex items-center gap-2">
+          <Form method="get" className="flex flex-wrap items-center gap-2">
             <select
               name="service"
               defaultValue={d.service}

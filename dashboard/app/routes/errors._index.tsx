@@ -50,7 +50,7 @@ export default function Errors() {
           ))}
         </div>
         {d.services.length ? (
-          <Form method="get" className="flex items-center gap-2">
+          <Form method="get" className="flex flex-wrap items-center gap-2">
             <input type="hidden" name="status" value={d.status} />
             <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
               <option value="all">all services</option>

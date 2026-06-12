@@ -1,0 +1,14 @@
+{
+  "name": "backwork-qa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "QA tooling for the backwork dashboard (kept out of the dashboard build context so it never ships in the prod image).",
+  "scripts": {
+    "overflow": "node overflow-check.mjs",
+    "setup": "npm install && npx playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}
