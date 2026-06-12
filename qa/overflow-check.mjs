@@ -172,12 +172,15 @@ async function main() {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       let r;
       try {
-        // "load" not "networkidle": live pages poll forever, so networkidle never fires
-        await page.goto(`${BASE}${route}`, { waitUntil: "load", timeout: 25000 });
-        await page.waitForTimeout(900);
+        // live pages poll forever (networkidle/load never fire). Commit, then wait
+        // best-effort for network to settle (deferred data) so tables/charts render,
+        // ignoring the timeout on polling pages, then settle for chart layout.
+        await page.goto(`${BASE}${route}`, { waitUntil: "commit", timeout: 40000 });
+        await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
+        await page.waitForTimeout(1500);
         r = await page.evaluate(MEASURE, TOL);
         // re-measure once to drop transient chart-render spikes (recharts settling)
-        if (r.over > TOL) { await page.waitForTimeout(700); r = await page.evaluate(MEASURE, TOL); }
+        if (r.over > TOL) { await page.waitForTimeout(800); r = await page.evaluate(MEASURE, TOL); }
       } catch (e) {
         console.log(`  ⚠ ${route} @${vp.name}: load error ${String(e).slice(0, 60)}`);
         continue;
