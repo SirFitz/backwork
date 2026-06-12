@@ -100,11 +100,11 @@ export default function Metrics() {
       <PageTitle title="Metrics" sub="Real CPU, memory and network for your infrastructure. Resource pressure and the heaviest consumers, at a glance." />
 
       {!d.isPlatform ? (
-        <Deferred resolve={d.host} fallback={<div className="grid gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={170} /></Card><Card><ChartSkeleton height={170} /></Card></div>}>
+        <Deferred resolve={d.host} fallback={<div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={170} /></Card><Card><ChartSkeleton height={170} /></Card></div>}>
           {(h) =>
             h && !h.empty ? (
               <div className="space-y-4">
-                <div className="grid gap-4 xl:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                   <Card><CardHead title="Host CPU" sub="cores in use, 1h" /><div className="p-3"><AreaSeries points={h.cpu} color="oklch(0.55 0.17 290)" height={170} fmt={(n) => fmtCores(n)} /></div></Card>
                   <Card><CardHead title="Host memory" sub="used, 1h" /><div className="p-3"><AreaSeries points={h.mem} color="oklch(0.58 0.13 240)" height={170} fmt={(n) => fmtBytes(n)} /></div></Card>
                 </div>
@@ -117,18 +117,18 @@ export default function Metrics() {
         </Deferred>
       ) : null}
 
-      <Deferred resolve={d.cadvisor} fallback={<div className="grid gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={210} /></Card><Card><ChartSkeleton height={210} /></Card></div>}>
+      <Deferred resolve={d.cadvisor} fallback={<div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card><ChartSkeleton height={210} /></Card><Card><ChartSkeleton height={210} /></Card></div>}>
         {(c) =>
           c.empty ? (
             <Card><Empty title={d.isPlatform ? "No metrics yet" : "No per-container metrics"}>{d.isPlatform ? "cAdvisor populates within ~30s of the first scrape." : "Per-container metrics need the cAdvisor agent — install with --metrics container (or all)."}</Empty></Card>
           ) : (
             <div className="space-y-4">
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <Card><CardHead title="CPU usage" sub="cores by service, top 7, 1h" /><div className="p-3"><TimeSeries series={c.cpuTop} height={210} fmt={(n) => fmtCores(n)} /></div></Card>
                 <Card><CardHead title="Memory" sub="working set by service, top 7, 1h" /><div className="p-3"><TimeSeries series={c.memTop} height={210} fmt={(n) => fmtBytes(n)} /></div></Card>
               </div>
               <Card><CardHead title="Network throughput" sub="host total, receive vs transmit, 1h" /><div className="p-3"><TimeSeries series={c.net} height={170} fmt={(n) => fmtBytesRate(n)} /></div></Card>
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <ConsumerTable title="Top CPU consumers" rows={c.cpuNow} fmt={(n) => fmtCores(n) + " cores"} />
                 <ConsumerTable title="Top memory consumers" rows={c.memNow} fmt={(n) => fmtBytes(n)} />
               </div>
@@ -165,7 +165,7 @@ export default function Metrics() {
                     </table>
                   </div>
                 </Card>
-                <div className="grid gap-4 xl:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                   <Card>
                     <CardHead title="Top endpoints" sub="busiest operations · 1h" />
                     {a.topOps.length === 0 ? <Empty title="No operations" /> : (

@@ -128,11 +128,11 @@ export default function Requests() {
           {/* controls */}
           <div className="flex flex-wrap items-center gap-2">
             <Form method="get" className="flex flex-wrap items-center gap-2">
-              <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
+              <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className="h-9 max-w-full rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
                 <option value="all">All instrumented</option>
                 {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <select name="range" defaultValue={d.range} onChange={(e) => submit(e.currentTarget.form)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
+              <select name="range" defaultValue={d.range} onChange={(e) => submit(e.currentTarget.form)} className="h-9 max-w-full rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
                 {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
               </select>
             </Form>
@@ -143,7 +143,7 @@ export default function Requests() {
                 </button>
               ))}
             </div>
-            <select value={method} onChange={(e) => setMethod(e.target.value)} className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
+            <select value={method} onChange={(e) => setMethod(e.target.value)} className="h-9 max-w-full rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
               {methods.map((m) => <option key={m} value={m}>{m === "all" ? "all methods" : m}</option>)}
             </select>
             <div className="relative min-w-[200px] flex-1">

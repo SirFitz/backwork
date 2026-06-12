@@ -59,7 +59,7 @@ export default function Traces() {
               name="service"
               defaultValue={d.service}
               onChange={(e) => submit(e.currentTarget.form)}
-              className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
+              className="h-9 max-w-full rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
             >
               {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -67,7 +67,7 @@ export default function Traces() {
               name="range"
               defaultValue={d.range}
               onChange={(e) => submit(e.currentTarget.form)}
-              className="h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
+              className="h-9 max-w-full rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40"
             >
               {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
             </select>
