@@ -220,7 +220,7 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
 
 function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: React.ReactNode }) {
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[224px_1fr]">
+    <div className="min-h-screen lg:grid lg:grid-cols-[224px_minmax(0,1fr)]">
       <aside className="hidden flex-col border-r border-border bg-surface lg:flex lg:sticky lg:top-0 lg:h-screen">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <span className="grid h-7 w-7 place-items-center rounded-md bg-brand font-mono text-sm font-bold text-brand-fg">b</span>
@@ -256,7 +256,7 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
         </div>
       </aside>
 
-      <div className="flex min-h-screen flex-col">
+      <div className="flex min-h-screen min-w-0 flex-col">
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-bg/85 px-4 backdrop-blur-sm sm:px-6">
           <div className="flex items-center gap-2 lg:hidden">
             <span className="grid h-6 w-6 place-items-center rounded bg-brand font-mono text-xs font-bold text-brand-fg">b</span>

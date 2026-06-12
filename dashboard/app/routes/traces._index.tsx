@@ -80,6 +80,7 @@ export default function Traces() {
             {d.traces.length === 0 ? (
               <Empty icon={<GitBranch className="h-5 w-5" />} title="No traces in range">Nothing from this service in the last hour.</Empty>
             ) : (
+              <div className="overflow-x-auto scroll-thin">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
@@ -107,6 +108,7 @@ export default function Traces() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </Card>
         </>

@@ -169,6 +169,7 @@ export default function Metrics() {
                   <Card>
                     <CardHead title="Top endpoints" sub="busiest operations · 1h" />
                     {a.topOps.length === 0 ? <Empty title="No operations" /> : (
+                      <div className="overflow-x-auto scroll-thin">
                       <table className="w-full text-[13px]">
                         <thead><tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint"><th className="px-4 py-2 font-medium">Operation</th><th className="px-4 py-2 text-right font-medium">Req/s</th><th className="px-4 py-2 text-right font-medium">p95</th></tr></thead>
                         <tbody>
@@ -181,6 +182,7 @@ export default function Metrics() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </Card>
                   <Card>
