@@ -53,6 +53,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const jumps: Promise<Panel<ServiceJump[]>> = safe(() => serviceJumps(t), []);
   const stalled: Promise<Panel<RecordScan<StalledRequest>>> = safe(() => stalledRequests(t, now), emptyScan<StalledRequest>());
   const unreceived: Promise<Panel<RecordScan<UnreceivedCall>>> = safe(() => unreceivedCalls(t, now), emptyScan<UnreceivedCall>());
+  // One promise for the three "Needs attention" panels, made here and not in render: a promise
+  // created during render is new on every render, so <Await> suspends again each time and the
+  // Overview re-renders without end (a full CPU core in the browser).
+  const attention: Promise<[Panel<ServiceJump[]>, Panel<RecordScan<StalledRequest>>, Panel<RecordScan<UnreceivedCall>>]> =
+    Promise.all([jumps, stalled, unreceived]);
   const services: Promise<Panel<ServiceRow[]>> = safe(() => servicesTable(SERVICES_RANGE, t), []);
   const failed: Promise<Panel<RequestListRow[]>> = safe(
     async () => (await hopRequestPage(t, { service: null, sinceMs: now - FAILED_WINDOW_MS, before: now, onlyFailed: true, limit: 200 })).rows.slice(0, LIST_LIMIT),
@@ -67,7 +72,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     []
   );
 
-  return defer({ reporting, jumps, stalled, unreceived, services, failed, logVolume });
+  return defer({ reporting, attention, services, failed, logVolume });
 }
 
 // ---------------------------------------------------------------- wording
@@ -341,7 +346,7 @@ export default function Index() {
           title="Needs attention"
           sub="the last 15 minutes, health checks left out"
           right={
-            <Deferred resolve={Promise.all([d.jumps, d.stalled, d.unreceived])} fallback={<Skeleton className="h-5 w-24" />}>
+            <Deferred resolve={d.attention} fallback={<Skeleton className="h-5 w-24" />}>
               {([j, s, u]) => {
                 if (j.error || s.error || u.error) return <span className="text-2xs text-faint">partly unknown</span>;
                 const n = j.data.length + s.data.total + u.data.total;
@@ -354,7 +359,7 @@ export default function Index() {
             </Deferred>
           }
         />
-        <Deferred resolve={Promise.all([d.jumps, d.stalled, d.unreceived])} fallback={<RowsSkeleton rows={3} />}>
+        <Deferred resolve={d.attention} fallback={<RowsSkeleton rows={3} />}>
           {([j, s, u]) => <AttentionBody jumps={j} stalled={s} unreceived={u} />}
         </Deferred>
       </Card>
