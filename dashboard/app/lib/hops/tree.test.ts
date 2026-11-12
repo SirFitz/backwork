@@ -146,7 +146,7 @@ describe("the healthy request of frame 2", () => {
     expect(storeCallCounts(tree)).toEqual({ db: 3, cache: 1 });
   });
   test("where the time went: 32.6 ms own, 3.8 ms database, 24.8 ms waiting", () => {
-    expect(tree.split).toEqual({ totalUs: 61200, dbUs: 3800, cacheUs: 0, waitingUs: 24800, ownUs: 32600 });
+    expect(tree.split).toEqual({ totalUs: 61200, dbUs: 3800, cacheUs: 0, waitingUs: 24800, ownUs: 32600, dbCalls: 1, dbSumUs: 3800, cacheCalls: 0, cacheSumUs: 0 });
   });
   test("log lines go under the innermost inbound hop of their service", () => {
     expect(byId(6).logs.map((l) => l.line)).toEqual([
@@ -331,5 +331,45 @@ describe("calls with no record on the other side (design 7.4 and 9)", () => {
     ];
     const tree = buildRequestTree(r, [], T0 + 5000, [], new Set());
     expect(tree.gaps.filter((g) => g.kind === GapKind.NoReceiver).map((g) => g.detail)).toEqual(["kms.eu-west-1.amazonaws.com"]);
+  });
+});
+
+describe("where the time went when calls overlap", () => {
+  const splitOf = (records: HopRecord[]) => buildRequestTree(records, [], NOW).split;
+  test("parallel database calls count once: the union of their intervals, with the sum kept", () => {
+    // 122 ms request; three calls of 40 ms each, all running between 10 and 60 ms.
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 122, totals: { dbCalls: 3, dbUs: 120000 } }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 10, dur: 40, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 15, dur: 40, sent: false }),
+      ...hop("out", { id: 4, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 20, dur: 40, sent: false }),
+    ]);
+    expect(s).toMatchObject({ totalUs: 122000, dbUs: 50000, ownUs: 72000, dbCalls: 3, dbSumUs: 120000 });
+  });
+  test("sequential calls add up as before", () => {
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 100 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 10, dur: 20, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 40, dur: 20, sent: false }),
+    ]);
+    expect(s).toMatchObject({ dbUs: 40000, ownUs: 60000, dbSumUs: 40000 });
+  });
+  test("the parts never exceed the whole and own time is never negative", () => {
+    // Durations that reach outside the request (an ORM's queue time) and a cache call inside a database call.
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: -20, dur: 60, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "cache", op: "get", peer: "redis", start: 5, dur: 10, sent: false }),
+      ...hop("out", { id: 4, parent: 1, svc: API, method: "GET", peer: "other.internal", start: 30, dur: 40 }),
+    ]);
+    expect(s!.dbUs + s!.cacheUs + s!.waitingUs + s!.ownUs).toBe(s!.totalUs);
+    expect(s).toMatchObject({ totalUs: 50000, dbUs: 40000, cacheUs: 0, waitingUs: 10000, ownUs: 0 });
+  });
+  test("calls in the totals but not recorded one by one still count, within what is left", () => {
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 30, totals: { dbCalls: 5, dbUs: 90000 } }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 0, dur: 10, sent: false }),
+    ]);
+    expect(s).toMatchObject({ totalUs: 30000, dbUs: 30000, ownUs: 0, dbCalls: 5, dbSumUs: 90000 });
   });
 });

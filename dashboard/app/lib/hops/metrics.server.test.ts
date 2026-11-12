@@ -28,6 +28,7 @@ import {
   storeShareQuery,
   trendQuery,
   trendStep,
+  windowSeconds,
   type ConnectionRow,
   type PromClient,
   type ServiceRow,
@@ -100,45 +101,45 @@ describe("promString", () => {
 describe("query builders (design 8.1)", () => {
   test("service request rate", () => {
     expect(rateQuery("in", servicesScope(SHOWN), PerfRange.H6)).toBe(
-      'sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in"}[6h]))'
+      'sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in"}[6h])) / 21600'
     );
   });
   test("route request rate is filtered to the service", () => {
     expect(rateQuery("in", routesScope("commerce-payments", SHOWN), PerfRange.H1)).toBe(
-      'sum by (service, method, op) (rate(backwork_hop_duration_seconds_count{dir="in",service="commerce-payments"}[1h]))'
+      'sum by (service, method, op) (increase(backwork_hop_duration_seconds_count{dir="in",service="commerce-payments"}[1h])) / 3600'
     );
   });
   test("connections rate is outbound by service, peer and via", () => {
     expect(rateQuery("out", connectionsScope(), PerfRange.D7)).toBe(
-      'sum by (service, peer, via) (rate(backwork_hop_duration_seconds_count{dir="out"}[7d]))'
+      'sum by (service, peer, via) (increase(backwork_hop_duration_seconds_count{dir="out"}[7d])) / 604800'
     );
   });
   test("error rate is two disjoint selectors", () => {
     const [a, b] = errorRateQueries("in", servicesScope(SHOWN), PerfRange.H24);
-    expect(a).toBe('sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",outcome="error"}[24h]))');
+    expect(a).toBe('sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in",outcome="error"}[24h])) / 86400');
     expect(b).toBe(
-      'sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",outcome!="error",status_class="5xx"}[24h]))'
+      'sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in",outcome!="error",status_class="5xx"}[24h])) / 86400'
     );
   });
   test("quantiles group by le", () => {
     expect(quantileQuery(Quantile.P99, "in", servicesScope(SHOWN), PerfRange.H6)).toBe(
-      'histogram_quantile(0.99, sum by (service, le) (rate(backwork_hop_duration_seconds_bucket{dir="in"}[6h])))'
+      'histogram_quantile(0.99, sum by (service, le) (increase(backwork_hop_duration_seconds_bucket{dir="in"}[6h])))'
     );
     expect(quantileQuery(Quantile.P50, "out", connectionsScope(), PerfRange.H1)).toBe(
-      'histogram_quantile(0.5, sum by (service, peer, via, le) (rate(backwork_hop_duration_seconds_bucket{dir="out"}[1h])))'
+      'histogram_quantile(0.5, sum by (service, peer, via, le) (increase(backwork_hop_duration_seconds_bucket{dir="out"}[1h])))'
     );
   });
   test("time in data stores is store seconds over inbound seconds", () => {
     expect(storeShareQuery(servicesScope(SHOWN), PerfRange.H6)).toBe(
-      'sum by (service) (rate(backwork_hop_store_seconds_total[6h])) / sum by (service) (rate(backwork_hop_duration_seconds_sum{dir="in"}[6h]))'
+      'sum by (service) (increase(backwork_hop_store_seconds_total[6h])) / sum by (service) (increase(backwork_hop_duration_seconds_sum{dir="in"}[6h]))'
     );
     expect(storeShareQuery(routesScope("svc", SHOWN), PerfRange.H6)).toBe(
-      'sum by (service, method, op) (rate(backwork_hop_store_seconds_total{service="svc"}[6h])) / sum by (service, method, op) (rate(backwork_hop_duration_seconds_sum{dir="in",service="svc"}[6h]))'
+      'sum by (service, method, op) (increase(backwork_hop_store_seconds_total{service="svc"}[6h])) / sum by (service, method, op) (increase(backwork_hop_duration_seconds_sum{dir="in",service="svc"}[6h]))'
     );
   });
   test("data-store calls per request", () => {
     expect(storeCallsPerRequestQuery(servicesScope(SHOWN), PerfRange.H1)).toBe(
-      'sum by (service) (rate(backwork_hop_store_calls_total[1h])) / sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in"}[1h]))'
+      'sum by (service) (increase(backwork_hop_store_calls_total[1h])) / sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in"}[1h]))'
     );
   });
   test("in progress is started minus finished over 15 minutes, clamped", () => {
@@ -161,20 +162,20 @@ describe("query builders (design 8.1)", () => {
       'sum by (status_class, outcome) (increase(backwork_hop_duration_seconds_count{dir="in",via="http"}[1h]))'
     );
     expect(httpP95Query("24h", "commerce-api", SHOWN)).toBe(
-      'histogram_quantile(0.95, sum by (le) (rate(backwork_hop_duration_seconds_bucket{dir="in",via="http",service="commerce-api"}[24h])))'
+      'histogram_quantile(0.95, sum by (le) (increase(backwork_hop_duration_seconds_bucket{dir="in",via="http",service="commerce-api"}[24h])))'
     );
   });
   test("health checks are left out of inbound figures by default", () => {
     const not = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"';
     expect(rateQuery("in", servicesScope(), PerfRange.H6)).toBe(
-      `sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",${not}}[6h]))`
+      `sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in",${not}}[6h])) / 21600`
     );
     const [a, b] = errorRateQueries("in", servicesScope(), PerfRange.H1);
     expect(a).toContain(`outcome="error",${not}}`);
     expect(b).toContain(`status_class="5xx",${not}}`);
     expect(quantileQuery(Quantile.P95, "in", routesScope("svc"), PerfRange.H1)).toContain(`{dir="in",service="svc",${not}}`);
     expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(
-      `sum by (service) (rate(backwork_hop_store_seconds_total{${not}}[1h])) / sum by (service) (rate(backwork_hop_duration_seconds_sum{dir="in",${not}}[1h]))`
+      `sum by (service) (increase(backwork_hop_store_seconds_total{${not}}[1h])) / sum by (service) (increase(backwork_hop_duration_seconds_sum{dir="in",${not}}[1h]))`
     );
     expect(inProgressQuery()).toContain(`backwork_hop_started_total{dir="in",${not}}`);
     expect(httpTotalsQuery("1h", null)).toContain(`via="http",${not}}`);
@@ -222,6 +223,23 @@ describe("combineFigures", () => {
   });
 });
 
+describe("per second over a window", () => {
+  test("window lengths", () => {
+    expect(windowSeconds("15m")).toBe(900);
+    expect(windowSeconds("6h")).toBe(21600);
+    expect(windowSeconds("7d")).toBe(604800);
+    expect(() => windowSeconds("6 hours")).toThrow();
+  });
+  test("requests per second is increase over the window divided by its length, never rate()", () => {
+    for (const range of [PerfRange.H1, PerfRange.H6, PerfRange.H24, PerfRange.D7]) {
+      const q = rateQuery("in", servicesScope(), range);
+      expect(q).not.toContain("rate(");
+      expect(q).toContain(`increase(`);
+      expect(q.endsWith(` / ${windowSeconds(range)}`)).toBe(true);
+    }
+  });
+});
+
 describe("servicesTable", () => {
   test("joins every figure for each service, busiest first", async () => {
     const { client, seen } = fakeClient(
@@ -238,7 +256,7 @@ describe("servicesTable", () => {
         [/histogram_quantile\(0\.5,/, [{ metric: { service: "commerce-payments" }, value: 0.096 }]],
         [/histogram_quantile\(0\.95,/, [{ metric: { service: "commerce-payments" }, value: 0.64 }]],
         [/histogram_quantile\(0\.99,/, [{ metric: { service: "commerce-payments" }, value: 2.4 }]],
-        [/^sum by \(service\) \(rate\(backwork_hop_duration_seconds_count/, [
+        [/^sum by \(service\) \(increase\(backwork_hop_duration_seconds_count/, [
           { metric: { service: "commerce-payments" }, value: 3.1 },
           { metric: { service: "commerce-worker" }, value: 1.9 },
         ]],

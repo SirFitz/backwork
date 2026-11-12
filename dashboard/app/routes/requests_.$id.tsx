@@ -518,13 +518,19 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
 
 // ---------------------------------------------------------------- where the time went
 
+/** "21 calls, 128 ms in total" when the calls overlapped, so their summed time is more than the wall-clock time shown. */
+function callsNote(calls: number, sumUs: number, shownUs: number): string | null {
+  if (calls < 2 || sumUs <= shownUs) return null;
+  return `${calls} calls, ${fmtUs(sumUs)} in total`;
+}
+
 function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; colour: string }) {
   const s = tree.split;
   if (!s || s.totalUs <= 0) return null;
-  const parts: Array<{ key: string; us: number; label: ReactNode; bg: string }> = [
+  const parts: Array<{ key: string; us: number; label: ReactNode; bg: string; note?: string | null }> = [
     { key: "own", us: s.ownUs, label: <>{head.service}&apos;s own code</>, bg: colour },
-    { key: "db", us: s.dbUs, label: "its database", bg: "oklch(var(--muted))" },
-    { key: "cache", us: s.cacheUs, label: "its cache", bg: "oklch(var(--faint))" },
+    { key: "db", us: s.dbUs, label: "its database", bg: "oklch(var(--muted))", note: callsNote(s.dbCalls, s.dbSumUs, s.dbUs) },
+    { key: "cache", us: s.cacheUs, label: "its cache", bg: "oklch(var(--faint))", note: callsNote(s.cacheCalls, s.cacheSumUs, s.cacheUs) },
     { key: "wait", us: s.waitingUs, label: "waiting on other services", bg: "oklch(var(--border-strong))" },
   ].filter((p) => p.us > 0);
   return (
@@ -538,6 +544,7 @@ function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; co
           <span key={p.key} className="inline-flex items-center gap-[7px]">
             <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: p.bg }} />
             {p.label} <Mono className="font-medium text-fg">{fmtUs(p.us)}</Mono>
+            {p.note ? <span className="text-faint">({p.note})</span> : null}
           </span>
         ))}
       </div>

@@ -206,10 +206,19 @@ export interface Hop {
 /** Where the time went for the first inbound hop (design 7.3 step 10), microseconds. */
 export interface TimeSplit {
   totalUs: number;
+  /** Wall-clock time in the database: the union of its calls, not their sum. */
   dbUs: number;
+  /** Wall-clock time in the cache beyond the database time. */
   cacheUs: number;
+  /** Wall-clock time waiting on other services beyond the database and cache time. */
   waitingUs: number;
+  /** The rest: never negative; the parts add up to totalUs. */
   ownUs: number;
+  dbCalls: number;
+  /** The calls' durations added up; more than dbUs when calls overlapped. */
+  dbSumUs: number;
+  cacheCalls: number;
+  cacheSumUs: number;
 }
 
 export interface RequestTree {
