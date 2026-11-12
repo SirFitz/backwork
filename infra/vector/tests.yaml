@@ -359,3 +359,56 @@ tests:
               assert!(!exists(.tags.table))
               assert!(!exists(.tags.stmt))
               assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+
+  - name: a repeated trace_id (host metadata and the record) is still a hop record
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "13:46:21.018 trace_id=6503f5f183b828139d5b143365ad72fa [info] trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "commerce-api")
+
+  - name: timestamp, level and differing metadata in front; the record's own values win
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api-staging
+          message: "2026-11-12T13:00:00.123Z [info] request_id=F8Zx2o1yQk0AAAEB service=meta-svc trace_id=7a1e3c5b9d2f4a6c8e0b1d3f5a7c9e1b trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "commerce-api")
+              assert_eq!(.source, "commerce-api-staging")
+
+  - name: stmt holding trace_id=? and hop=in stays inside stmt and does not confuse detection
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=out_end hop_id=83c2d1907ae45b16 parent_hop=1f0a6c2e9b7d4405 hop_sent=false parent_id=b7ad6b7169203331 service=commerce-api adapter=ecto via=db op=select table=hops peer=db.internal outcome=ok duration_us=900 stmt=select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert!(ends_with(to_string(.message) ?? "", "stmt=select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?"))
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.op, "select")
+              assert_eq!(.tags.via, "db")
+              assert_eq!(.tags.service, "commerce-api")

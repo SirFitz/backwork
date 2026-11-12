@@ -16,7 +16,7 @@ import {
   type CompiledFilter,
   type ControlRow,
 } from "~/lib/controls.server";
-import { STATEMENT_FIELDS, StatementField, splitStatement } from "~/lib/hops/stmt";
+import { STATEMENT_FIELDS, StatementField, recordPairs, splitStatement } from "~/lib/hops/stmt";
 
 export const LineKind = { Log: "log", Hop: "hop", Link: "link" } as const;
 export type LineKind = (typeof LineKind)[keyof typeof LineKind];
@@ -46,7 +46,9 @@ function isObject(v: unknown): v is Fields {
  *  everything after ` stmt=` to the end of the line (spec HOP-14), so nothing inside it is a pair. */
 export function parseKeyValue(full: string): Fields {
   const out: Fields = {};
-  const { head: line, stmt } = splitStatement(full);
+  const split = splitStatement(full);
+  const line = recordPairs(split.head);
+  const stmt = split.stmt;
   const re = /([^\s=]+)=("(?:[^"\\]|\\.)*"|\S*)/g;
   if (stmt !== null) out[StatementField.Stmt] = stmt;
   for (const m of line.matchAll(re)) {

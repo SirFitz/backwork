@@ -15,7 +15,7 @@ import {
   type TraceLogLine,
   Via,
 } from "./types";
-import { StatementField, isStatement, isTableName, splitStatement } from "./stmt";
+import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
 export interface RawLogEntry {
@@ -124,7 +124,9 @@ function bagFromJson(obj: Record<string, unknown>): Map<string, Scalar> {
  *  `stmt` is read first: everything after ` stmt=` to the end of the line (spec HOP-14). */
 function bagFromKeyValue(line: string): Map<string, Scalar> {
   const bag = new Map<string, Scalar>();
-  const { head: text, stmt } = splitStatement(line);
+  const split = splitStatement(line);
+  const text = recordPairs(split.head);
+  const stmt = split.stmt;
   if (stmt !== null) bag.set(StatementField.Stmt, stmt);
   let i = 0;
   const n = text.length;

@@ -82,3 +82,22 @@ describe("parseHopRecord with statement fields", () => {
     expect(r?.stmt).toBeNull();
   });
 });
+
+describe("repeated keys: the record's own pairs win", () => {
+  const O = "7a1e3c5b9d2f4a6c8e0b1d3f5a7c9e1b";
+  test("trace_id printed by the host's format and by the record", () => {
+    const r = parseHopRecord(entry(`13:46:21.018 trace_id=${T} [info] trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders`));
+    expect(r?.traceId).toBe(T);
+    expect(r?.op).toBe("/orders");
+  });
+  test("differing metadata in front: the record's values", () => {
+    const r = parseHopRecord(entry(`2026-11-12T13:00:00Z [info] service=meta-svc trace_id=${O} trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http op=/orders`));
+    expect(r?.traceId).toBe(T);
+    expect(r?.service).toBe("commerce-api");
+  });
+  test("stmt holding trace_id=? and hop=in", () => {
+    const r = parseHopRecord(entry(SPEC.replace(/stmt=.*$/, "stmt=select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?")));
+    expect(r?.hop).toBe("out_end");
+    expect(r?.stmt).toBe("select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?");
+  });
+});

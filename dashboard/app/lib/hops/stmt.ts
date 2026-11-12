@@ -35,6 +35,19 @@ export function splitStatement(text: string): StatementSplit {
   return { head: text.slice(0, at), stmt: text.slice(at + MARK.length) };
 }
 
+const RECORD_START = /trace_id=[0-9a-f]{32} hop=/;
+
+/**
+ * The hop record's own pairs in a plain-text line: from the first `trace_id=<32 hex> hop=` to
+ * the end. A host's log format may print `trace_id` (and other metadata) in front of the
+ * message as well, so the same key can appear twice; the record's value is the one to keep.
+ * Without such a start (link lines, ordinary lines) the whole text is returned.
+ */
+export function recordPairs(text: string): string {
+  const m = RECORD_START.exec(text);
+  return m ? text.slice(m.index) : text;
+}
+
 /** STM-4: 1 to 300 bytes, every byte 0x20..0x7E. */
 export function isStatement(value: unknown): value is string {
   if (typeof value !== "string" || value.length < 1 || value.length > MAX_STMT_BYTES) return false;

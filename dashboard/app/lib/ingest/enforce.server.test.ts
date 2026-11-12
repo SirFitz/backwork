@@ -67,6 +67,11 @@ describe("statement fields (BAC-51)", () => {
     expect(c.fields.status).toBeUndefined();
     expect(c.fields.table).toBe("merchants");
   });
+  test("a repeated trace_id in front of the record still classifies as a hop", () => {
+    const c = classifyLine(`13:46:21.018 trace_id=${T} [info] ${KV_DB}`);
+    expect(c.kind).toBe(LineKind.Hop);
+    expect(c.fields.op).toBe("select");
+  });
   test("named fields off never edits inside stmt", () => {
     const out = stripHopFields(KV_DB, classifyLine(KV_DB), { named: true, stores: true, statements: false });
     expect(out).toBe(KV_DB);

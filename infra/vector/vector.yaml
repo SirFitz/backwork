@@ -108,7 +108,18 @@ transforms:
         # split it off first, so text inside it never becomes a field.
         bw_kvp = parse_regex(bw_raw, r'^(?P<head>.*?)(?: stmt=(?P<stmt>.*))?$$') ?? {}
         bw_kvh = to_string(get(bw_kvp, ["head"]) ?? bw_raw) ?? bw_raw
+        # A host's log format may print trace_id (and more) in front of the message too: read the
+        # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
+        bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
+        bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
         bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+        # A key repeated with equal values is read once; differing values stay a list (not a record).
+        bw_src = map_values(bw_src) -> |v| {
+          if is_array(v) {
+            bw_u = unique(array!(v))
+            if length(bw_u) == 1 { bw_u[0] } else { v }
+          } else { v }
+        }
         bw_kvs = get(bw_kvp, ["stmt"]) ?? null
         if bw_kvs != null { bw_src = set(bw_src, ["stmt"], bw_kvs) ?? bw_src }
       }
@@ -136,6 +147,71 @@ transforms:
     drop_on_abort: true
     source: |
       # backwork switches and sensitive-data filter (design 19). Version default.
+      # Hop detection with the current rules (repeated keys, stmt read first), for every agent.
+      if contains(to_string(.message) ?? "", "trace_id=") {
+        %bw_type = ""
+        # Hop record and link line detection (design 5.1). Never drops or alters the line.
+        .kind = "log"
+        bw_raw = to_string(.message) ?? ""
+        bw_src = {}
+        bw_fmt = ""
+        bw_box = ""
+        bw_json = parse_json(bw_raw) ?? null
+        if is_object(bw_json) {
+          bw_o = object(bw_json) ?? {}
+          bw_fmt = "json"
+          if (get(bw_o, ["trace_id"]) ?? null) != null {
+            bw_src = bw_o
+          } else {
+            for_each(["metadata","fields","data","context","attributes"]) -> |_i, k| {
+              if bw_box == "" {
+                c = object(get(bw_o, [k]) ?? null) ?? {}
+                if (get(c, ["trace_id"]) ?? null) != null {
+                  bw_src = c
+                  bw_box = k
+                }
+              }
+            }
+          }
+        } else if contains(bw_raw, "trace_id=") {
+          bw_fmt = "kv"
+          # stmt is the last pair and runs to the end of the line, spaces included (spec HOP-14, 13.2):
+          # split it off first, so text inside it never becomes a field.
+          bw_kvp = parse_regex(bw_raw, r'^(?P<head>.*?)(?: stmt=(?P<stmt>.*))?$$') ?? {}
+          bw_kvh = to_string(get(bw_kvp, ["head"]) ?? bw_raw) ?? bw_raw
+          # A host's log format may print trace_id (and more) in front of the message too: read the
+          # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
+          bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
+          bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
+          bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+          # A key repeated with equal values is read once; differing values stay a list (not a record).
+          bw_src = map_values(bw_src) -> |v| {
+            if is_array(v) {
+              bw_u = unique(array!(v))
+              if length(bw_u) == 1 { bw_u[0] } else { v }
+            } else { v }
+          }
+          bw_kvs = get(bw_kvp, ["stmt"]) ?? null
+          if bw_kvs != null { bw_src = set(bw_src, ["stmt"], bw_kvs) ?? bw_src }
+        }
+        bw_tid = to_string(get(bw_src, ["trace_id"]) ?? "") ?? ""
+        if match(bw_tid, r'^[0-9a-f]{32}$$') {
+          bw_hk = to_string(get(bw_src, ["hop"]) ?? "") ?? ""
+          bw_hid = to_string(get(bw_src, ["hop_id"]) ?? "") ?? ""
+          if includes(["in", "in_end", "out", "out_end"], bw_hk) && match(bw_hid, r'^[0-9a-f]{16}$$') {
+            .kind = "hop"
+            %bw_type = "hop"
+          } else if (get(bw_src, ["link_name"]) ?? null) != null && (get(bw_src, ["link_value"]) ?? null) != null {
+            .kind = "hop"
+            %bw_type = "link"
+          }
+        }
+        if .kind == "hop" {
+          %bw_hop = bw_src
+          %bw_fmt = bw_fmt
+          %bw_box = bw_box
+        }
+      }
       # Hop records are named by their own service field; the container stays in .source (BAC-49).
       if !exists(.source) { .source = .service }
       if (to_string(.kind) ?? "") == "hop" {
