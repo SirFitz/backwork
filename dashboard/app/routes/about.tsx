@@ -1,14 +1,14 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
-import { ArrowRight, Server, Eye, Layers, Github } from "lucide-react";
+import { useLoaderData } from "@remix-run/react";
+import { Eye, Fingerprint, Users } from "lucide-react";
 import { getUser } from "~/lib/auth/context.server";
-import { MarketingShell, seo, REPO } from "~/components/marketing";
+import { CtaBand, MarketingShell, PageHero, Wrap, seo } from "~/components/marketing";
 
 export const meta: MetaFunction = () =>
   seo({
     title: "About — backwork",
-    description: "Why we built backwork: observability you own, a single honest pane, built on open standards — not another per-gigabyte bill.",
+    description: "Why we built backwork: one ID should be enough to find out what happened to a request, for support and business owners as much as engineers.",
     path: "/about",
   });
 
@@ -17,52 +17,39 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 const VALUES = [
-  { icon: Server, title: "You own your data", body: "Observability data describes exactly how your systems work. It should live on your infrastructure, not someone else's billing system." },
-  { icon: Eye, title: "Honesty over theatre", body: "A dashboard is only useful if you can trust it. We never coerce missing data to zero or paint a dead pipeline green." },
-  { icon: Layers, title: "One pane, open standards", body: "A request, its figures and its log lines belong together: built on Correlator, Loki, VictoriaMetrics and Vector, not a walled garden." },
+  { icon: Fingerprint, title: "One ID is enough", body: "Whatever reference someone holds (a request ID from an error page, an order number, a provider's reference) should lead straight to what happened." },
+  { icon: Users, title: "Readable by anyone", body: "Support and business owners ask “what happened to this payment?” as often as engineers do. The answer should be in words they can read, not a wall of spans." },
+  { icon: Eye, title: "Honest, and careful with data", body: "Never green because nothing arrived. Never a request body read. Sensitive data filtered on your server, and a switch for everything we collect." },
 ];
 
 export default function About() {
   const { authed } = useLoaderData<typeof loader>();
   return (
     <MarketingShell authed={authed}>
-      <section className="mx-auto max-w-3xl px-5 pt-16 pb-10 text-center sm:px-6 lg:pt-24">
-        <div data-reveal>
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><span className="h-1.5 w-1.5 rounded-full bg-brand" />About</div>
-          <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">Observability you actually own.</h1>
-          <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">backwork started from a simple frustration: monitoring had become five disconnected tools, a per-gigabyte bill that scaled with your success, and dashboards that quietly lied when the data behind them stopped flowing.</p>
-        </div>
+      <PageHero eyebrow="About" title="Built for the question “what happened to this request?”">
+        backwork started from a familiar problem in a payments platform: when a customer asked why something hadn't gone through, finding out meant searching several services' logs by hand, by timestamp, hoping the clocks agreed.
+      </PageHero>
+      <section className="border-b border-border">
+        <Wrap className="py-14 sm:py-20">
+          <div className="max-w-[68ch] space-y-5 text-[16px] leading-[1.75] text-muted">
+            <p>So we built the tool we wanted. Correlator, a small library, gives every request one ID and carries it through every call, job and message, writing it into the log lines your services already produce. backwork reads those lines and rebuilds the request: every service it passed through, how long each step took, and exactly where it stopped.</p>
+            <p>No new agent inside your code, no tracing SDK to learn, no request bodies read. One package, one start line, and the agent on your server.</p>
+            <p>backwork is a hosted service. We run it, keep it up and back it up, so your team spends its time on the answer rather than the tooling.</p>
+          </div>
+        </Wrap>
       </section>
-
-      <section className="mx-auto max-w-3xl px-5 sm:px-6">
-        <div data-reveal className="space-y-4 text-[14.5px] leading-relaxed text-muted">
-          <p>So we built the opposite. One light, self-hosted stack that finds any request across your services and shows where it went, where the time went and what it logged, with figures per service, log search and alerts. It runs on your own hardware, with one Docker command, for free.</p>
-          <p>It's multi-tenant from the ground up, so a whole team (or a whole fleet of customers) can share one deployment with strict per-tenant isolation. It reads Correlator's hop records from your ordinary logs, so it works beside the tools you already run. And it's engineered to tell the truth: an outage in the telemetry path reads as <span className="font-medium text-fg">no data</span>, never <span className="font-medium text-fg">all clear</span>.</p>
-          <p>backwork is open source. Read the code, run it yourself, or let us host it — either way, the data stays yours.</p>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-5xl px-5 py-14 sm:px-6">
-        <div className="grid divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface md:grid-cols-3 md:divide-x md:divide-y-0">
-          {VALUES.map((v, i) => (
-            <div key={v.title} data-reveal className="p-6">
-              <div className="flex items-center gap-3">
-                <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand/10 text-brand"><v.icon className="h-5 w-5" /></span>
-                <span className="font-mono text-[13px] text-faint">0{i + 1}</span>
-              </div>
-              <h2 className="mt-4 text-base font-semibold">{v.title}</h2>
-              <p className="mt-1.5 text-[13.5px] leading-relaxed text-muted">{v.body}</p>
+      <section className="border-b border-border bg-surface">
+        <Wrap className="grid gap-5 py-14 sm:py-20 md:grid-cols-3">
+          {VALUES.map(({ icon: Icon, title, body }) => (
+            <div key={title} className="rounded-2xl border border-border bg-bg p-6">
+              <Icon className="h-5 w-5 text-muted" />
+              <h2 className="mt-4 text-[17px] font-semibold">{title}</h2>
+              <p className="mt-2 text-[14.5px] leading-relaxed text-muted">{body}</p>
             </div>
           ))}
-        </div>
+        </Wrap>
       </section>
-
-      <section className="mx-auto max-w-3xl px-5 pb-20 text-center sm:px-6">
-        <div data-reveal className="flex flex-wrap items-center justify-center gap-3">
-          <Link to="/register" className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-brand-fg hover:opacity-90">Start free <ArrowRight className="h-4 w-4" /></Link>
-          <a href={REPO} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border-strong px-5 text-sm font-semibold text-fg hover:bg-surface-2"><Github className="h-4 w-4" /> Read the code</a>
-        </div>
-      </section>
+      <CtaBand />
     </MarketingShell>
   );
 }

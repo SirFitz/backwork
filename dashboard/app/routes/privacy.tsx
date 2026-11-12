@@ -5,7 +5,7 @@ import { getUser } from "~/lib/auth/context.server";
 import { MarketingShell, seo, LegalArticle } from "~/components/marketing";
 
 export const meta: MetaFunction = () =>
-  seo({ title: "Privacy Policy — backwork", description: "How backwork handles data: self-hosted telemetry stays on your infrastructure; for the managed cloud we process only what's needed to run your account. No selling, no ad tracking.", path: "/privacy" });
+  seo({ title: "Privacy Policy — backwork", description: "How backwork handles data: we process only what is needed to run your account and follow your requests, filter sensitive data at the source, and never sell data or track you for ads.", path: "/privacy" });
 
 export async function loader({ request }: LoaderFunctionArgs) {
   return json({ authed: !!(await getUser(request)) });
@@ -13,12 +13,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 const SECTIONS: [string, string[]][] = [
   ["Who this covers", [
-    "backwork is available two ways: as open-source software you self-host, and as a managed cloud service at backwork.dev. This policy explains how we handle data in each case.",
-    "When you self-host backwork, your telemetry stays entirely on your own infrastructure — we never receive or have access to it.",
+    "This policy covers backwork, the hosted service at backwork.dev, and explains how we handle the data you and your services send us.",
   ]],
-  ["What we process (managed cloud)", [
+  ["What we process", [
     "Account data: your name, email address, organization and team membership, and a securely hashed password. We use this to authenticate you and operate your account.",
-    "Telemetry you send us: when you use the managed cloud, the log lines, hop records and request figures you ship are stored to provide the service. You are the controller of this data; we process it on your behalf and isolate it to your organization.",
+    "Data your services send us: log lines, request paths and timings, and any IDs or fields your code chooses to record. You are the controller of this data; we process it on your behalf and keep it to your organization. Request and response bodies are never collected, and our agent removes card numbers, email addresses, phone numbers, passwords, API keys, tokens and any patterns you add before data leaves your servers.",
     "Operational data: minimal request logs and metrics about the service itself, used to keep it secure and reliable.",
   ]],
   ["Cookies", [
@@ -31,7 +30,7 @@ const SECTIONS: [string, string[]][] = [
     "We share data only with infrastructure subprocessors strictly necessary to run the managed service (e.g. hosting and transactional email for alerts and account notices), under appropriate confidentiality terms. We never sell personal data.",
   ]],
   ["Retention", [
-    "Account data is kept while your account is active. Telemetry on the managed cloud is retained according to your plan's retention window and then deleted. You can request deletion of your account and associated data at any time.",
+    "Account data is kept while your account is active. Data your services send is kept for your plan's retention period and then deleted. When you close your account, we delete everything within 30 days. You can ask us to delete your account and its data at any time.",
   ]],
   ["Security", [
     "We apply per-tenant isolation, encryption of secrets at rest, hashed credentials and tokens, and hardened sessions. See our Security page for details.",
@@ -54,7 +53,7 @@ export default function Privacy() {
   const { authed } = useLoaderData<typeof loader>();
   return (
     <MarketingShell authed={authed}>
-      <LegalArticle title="Privacy Policy" effective="June 10, 2026" sections={SECTIONS} />
+      <LegalArticle title="Privacy Policy" effective="November 12, 2026" sections={SECTIONS} />
     </MarketingShell>
   );
 }
