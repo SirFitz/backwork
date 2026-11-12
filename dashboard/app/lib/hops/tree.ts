@@ -75,6 +75,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     parentId: base.parentId,
     hopSent: base.hopSent,
     tracer: base.tracer,
+    handoff: base.handoff || (end?.handoff ?? false),
     attempt: base.attempt,
     state,
     outcome: end?.outcome ?? null,
@@ -90,6 +91,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     gaps: [],
     unrecorded: [],
     isStore: isStoreVia(base.via),
+    afterResponse: false,
     children: [],
   };
 }
@@ -118,40 +120,92 @@ function hasStalledDescendant(hop: Hop): boolean {
   return hop.children.some((c) => c.state === HopState.Stalled || hasStalledDescendant(c));
 }
 
-function unionUs(intervals: Array<[number, number]>): number {
-  const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
-  let total = 0;
-  let curStart = -Infinity;
-  let curEnd = -Infinity;
-  for (const [a, b] of sorted) {
-    if (a > curEnd) {
-      if (curEnd > curStart) total += curEnd - curStart;
-      curStart = a;
-      curEnd = b;
-    } else if (b > curEnd) curEnd = b;
-  }
-  if (curEnd > curStart) total += curEnd - curStart;
-  return Math.round(total * 1000);
-}
-
 function elapsedUs(hop: Hop, now: number): number {
   return hop.durationUs ?? Math.max(0, Math.round((now - hop.startMs) * 1000));
 }
 
-/** Design 7.3 step 10, for the first inbound hop. */
+type IntervalMs = [number, number];
+
+/** Log timestamps are whole milliseconds: a call that ends within this of its request's end
+ *  record ended with it, not after it. */
+const AFTER_RESPONSE_SLACK_MS = 1;
+
+/** Overlapping or touching intervals joined, in start order. */
+function mergeIntervals(intervals: readonly IntervalMs[]): IntervalMs[] {
+  const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  const out: IntervalMs[] = [];
+  for (const [a, b] of sorted) {
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+/** Parts of `from` not covered by `cut` (both merged). */
+function subtractIntervals(from: readonly IntervalMs[], cut: readonly IntervalMs[]): IntervalMs[] {
+  const out: IntervalMs[] = [];
+  for (const [a0, b] of from) {
+    let a = a0;
+    for (const [c, d] of cut) {
+      if (d <= a || c >= b) continue;
+      if (c > a) out.push([a, c]);
+      a = Math.max(a, d);
+      if (a >= b) break;
+    }
+    if (a < b) out.push([a, b]);
+  }
+  return out;
+}
+
+function lengthUs(intervals: readonly IntervalMs[]): number {
+  return Math.round(intervals.reduce((t, [a, b]) => t + (b - a), 0) * 1000);
+}
+
+/**
+ * Design 7.3 step 10, for the first inbound hop. Calls can overlap (an ORM's parallel preloads,
+ * `Promise.all`), so each part is wall-clock time, not a sum of durations: the database is the
+ * union of its calls' intervals, the cache what its calls add beyond that, waiting what calls to
+ * other services add beyond both, and own code the rest. The parts never exceed the whole. The
+ * summed durations and call counts are kept for "21 calls, 128 ms in total". Calls in the totals
+ * but not recorded one by one have no interval; their time is added as-is, within what is left.
+ */
 export function timeSplit(hop: Hop, now: number): TimeSplit {
   const totalUs = elapsedUs(hop, now);
-  const storeKids = hop.children.filter((c) => c.isStore);
-  const sumOf = (via: Via): number =>
-    storeKids.filter((c) => c.via === via).reduce((a, c) => a + (c.durationUs ?? 0), 0);
-  const dbUs = hop.totals ? hop.totals.dbUs : sumOf(Via.Db);
-  const cacheUs = hop.totals ? hop.totals.cacheUs : sumOf(Via.Cache);
-  const waits: Array<[number, number]> = hop.children
-    .filter((c) => c.dir === HopDir.Out && !c.isStore)
-    .map((c) => [c.startMs, c.durationUs !== null ? c.startMs + c.durationUs / 1000 : windowEnd(hop, now)]);
-  const waitingUs = Math.min(unionUs(waits), totalUs);
-  const ownUs = Math.max(0, totalUs - dbUs - cacheUs - waitingUs);
-  return { totalUs, dbUs, cacheUs, waitingUs, ownUs };
+  const start = hop.startMs;
+  const end = start + totalUs / 1000;
+  const intervalsOf = (kids: readonly Hop[]): IntervalMs[] =>
+    mergeIntervals(kids.map((c): IntervalMs => [Math.max(c.startMs, start), Math.min(c.endMs ?? windowEnd(c, now), end)]));
+  // A call that ran on after the response is not part of the request's time.
+  const inside = hop.children.filter((c) => !c.afterResponse && !c.handoff);
+  const storeKids = inside.filter((c) => c.isStore);
+  const dbKids = storeKids.filter((c) => c.via === Via.Db);
+  const cacheKids = storeKids.filter((c) => c.via === Via.Cache);
+  const recordedSum = (kids: readonly Hop[]): number => kids.reduce((a, c) => a + (c.durationUs ?? 0), 0);
+  const dbSumUs = hop.totals ? hop.totals.dbUs : recordedSum(dbKids);
+  const cacheSumUs = hop.totals ? hop.totals.cacheUs : recordedSum(cacheKids);
+  const dbCalls = hop.totals ? hop.totals.dbCalls : dbKids.length;
+  const cacheCalls = hop.totals ? hop.totals.cacheCalls : cacheKids.length;
+
+  const db = intervalsOf(dbKids);
+  const cacheOnly = subtractIntervals(intervalsOf(cacheKids), db);
+  const waits = subtractIntervals(
+    subtractIntervals(intervalsOf(inside.filter((c) => c.dir === HopDir.Out && !c.isStore)), db),
+    cacheOnly
+  );
+  let left = totalUs;
+  const take = (us: number): number => {
+    const got = Math.max(0, Math.min(us, left));
+    left -= got;
+    return got;
+  };
+  const dbUs = take(lengthUs(db) + Math.max(0, dbSumUs - recordedSum(dbKids)));
+  const cacheUs = take(lengthUs(cacheOnly) + Math.max(0, cacheSumUs - recordedSum(cacheKids)));
+  const waitingUs = take(lengthUs(waits));
+  const ownUs = left;
+  const background = hop.children.filter((c) => c.handoff);
+  const backgroundUs = background.reduce((a, c) => a + (c.durationUs ?? 0), 0);
+  return { totalUs, dbUs, cacheUs, waitingUs, ownUs, dbCalls, dbSumUs, cacheCalls, cacheSumUs, backgroundCalls: background.length, backgroundUs };
 }
 
 function storeShortfall(hop: Hop): UnrecordedStoreCalls[] {
@@ -239,6 +293,14 @@ export function buildRequestTree(
     if (!parent || parent.dir !== HopDir.In) continue;
     const end = windowEnd(h, now);
     h.logs = parent.logs.filter((l) => l.timeMs >= h.startMs && l.timeMs <= end);
+  }
+
+  // Calls still running when the response went: drawn where they ran, out of the time split.
+  for (const h of inbound) {
+    if (h.endMs === null) continue;
+    for (const c of h.children) {
+      if (c.dir === HopDir.Out && !c.handoff && c.endMs !== null && c.endMs > h.endMs + AFTER_RESPONSE_SLACK_MS) c.afterResponse = true;
+    }
   }
 
   // Step 8: calls past the record limit.

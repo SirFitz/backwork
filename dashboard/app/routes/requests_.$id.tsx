@@ -181,6 +181,8 @@ function noteOf(hop: Hop): string {
   if (hop.gaps.some((g) => g.kind === GapKind.NotLinked)) parts.push("outside");
   if (hop.gaps.some((g) => g.kind === GapKind.NotInstrumented)) parts.push("not instrumented yet");
   for (const g of hop.gaps) if (g.kind === GapKind.Retry) parts.push(g.label.toLowerCase());
+  if (hop.handoff) parts.push("background");
+  else if (hop.afterResponse) parts.push("after the response");
   return parts.join(" · ");
 }
 
@@ -250,7 +252,12 @@ function Bar({ hop, colour, geom, thin = false }: { hop: Hop; colour: string; ge
   const failed = isFailed(hop) || hop.gaps.some((g) => g.kind === GapKind.Stopped);
   const style: CSSProperties = { left: `${geom.left}%`, width: `${geom.width}%` };
   if (geom.open) Object.assign(style, HATCH(colour));
-  else if (hop.isStore) style.background = "oklch(var(--muted))";
+  else if (hop.handoff || hop.afterResponse) {
+    // Beside the request, not part of it: outlined only, so it reads as running alongside.
+    style.background = "transparent";
+    style.boxShadow = `inset 0 0 0 1.5px ${hop.isStore ? "oklch(var(--muted))" : colour}`;
+    style.opacity = 0.7;
+  } else if (hop.isStore) style.background = "oklch(var(--muted))";
   else if (hop.dir === HopDir.In) style.background = colour;
   else {
     style.background = `color-mix(in oklch, ${colour} 22%, transparent)`;
@@ -524,13 +531,19 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
 
 // ---------------------------------------------------------------- where the time went
 
+/** "21 calls, 128 ms in total" when the calls overlapped, so their summed time is more than the wall-clock time shown. */
+function callsNote(calls: number, sumUs: number, shownUs: number): string | null {
+  if (calls < 2 || sumUs <= shownUs) return null;
+  return `${calls} calls, ${fmtUs(sumUs)} in total`;
+}
+
 function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; colour: string }) {
   const s = tree.split;
   if (!s || s.totalUs <= 0) return null;
-  const parts: Array<{ key: string; us: number; label: ReactNode; bg: string }> = [
+  const parts: Array<{ key: string; us: number; label: ReactNode; bg: string; note?: string | null }> = [
     { key: "own", us: s.ownUs, label: <>{head.service}&apos;s own code</>, bg: colour },
-    { key: "db", us: s.dbUs, label: "its database", bg: "oklch(var(--muted))" },
-    { key: "cache", us: s.cacheUs, label: "its cache", bg: "oklch(var(--faint))" },
+    { key: "db", us: s.dbUs, label: "its database", bg: "oklch(var(--muted))", note: callsNote(s.dbCalls, s.dbSumUs, s.dbUs) },
+    { key: "cache", us: s.cacheUs, label: "its cache", bg: "oklch(var(--faint))", note: callsNote(s.cacheCalls, s.cacheSumUs, s.cacheUs) },
     { key: "wait", us: s.waitingUs, label: "waiting on other services", bg: "oklch(var(--border-strong))" },
   ].filter((p) => p.us > 0);
   return (
@@ -544,9 +557,13 @@ function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; co
           <span key={p.key} className="inline-flex items-center gap-[7px]">
             <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: p.bg }} />
             {p.label} <Mono className="font-medium text-fg">{fmtUs(p.us)}</Mono>
+            {p.note ? <span className="text-faint">({p.note})</span> : null}
           </span>
         ))}
       </div>
+      {s.backgroundCalls ? (
+        <div className="text-faint md:col-start-2">In the background: {s.backgroundCalls} {s.backgroundCalls === 1 ? "call" : "calls"}, {fmtUs(s.backgroundUs)}</div>
+      ) : null}
     </div>
   );
 }
@@ -745,6 +762,8 @@ function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
   }
+  if (hop.handoff) facts.push(["Made", "in the background (handoff)"]);
+  else if (hop.afterResponse) facts.push(["Note", "ended after the response"]);
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
   const storeChip = hop.totals && (hop.totals.dbCalls || hop.totals.cacheCalls)

@@ -127,6 +127,18 @@ describe("parseLinkLine", () => {
   });
 });
 
+describe("handoff (HOP-23)", () => {
+  const T2 = "6503f5f183b828139d5b143365ad72fa";
+  const line = (extra: string) => `trace_id=${T2} hop=out_end hop_id=83c2d1907ae45b16 parent_hop=1f0a6c2e9b7d4405 hop_sent=false${extra} parent_id=b7ad6b7169203331 service=commerce-api adapter=redix via=cache op=set peer=redis.internal outcome=ok duration_us=1200`;
+  test("handoff=true on an outbound record is read", () => {
+    expect(parseHopRecord(entry(line(" handoff=true")))?.handoff).toBe(true);
+  });
+  test("absent or anything else is false", () => {
+    expect(parseHopRecord(entry(line("")))?.handoff).toBe(false);
+    expect(parseHopRecord(entry(line(" handoff=yes")))?.handoff).toBe(false);
+  });
+});
+
 describe("traceIdOfLine and toTraceLogLine", () => {
   test("finds the trace ID in JSON and key=value lines", () => {
     expect(traceIdOfLine(JSON.stringify({ msg: "charge stored", trace_id: T }))).toBe(T);

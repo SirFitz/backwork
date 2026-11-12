@@ -104,6 +104,9 @@ export interface HopRecord {
   hopSent: boolean | null;
   /** Outbound only: true when the OpenTelemetry bridge was active (OTEL-11). */
   tracer: boolean;
+  /** Outbound only: `handoff=true` (HOP-23), made off the request's path: from a handed-off task,
+   *  thread or process, or started after the request ended. False when absent. */
+  handoff: boolean;
   parentId: string | null;
   /** The collector's service label, falling back to the record's own `service`. */
   /** The service the record names (its own `service` field, spec HOP-8); what every page shows. */
@@ -188,6 +191,8 @@ export interface Hop {
   parentId: string | null;
   hopSent: boolean | null;
   tracer: boolean;
+  /** HOP-23 `handoff=true` on either record: shown as "background", out of the time split. */
+  handoff: boolean;
   attempt: number | null;
   state: HopState;
   outcome: Outcome | null;
@@ -205,16 +210,31 @@ export interface Hop {
   unrecorded: UnrecordedStoreCalls[];
   /** True for `via` db or cache. */
   isStore: boolean;
+  /** An outbound call that ended after its inbound hop's end record: it ran on after the response
+   *  was sent. Drawn where it ran and left out of "where the time went". */
+  afterResponse: boolean;
   children: Hop[];
 }
 
 /** Where the time went for the first inbound hop (design 7.3 step 10), microseconds. */
 export interface TimeSplit {
   totalUs: number;
+  /** Wall-clock time in the database: the union of its calls, not their sum. */
   dbUs: number;
+  /** Wall-clock time in the cache beyond the database time. */
   cacheUs: number;
+  /** Wall-clock time waiting on other services beyond the database and cache time. */
   waitingUs: number;
+  /** The rest: never negative; the parts add up to totalUs. */
   ownUs: number;
+  dbCalls: number;
+  /** The calls' durations added up; more than dbUs when calls overlapped. */
+  dbSumUs: number;
+  cacheCalls: number;
+  cacheSumUs: number;
+  /** Calls marked `handoff=true` (HOP-23): not part of the request's time; their durations added up. */
+  backgroundCalls: number;
+  backgroundUs: number;
 }
 
 export interface RequestTree {
