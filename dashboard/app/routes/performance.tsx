@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import { ArrowRight, Gauge } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, Sparkline } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
-import { PALETTE } from "~/components/charts";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { safe } from "~/lib/config.server";
@@ -90,12 +89,21 @@ function latencyTone(seconds: number | null, waitedOn: boolean): string {
   return waitedOn && seconds !== null && seconds >= 1 ? "text-warn" : "";
 }
 
-/** A stable colour per service name (the chart palette without the brand coral). */
+/** Service colours from the design frames: cool hues only, so no service reads as a status
+ *  (amber, red, green) or as the brand coral. A stable pick per service name. */
+const SERVICE_COLORS: readonly string[] = [
+  "oklch(0.62 0.12 240)",
+  "oklch(0.6 0.15 290)",
+  "oklch(0.64 0.1 195)",
+  "oklch(0.6 0.13 335)",
+  "oklch(0.6 0.08 265)",
+  "oklch(0.58 0.11 215)",
+];
+
 function serviceColor(service: string): string {
-  const colors = PALETTE.slice(0, PALETTE.length - 1);
   let h = 0;
   for (let i = 0; i < service.length; i++) h = (h * 31 + service.charCodeAt(i)) >>> 0;
-  return colors[h % colors.length];
+  return SERVICE_COLORS[h % SERVICE_COLORS.length];
 }
 
 const REQUEST_RANGES: ReadonlySet<string> = new Set(["1h", "6h", "24h"]);
@@ -204,7 +212,7 @@ export default function Performance() {
                               key={s.service}
                               onClick={() => navigate(perfHref(range, s.service), { preventScrollReset: true })}
                               aria-selected={on}
-                              className={cn("cursor-pointer last:[&>td]:border-b-0 hover:bg-surface-2/50", on && "bg-surface-2 hover:bg-surface-2")}
+                              className={cn("cursor-pointer [&:last-child>td]:border-b-0 hover:bg-surface-2/50", on && "bg-surface-2 hover:bg-surface-2")}
                             >
                               <td className={TD}>
                                 <Link to={perfHref(range, s.service)} preventScrollReset className="inline-flex items-center font-semibold" onClick={(e) => e.stopPropagation()}>
@@ -237,7 +245,7 @@ export default function Performance() {
         </Deferred>
       </Card>
 
-      <div className="grid items-start gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card>
           <Deferred resolve={d.routes} fallback={<><CardHead title="Routes" sub="slowest first" /><RowsSkeleton rows={4} /></>}>
             {(panel) => (
@@ -270,7 +278,7 @@ export default function Performance() {
                         </thead>
                         <tbody>
                           {rows.map((r) => (
-                            <tr key={`${r.method} ${r.op}`} onClick={() => navigate(requestsHref(r, range))} className="cursor-pointer last:[&>td]:border-b-0 hover:bg-surface-2/50">
+                            <tr key={`${r.method} ${r.op}`} onClick={() => navigate(requestsHref(r, range))} className="cursor-pointer [&:last-child>td]:border-b-0 hover:bg-surface-2/50">
                               <td className={cn(TD, TIGHT, "font-mono text-[12.5px]")}>
                                 <Link to={requestsHref(r, range)} onClick={(e) => e.stopPropagation()} title="Open these requests">
                                   {r.method ? <span className="font-medium text-faint">{r.method} </span> : null}
@@ -320,7 +328,7 @@ export default function Performance() {
                         </thead>
                         <tbody>
                           {rows.map((c) => (
-                            <tr key={`${c.service}>${c.peer}>${c.via ?? ""}`} className="last:[&>td]:border-b-0">
+                            <tr key={`${c.service}>${c.peer}>${c.via ?? ""}`} className="[&:last-child>td]:border-b-0">
                               <td className={cn(TD, TIGHT, "whitespace-normal")}>
                                 <b className="font-semibold">{c.service}</b>
                                 <div className="mt-0.5 flex min-w-0 flex-wrap items-center text-[12.5px] text-muted">
