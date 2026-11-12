@@ -33,11 +33,11 @@ export function inboundEndQuery(service: string | null, health: HealthChecks = H
   const sel = service ? `{kind="hop",service=${JSON.stringify(service)}}` : `{kind="hop"}`;
   const notHealth = health === HealthChecks.Hidden ? ` ${LOGQL_NOT_HEALTH_CHECK}` : "";
   const failed = onlyFailed ? ` ${LOGQL_FAILED}` : "";
-  return `${sel} |= "in_end" |~ "via\\\\W{1,4}http"${notHealth}${failed}`;
+  return `${sel} |= "in_end" |~ "via\\\\W{1,6}http"${notHealth}${failed}`;
 }
 
 /** Narrows a scan to failed records: outcome error or a 5xx status (`isFailedRow` decides). */
-export const LOGQL_FAILED = `|~ "outcome\\\\W{1,4}error|status\\\\W{1,4}5[0-9][0-9]"`;
+export const LOGQL_FAILED = `|~ "outcome\\\\W{1,6}error|status\\\\W{1,6}5[0-9][0-9]"`;
 
 /** A row the Overview lists as failed: the hop ended in error or answered 5xx. */
 export function isFailedRow(row: RequestListRow): boolean {

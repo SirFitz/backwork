@@ -189,9 +189,9 @@ export function limitList<T>(rows: readonly T[], truncated: boolean): RecordScan
 // ---------------------------------------------------------------- stalled and unreceived (queries)
 
 /** Inbound start and end records, health checks left out. */
-export const INBOUND_RECORDS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,4}in(?:_end)?(?:\\"|\\\\s|$)" ${LOGQL_NOT_HEALTH_CHECK}`;
+export const INBOUND_RECORDS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,6}in(?:_end)?(?:\\\\\\\\?\\"|\\\\s|$)" ${LOGQL_NOT_HEALTH_CHECK}`;
 /** Outbound start and end records that are not database or cache calls. */
-export const OUTBOUND_CALLS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,4}out(?:_end)?(?:\\"|\\\\s|$)" !~ "\\\\bvia\\\\W{1,4}(?:db|cache)(?:\\"|\\\\s|$)"`;
+export const OUTBOUND_CALLS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,6}out(?:_end)?(?:\\\\\\\\?\\"|\\\\s|$)" !~ "\\\\bvia\\\\W{1,6}(?:db|cache)(?:\\\\\\\\?\\"|\\\\s|$)"`;
 
 export type RecordQueryFn = (query: string, opts: { start: number; end: number; limit: number }, tenant: Tenant) => Promise<loki.LogEntry[]>;
 

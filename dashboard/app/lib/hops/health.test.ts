@@ -48,6 +48,12 @@ describe("LogQL line filter", () => {
     expect(re.test("hop=in op=/pingback")).toBe(false);
     expect(re.test('{"hop":"in_end","stop":"/healthz"}')).toBe(false);
   });
+  test("pino JSON inside the stored envelope (quotes escaped) is matched too", () => {
+    const stored = JSON.stringify({ message: JSON.stringify({ trace_id: "a", hop: "in_end", via: "http", op: "/healthz", status: 200 }) });
+    expect(re.test(stored)).toBe(true);
+    const other = JSON.stringify({ message: JSON.stringify({ hop: "in_end", via: "http", op: "/health/db" }) });
+    expect(re.test(other)).toBe(false);
+  });
 });
 
 describe("PromQL matcher", () => {
