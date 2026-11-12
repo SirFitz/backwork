@@ -1,0 +1,340 @@
+// Request tree from hop records (design 7.3 and 7.4). Pure: no Loki, Jaeger or Remix,
+// so the same function runs on the server and, as log lines arrive, in the browser.
+import {
+  GapKind,
+  HopDir,
+  HopKind,
+  HopState,
+  Outcome,
+  StoreKind,
+  Via,
+  type Gap,
+  type Hop,
+  type HopId,
+  type HopRecord,
+  type LinkedId,
+  type RequestTree,
+  type TimeSplit,
+  type TraceId,
+  type TraceLogLine,
+  type TraceSpan,
+  type UnrecordedStoreCalls,
+} from "./types";
+
+/** A hop with no end record becomes stalled after this long (design 7.3 step 5). */
+export const STALL_AFTER_MS = 60_000;
+
+/** Gaps that mean something went wrong, counted in the request's "gaps" fact. The others are notes. */
+export const FAULT_GAPS: readonly GapKind[] = [GapKind.Stopped, GapKind.NoReceiver, GapKind.MissingCaller];
+
+export function isStoreVia(via: Via): boolean {
+  return via === Via.Db || via === Via.Cache;
+}
+
+interface RecordPair {
+  start: HopRecord | null;
+  end: HopRecord | null;
+}
+
+function pairRecords(records: readonly HopRecord[]): Map<HopId, RecordPair> {
+  const pairs = new Map<HopId, RecordPair>();
+  const sorted = [...records].sort((a, b) => a.timeMs - b.timeMs);
+  for (const r of sorted) {
+    const pair = pairs.get(r.hopId) ?? { start: null, end: null };
+    const isEnd = r.hop === HopKind.InEnd || r.hop === HopKind.OutEnd;
+    // The first record of each kind wins; a repeated line (re-shipped log) changes nothing.
+    if (isEnd) pair.end ??= r;
+    else pair.start ??= r;
+    pairs.set(r.hopId, pair);
+  }
+  return pairs;
+}
+
+function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
+  const base = (pair.start ?? pair.end) as HopRecord;
+  const end = pair.end;
+  const dir = base.hop === HopKind.In || base.hop === HopKind.InEnd ? HopDir.In : HopDir.Out;
+  const durationUs = end?.durationUs ?? null;
+  // A hop with an end record only (always so for data-store hops, HOP-19) started duration earlier.
+  const startMs = pair.start ? pair.start.timeMs : (end as HopRecord).timeMs - (durationUs ?? 0) / 1000;
+  const endMs = end ? (pair.start && durationUs !== null ? startMs + durationUs / 1000 : end.timeMs) : null;
+  const state = end ? HopState.Finished : now - startMs < STALL_AFTER_MS ? HopState.Open : HopState.Stalled;
+  return {
+    hopId: id,
+    dir,
+    via: base.via,
+    service: base.service,
+    adapter: base.adapter,
+    method: base.method,
+    op: base.op,
+    peer: base.peer,
+    parentHop: base.parentHop,
+    parentId: base.parentId,
+    hopSent: base.hopSent,
+    tracer: base.tracer,
+    attempt: base.attempt,
+    state,
+    outcome: end?.outcome ?? null,
+    status: end?.status ?? null,
+    error: end?.error ?? null,
+    startMs,
+    endMs,
+    durationUs,
+    totals: end?.totals ?? null,
+    fields: end?.fields ?? [],
+    linkedIds: [],
+    logs: [],
+    gaps: [],
+    unrecorded: [],
+    isStore: isStoreVia(base.via),
+    children: [],
+  };
+}
+
+function byStart(a: Hop, b: Hop): number {
+  return a.startMs - b.startMs || a.hopId.localeCompare(b.hopId);
+}
+
+/** End of a hop's window for placement and time sums: its end, or now while it runs. */
+function windowEnd(hop: Hop, now: number): number {
+  return hop.endMs ?? now;
+}
+
+function gap(kind: GapKind, hop: Hop, label: string, detail: string | null = null): Gap {
+  return { kind, hopId: hop.hopId, label, detail };
+}
+
+function walk(hops: readonly Hop[], visit: (h: Hop) => void): void {
+  for (const h of hops) {
+    visit(h);
+    walk(h.children, visit);
+  }
+}
+
+function hasStalledDescendant(hop: Hop): boolean {
+  return hop.children.some((c) => c.state === HopState.Stalled || hasStalledDescendant(c));
+}
+
+function unionUs(intervals: Array<[number, number]>): number {
+  const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let curStart = -Infinity;
+  let curEnd = -Infinity;
+  for (const [a, b] of sorted) {
+    if (a > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart;
+      curStart = a;
+      curEnd = b;
+    } else if (b > curEnd) curEnd = b;
+  }
+  if (curEnd > curStart) total += curEnd - curStart;
+  return Math.round(total * 1000);
+}
+
+function elapsedUs(hop: Hop, now: number): number {
+  return hop.durationUs ?? Math.max(0, Math.round((now - hop.startMs) * 1000));
+}
+
+/** Design 7.3 step 10, for the first inbound hop. */
+export function timeSplit(hop: Hop, now: number): TimeSplit {
+  const totalUs = elapsedUs(hop, now);
+  const storeKids = hop.children.filter((c) => c.isStore);
+  const sumOf = (via: Via): number =>
+    storeKids.filter((c) => c.via === via).reduce((a, c) => a + (c.durationUs ?? 0), 0);
+  const dbUs = hop.totals ? hop.totals.dbUs : sumOf(Via.Db);
+  const cacheUs = hop.totals ? hop.totals.cacheUs : sumOf(Via.Cache);
+  const waits: Array<[number, number]> = hop.children
+    .filter((c) => c.dir === HopDir.Out && !c.isStore)
+    .map((c) => [c.startMs, c.durationUs !== null ? c.startMs + c.durationUs / 1000 : windowEnd(hop, now)]);
+  const waitingUs = Math.min(unionUs(waits), totalUs);
+  const ownUs = Math.max(0, totalUs - dbUs - cacheUs - waitingUs);
+  return { totalUs, dbUs, cacheUs, waitingUs, ownUs };
+}
+
+function storeShortfall(hop: Hop): UnrecordedStoreCalls[] {
+  if (!hop.totals) return [];
+  const out: UnrecordedStoreCalls[] = [];
+  const kinds: Array<[StoreKind, Via, number, number]> = [
+    [StoreKind.Db, Via.Db, hop.totals.dbCalls, hop.totals.dbUs],
+    [StoreKind.Cache, Via.Cache, hop.totals.cacheCalls, hop.totals.cacheUs],
+  ];
+  for (const [store, via, calls, us] of kinds) {
+    const recorded = hop.children.filter((c) => c.isStore && c.via === via);
+    const missing = calls - recorded.length;
+    if (missing <= 0) continue;
+    const recordedUs = recorded.reduce((a, c) => a + (c.durationUs ?? 0), 0);
+    out.push({ store, calls: missing, us: Math.max(0, us - recordedUs) });
+  }
+  return out;
+}
+
+function peerName(hop: Hop): string {
+  return hop.peer ?? hop.op ?? hop.via;
+}
+
+function dedupeLinks(links: readonly LinkedId[]): LinkedId[] {
+  const seen = new Set<string>();
+  const out: LinkedId[] = [];
+  for (const l of [...links].sort((a, b) => a.timeMs - b.timeMs)) {
+    const key = `${l.name}\u0000${l.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(l);
+  }
+  return out;
+}
+
+/**
+ * Build the tree of one trace.
+ * @param records hop records of the trace (parsed, any order)
+ * @param logs ordinary log lines of the trace
+ * @param spans OpenTelemetry spans of the trace (shown in their own section, phase 2)
+ * @param now epoch ms, for open and stalled hops
+ * @param links linked-ID lines of the trace
+ */
+export function buildRequestTree(
+  records: readonly HopRecord[],
+  logs: readonly TraceLogLine[],
+  spans: readonly TraceSpan[],
+  now: number,
+  links: readonly LinkedId[] = [],
+): RequestTree {
+  const traceId = (records[0]?.traceId ?? links[0]?.traceId ?? "") as TraceId;
+  const byId = new Map<HopId, Hop>();
+  for (const [id, pair] of pairRecords(records)) byId.set(id, hopFromPair(id, pair, now));
+
+  // Steps 2-4: parents, roots, children in start order.
+  const roots: Hop[] = [];
+  for (const hop of byId.values()) {
+    const parent = hop.parentHop ? byId.get(hop.parentHop) : undefined;
+    if (parent && parent !== hop) parent.children.push(hop);
+    else roots.push(hop);
+  }
+  for (const hop of byId.values()) hop.children.sort(byStart);
+  roots.sort(byStart);
+  const flat: Hop[] = [];
+  walk(roots, (h) => flat.push(h));
+
+  // Step 6: each log line under the innermost inbound hop of its service whose window holds it.
+  const inbound = flat.filter((h) => h.dir === HopDir.In);
+  const unplacedLogs: Record<string, TraceLogLine[]> = {};
+  for (const line of [...logs].sort((a, b) => a.timeMs - b.timeMs)) {
+    let best: Hop | null = null;
+    for (const h of inbound) {
+      if (h.service !== line.service) continue;
+      if (line.timeMs < h.startMs || line.timeMs > windowEnd(h, now)) continue;
+      if (!best || h.startMs >= best.startMs) best = h;
+    }
+    if (best) best.logs.push(line);
+    else (unplacedLogs[line.service] ??= []).push(line);
+  }
+  // An outbound hop shows what its service logged while the call ran.
+  for (const h of flat) {
+    if (h.dir !== HopDir.Out || h.isStore) continue;
+    const parent = h.parentHop ? byId.get(h.parentHop) : undefined;
+    if (!parent || parent.dir !== HopDir.In) continue;
+    const end = windowEnd(h, now);
+    h.logs = parent.logs.filter((l) => l.timeMs >= h.startMs && l.timeMs <= end);
+  }
+
+  // Step 8: calls past the record limit.
+  for (const h of inbound) h.unrecorded = storeShortfall(h);
+
+  // Step 9: linked IDs on the request and on the hop that recorded them.
+  const linkedIds = dedupeLinks(links.filter((l) => l.traceId === traceId || traceId === ""));
+  for (const l of linkedIds) if (l.hopId) byId.get(l.hopId)?.linkedIds.push(l);
+
+  // Section 7.4: gaps.
+  const gaps: Gap[] = [];
+  const add = (g: Gap): void => {
+    gaps.push(g);
+    byId.get(g.hopId)?.gaps.push(g);
+  };
+  for (const h of flat) {
+    if (h.state === HopState.Stalled && !hasStalledDescendant(h)) add(gap(GapKind.Stopped, h, "Stopped here"));
+    if (h.dir === HopDir.Out && !h.isStore) {
+      const received = h.children.some((c) => c.dir === HopDir.In);
+      // A call still running has not been answered yet; only a finished call can be "never received".
+      if (h.hopSent === true && !received && h.state === HopState.Finished) {
+        add(gap(GapKind.NoReceiver, h, `No record from ${peerName(h)}`, peerName(h)));
+      }
+      if (h.hopSent === false) add(gap(GapKind.NotLinked, h, "Not linked", peerName(h)));
+    }
+    if (h.dir === HopDir.In && h.parentHop && !byId.has(h.parentHop)) {
+      add(gap(GapKind.MissingCaller, h, "Caller's record missing"));
+    }
+    if (h.dir === HopDir.In && h.parentHop) {
+      const parent = byId.get(h.parentHop);
+      if (parent && parent.dir === HopDir.Out && !parent.tracer && h.parentId && parent.parentId && h.parentId !== parent.parentId) {
+        add(gap(GapKind.TracerBetween, h, "Passed through a tracer-only service"));
+      }
+    }
+  }
+  // Retries (HOP-16): inbound siblings under one parent with different attempts.
+  for (const h of flat) {
+    const attempts = h.children.filter((c) => c.dir === HopDir.In && c.attempt !== null);
+    const distinct = new Set(attempts.map((c) => c.attempt));
+    if (distinct.size < 2) continue;
+    const first = Math.min(...attempts.map((c) => c.attempt as number));
+    for (const c of attempts) {
+      if ((c.attempt as number) > first) add(gap(GapKind.Retry, c, `Retry ${(c.attempt as number) - first}`, String(c.attempt)));
+    }
+  }
+  gaps.sort((a, b) => (byId.get(a.hopId)?.startMs ?? 0) - (byId.get(b.hopId)?.startMs ?? 0));
+
+  const firstIn = flat.find((h) => h.dir === HopDir.In) ?? null;
+  const starts = flat.map((h) => h.startMs);
+  const ends = flat.map((h) => windowEnd(h, now));
+  const services: string[] = [];
+  for (const h of flat) if (!services.includes(h.service)) services.push(h.service);
+
+  return {
+    traceId,
+    roots,
+    hops: [...flat].sort(byStart),
+    linkedIds,
+    gaps,
+    unplacedLogs,
+    spans: [...spans].sort((a, b) => a.startMs - b.startMs),
+    split: firstIn ? timeSplit(firstIn, now) : null,
+    startMs: starts.length ? Math.min(...starts) : null,
+    endMs: ends.length ? Math.max(...ends) : null,
+    services,
+  };
+}
+
+/** Count of fault gaps (the "gaps" fact on the page). */
+export function faultCount(tree: RequestTree): number {
+  return tree.gaps.filter((g) => FAULT_GAPS.includes(g.kind)).length;
+}
+
+/** The hop that names the request: the earliest inbound root, else the earliest root. */
+export function headHop(tree: RequestTree): Hop | null {
+  return tree.roots.find((h) => h.dir === HopDir.In) ?? tree.roots[0] ?? null;
+}
+
+/** Database and cache call counts of the whole request: totals where reported, records otherwise. */
+export function storeCallCounts(tree: RequestTree): { db: number; cache: number } {
+  let db = 0;
+  let cache = 0;
+  for (const h of tree.hops) {
+    if (h.dir !== HopDir.In) continue;
+    const kids = h.children.filter((c) => c.isStore);
+    db += h.totals ? h.totals.dbCalls : kids.filter((c) => c.via === Via.Db).length;
+    cache += h.totals ? h.totals.cacheCalls : kids.filter((c) => c.via === Via.Cache).length;
+  }
+  // Data-store hops whose inbound hop is missing still count once each.
+  for (const h of tree.hops) {
+    if (!h.isStore) continue;
+    const parent = h.parentHop ? tree.hops.find((p) => p.hopId === h.parentHop) : undefined;
+    if (parent && parent.dir === HopDir.In) continue;
+    if (h.via === Via.Db) db++;
+    else cache++;
+  }
+  return { db, cache };
+}
+
+/** True when the hop failed: an error outcome or a 5xx status. */
+export function isFailed(hop: Hop): boolean {
+  return hop.outcome === Outcome.Error || (hop.status !== null && hop.status >= 500);
+}
