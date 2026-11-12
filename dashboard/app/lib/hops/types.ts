@@ -117,6 +117,10 @@ export interface HopRecord {
   method: string | null;
   op: string | null;
   peer: string | null;
+  /** SQL data-store hops: the table the statement acts on (spec 13.2, STM-5), when recorded. */
+  table: string | null;
+  /** SQL data-store hops: the statement's shape, values replaced by `?` (STM-3, STM-4). */
+  stmt: string | null;
   attempt: number | null;
   outcome: Outcome | null;
   status: number | null;
@@ -172,6 +176,9 @@ export interface Hop {
   method: string | null;
   op: string | null;
   peer: string | null;
+  /** SQL data-store hops (spec 13.2): table and statement shape, when recorded. */
+  table: string | null;
+  stmt: string | null;
   parentHop: HopId | null;
   parentId: string | null;
   hopSent: boolean | null;

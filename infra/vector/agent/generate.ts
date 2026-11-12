@@ -19,7 +19,9 @@ snap.version = "test";
 snap.project = { ...snap.project, named_fields: false };
 const muted = Object.fromEntries(FEATURES.map((f) => [f, f !== "hops" && f !== "named_fields"])) as Record<Feature, boolean>;
 const noLogs = Object.fromEntries(FEATURES.map((f) => [f, f !== "logs" && f !== "named_fields" && f !== "stores"])) as Record<Feature, boolean>;
-snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs };
+// Query text off for one service (BAC-51); everything else as the project.
+const noQuery = { ...snap.project, statements: false } as Record<Feature, boolean>;
+snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs, "svc-no-query": noQuery };
 snap.patterns = [...snap.patterns, { name: "member", pattern: "MBR-\\d{6}", replacement: "[filtered]" }, { name: "end", pattern: "secret-tail$", replacement: "[filtered]" }];
 writeFileSync(join(out, "controls.yaml"), controlsTransformYaml(snap));
 console.log(`wrote ${out}`);

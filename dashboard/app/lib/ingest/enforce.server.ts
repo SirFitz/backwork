@@ -16,6 +16,7 @@ import {
   type CompiledFilter,
   type ControlRow,
 } from "~/lib/controls.server";
+import { STATEMENT_FIELDS, StatementField, splitStatement } from "~/lib/hops/stmt";
 
 export const LineKind = { Log: "log", Hop: "hop", Link: "link" } as const;
 export type LineKind = (typeof LineKind)[keyof typeof LineKind];
@@ -41,10 +42,13 @@ function isObject(v: unknown): v is Fields {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Parse space-separated key=value pairs (values may be double-quoted). */
-export function parseKeyValue(line: string): Fields {
+/** Parse space-separated key=value pairs (values may be double-quoted). `stmt` is read first:
+ *  everything after ` stmt=` to the end of the line (spec HOP-14), so nothing inside it is a pair. */
+export function parseKeyValue(full: string): Fields {
   const out: Fields = {};
+  const { head: line, stmt } = splitStatement(full);
   const re = /([^\s=]+)=("(?:[^"\\]|\\.)*"|\S*)/g;
+  if (stmt !== null) out[StatementField.Stmt] = stmt;
   for (const m of line.matchAll(re)) {
     const v = m[2];
     out[m[1]] = v.startsWith('"') && v.endsWith('"') && v.length >= 2 ? v.slice(1, -1) : v;
@@ -93,10 +97,24 @@ export function classifyLine(raw: string): Classified {
   return { kind, format, box, fields };
 }
 
-/** Remove named fields and/or store totals from a hop record's raw line. */
-export function stripHopFields(raw: string, c: Classified, dropNamed: boolean, dropStores: boolean): string {
-  if (!dropNamed && !dropStores) return raw;
-  const drop = (k: string): boolean => (dropNamed && k.startsWith("f_")) || (dropStores && STORE_TOTALS.has(k));
+/** What to remove from a hop record before it is saved. */
+export interface HopStrip {
+  /** `f_` named fields (Named fields off). */
+  named: boolean;
+  /** Data-store totals (Database and cache off). */
+  stores: boolean;
+  /** `table` and `stmt` (Query text off, design 21). */
+  statements: boolean;
+}
+
+const STATEMENT_KEYS: ReadonlySet<string> = new Set(STATEMENT_FIELDS);
+
+/** Remove named fields, store totals and/or the statement fields from a hop record's raw line. */
+export function stripHopFields(raw: string, c: Classified, strip: HopStrip): string {
+  const { named: dropNamed, stores: dropStores, statements: dropStatements } = strip;
+  if (!dropNamed && !dropStores && !dropStatements) return raw;
+  const drop = (k: string): boolean =>
+    (dropNamed && k.startsWith("f_")) || (dropStores && STORE_TOTALS.has(k)) || (dropStatements && STATEMENT_KEYS.has(k));
   if (c.format === "json") {
     try {
       const obj = JSON.parse(raw) as Fields;
@@ -107,10 +125,13 @@ export function stripHopFields(raw: string, c: Classified, dropNamed: boolean, d
       return raw;
     }
   }
-  let out = raw;
+  // Only the pairs before stmt are edited; stmt is kept whole or removed whole.
+  const { head, stmt } = splitStatement(raw);
+  let out = head;
   if (dropNamed) out = out.replace(/ f_[a-z0-9_]+=\S*/g, "");
   if (dropStores) out = out.replace(/ (?:db|cache)_(?:n|us)=\S*/g, "");
-  return out;
+  if (dropStatements) out = out.replace(/ table=\S*/g, "");
+  return stmt === null || dropStatements ? out : `${out} stmt=${stmt}`;
 }
 
 export interface LokiStream {
@@ -171,7 +192,9 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
         dropped++;
         continue;
       }
-      if (c.kind === LineKind.Hop) raw = stripHopFields(raw, c, !on[Feature.NamedFields], !on[Feature.Stores]);
+      if (c.kind === LineKind.Hop) {
+        raw = stripHopFields(raw, c, { named: !on[Feature.NamedFields], stores: !on[Feature.Stores], statements: !on[Feature.Statements] });
+      }
       let out: string;
       if (envelope) {
         const display = typeof envelope.display === "string" ? envelope.display : null;

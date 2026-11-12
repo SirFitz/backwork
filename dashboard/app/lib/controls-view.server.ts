@@ -32,6 +32,7 @@ export const COLLECTED: readonly Feature[] = [
   Feature.Hops,
   Feature.Stores,
   Feature.NamedFields,
+  Feature.Statements,
   Feature.LinkedIds,
   Feature.Metrics,
 ];
@@ -42,6 +43,7 @@ export const FEATURE_MEANING: Record<Feature, string> = {
   [Feature.Hops]: "The path and timing of every request.",
   [Feature.Stores]: "Time spent in each data store.",
   [Feature.NamedFields]: "Fields a developer attached to a request.",
+  [Feature.Statements]: "The table and the shape of each database query, values removed.",
   [Feature.LinkedIds]: "Order numbers and provider references.",
   [Feature.Metrics]: "Rate, errors and latency.",
   [Feature.Filter]: "Replaces sensitive values with [filtered].",
@@ -53,6 +55,7 @@ export const GRID_HEAD: Record<Feature, string> = {
   [Feature.Hops]: "Hop records",
   [Feature.Stores]: "Database and cache",
   [Feature.NamedFields]: "Named fields",
+  [Feature.Statements]: "Query text",
   [Feature.LinkedIds]: "Linked IDs",
   [Feature.Metrics]: "Figures",
   [Feature.Filter]: "Filter",

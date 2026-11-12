@@ -44,16 +44,57 @@ describe("classifyLine", () => {
 describe("stripHopFields", () => {
   test("kv named fields and totals", () => {
     const c = classifyLine(KV_END);
-    expect(stripHopFields(KV_END, c, true, false)).not.toContain("f_order_id");
-    expect(stripHopFields(KV_END, c, false, true)).not.toContain("db_n=");
-    expect(stripHopFields(KV_END, c, false, true)).toContain("f_order_id=7731");
+    expect(stripHopFields(KV_END, c, { named: true, stores: false, statements: false })).not.toContain("f_order_id");
+    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false })).not.toContain("db_n=");
+    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false })).toContain("f_order_id=7731");
   });
   test("nested json", () => {
     const c = classifyLine(JSON_NESTED_END);
-    const out = JSON.parse(stripHopFields(JSON_NESTED_END, c, true, true)) as { metadata: Record<string, unknown> };
+    const out = JSON.parse(stripHopFields(JSON_NESTED_END, c, { named: true, stores: true, statements: false })) as { metadata: Record<string, unknown> };
     expect(out.metadata.f_currency).toBeUndefined();
     expect(out.metadata.cache_n).toBeUndefined();
     expect(out.metadata.hop_id).toBe("a7d03b5e9c2f4816");
+  });
+});
+
+const KV_DB = `trace_id=${T} hop=out_end hop_id=83c2d1907ae45b16 parent_hop=1f0a6c2e9b7d4405 hop_sent=false parent_id=b7ad6b7169203331 service=commerce-api adapter=ecto via=db op=select table=merchants peer=db.internal outcome=ok duration_us=15200 stmt=select a, f_x=? from merchants where status=? and email = ? limit ?`;
+const JSON_DB = JSON.stringify({ trace_id: T, hop: "out_end", hop_id: "93c2d1907ae45b16", parent_hop: "1f0a6c2e9b7d4405", hop_sent: false, parent_id: "b7ad6b7169203331", adapter: "pg", via: "db", op: "insert", table: "charges", peer: "payments-db", outcome: "ok", duration_us: 2300, stmt: "insert into charges (id, amount) values (?)", msg: "hop" });
+
+describe("statement fields (BAC-51)", () => {
+  test("stmt is read first: text inside it is not a field", () => {
+    const c = classifyLine(KV_DB);
+    expect(c.fields.stmt).toBe("select a, f_x=? from merchants where status=? and email = ? limit ?");
+    expect(c.fields.status).toBeUndefined();
+    expect(c.fields.table).toBe("merchants");
+  });
+  test("named fields off never edits inside stmt", () => {
+    const out = stripHopFields(KV_DB, classifyLine(KV_DB), { named: true, stores: true, statements: false });
+    expect(out).toBe(KV_DB);
+  });
+  test("query text off removes table and stmt, kv and json, the rest unchanged", () => {
+    const kv = stripHopFields(KV_DB, classifyLine(KV_DB), { named: false, stores: false, statements: true });
+    expect(kv).toBe(KV_DB.replace(" table=merchants", "").replace(/ stmt=.*$/, ""));
+    const js = JSON.parse(stripHopFields(JSON_DB, classifyLine(JSON_DB), { named: false, stores: false, statements: true })) as Record<string, unknown>;
+    expect(js.table).toBeUndefined();
+    expect(js.stmt).toBeUndefined();
+    expect(js.op).toBe("insert");
+    expect(js.duration_us).toBe(2300);
+  });
+  test("enforceStreams: query text off for one service, on elsewhere; filter runs over stmt", () => {
+    const rows = [off(Feature.Statements, { projectId: "p", service: "svc-quiet" })];
+    const quiet = enforceStreams(push([env(KV_DB)], { service: "svc-quiet" }), { projectId: "p", rows, filter });
+    expect(lines(quiet)[0].message).not.toContain("stmt=");
+    expect(lines(quiet)[0].message).not.toContain("table=");
+    const loud = enforceStreams(push([env(KV_DB.replace("limit ?", "limit ? -- jane@example.com"))]), { projectId: "p", rows, filter });
+    const m = lines(loud)[0].message;
+    expect(m).toContain("table=merchants");
+    expect(m).toContain("stmt=select a, f_x=? from merchants");
+    expect(m).not.toContain("jane@example.com");
+  });
+  test("query text off at the organisation wins over nothing set below", () => {
+    const rows = [off(Feature.Statements)];
+    const r = enforceStreams(push([env(KV_DB)]), { projectId: "p", rows, filter });
+    expect(lines(r)[0].message).not.toContain("stmt=");
   });
 });
 
