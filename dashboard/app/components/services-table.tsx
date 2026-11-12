@@ -85,12 +85,12 @@ export function ServicesTable({
         <thead>
           <tr>
             <Th>Service</Th>
-            <Th num>Req/s</Th>
+            <Th num className={compact ? "hidden sm:table-cell" : undefined}>Req/s</Th>
             <Th num>Errors</Th>
             {compact ? null : <Th num className="hidden md:table-cell">p50</Th>}
             <Th num>p95</Th>
             <Th num className="hidden sm:table-cell">p99</Th>
-            <Th num>{compact ? "Time in databases" : "DB + cache"}</Th>
+            <Th num className={compact ? "hidden sm:table-cell" : undefined}>{compact ? "Time in databases" : "DB + cache"}</Th>
             {compact ? null : <Th num className="hidden lg:table-cell">p95 trend</Th>}
             {compact ? null : <Th num className="hidden md:table-cell">In progress</Th>}
           </tr>
@@ -113,12 +113,12 @@ export function ServicesTable({
                     {s.service}
                   </Link>
                 </td>
-                <td className={cn(TD, NUM)}>{fmtRate(s.rate)}</td>
+                <td className={cn(TD, NUM, compact && "hidden sm:table-cell")}>{fmtRate(s.rate)}</td>
                 <td className={cn(TD, NUM, errorTone(s.errorShare))}>{fmtShare(s.errorShare)}</td>
                 {compact ? null : <td className={cn(TD, NUM, "hidden md:table-cell")}>{fmtLatency(s.p50)}</td>}
                 <td className={cn(TD, NUM)}>{fmtLatency(s.p95)}</td>
                 <td className={cn(TD, NUM, "hidden sm:table-cell", latencyTone(s.p99, waited))}>{fmtLatency(s.p99)}</td>
-                <td className={cn(TD, NUM)} title={s.storeCallsPerRequest !== null ? `${s.storeCallsPerRequest.toFixed(1)} data-store calls per request` : undefined}>
+                <td className={cn(TD, NUM, compact && "hidden sm:table-cell")} title={s.storeCallsPerRequest !== null ? `${s.storeCallsPerRequest.toFixed(1)} data-store calls per request` : undefined}>
                   {s.storeShare === null ? "—" : fmtShare(s.storeShare, 0)}
                 </td>
                 {compact ? null : (
