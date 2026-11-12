@@ -13,8 +13,9 @@ import {
   type StoreTotals,
   type TraceId,
   type TraceLogLine,
-  type Via,
+  Via,
 } from "./types";
+import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
 export interface RawLogEntry {
@@ -119,9 +120,14 @@ function bagFromJson(obj: Record<string, unknown>): Map<string, Scalar> {
   return bag;
 }
 
-/** `key=value` pairs separated by spaces; other words (a timestamp, a level) are skipped. */
-function bagFromKeyValue(text: string): Map<string, Scalar> {
+/** `key=value` pairs separated by spaces; other words (a timestamp, a level) are skipped.
+ *  `stmt` is read first: everything after ` stmt=` to the end of the line (spec HOP-14). */
+function bagFromKeyValue(line: string): Map<string, Scalar> {
   const bag = new Map<string, Scalar>();
+  const split = splitStatement(line);
+  const text = recordPairs(split.head);
+  const stmt = split.stmt;
+  if (stmt !== null) bag.set(StatementField.Stmt, stmt);
   let i = 0;
   const n = text.length;
   while (i < n) {
@@ -219,6 +225,18 @@ function namedFieldsOf(bag: FieldBag): NamedField[] {
   return out;
 }
 
+/** `table` (STM-5, HOP-12); null when absent or out of bounds. */
+function tableOf(bag: FieldBag): string | null {
+  const v = bag.get(StatementField.Table);
+  return isTableName(v) ? v : null;
+}
+
+/** `stmt` (STM-4); null when absent or out of bounds. */
+function stmtOf(bag: FieldBag): string | null {
+  const v = bag.get(StatementField.Stmt);
+  return isStatement(v) ? v : null;
+}
+
 function serviceOf(entry: RawLogEntry, bag: FieldBag): string {
   // The record's own service field wins: it is the name the developer set and the one that
   // travels between hops (BAC-49, live data 2026-11-12). The collector's label is the fallback.
@@ -294,6 +312,8 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     method: str(bag, "method"),
     op: str(bag, "op"),
     peer: isOut ? str(bag, "peer") : null,
+    table: via === Via.Db && isOut ? tableOf(bag) : null,
+    stmt: via === Via.Db && isOut ? stmtOf(bag) : null,
     attempt: isOut ? null : int(bag, "attempt", 1, 1_000_000),
     outcome: isEnd ? outcome : null,
     status: isEnd ? int(bag, "status", 100, 999) : null,

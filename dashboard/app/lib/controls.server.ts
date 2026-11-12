@@ -40,6 +40,8 @@ export const Feature = {
   Stores: "stores",
   /** The `f_` named fields on hop records. */
   NamedFields: "named_fields",
+  /** `table` and `stmt` on database hop records (spec 13.2, design 21). */
+  Statements: "statements",
   /** Link lines (linked IDs). */
   LinkedIds: "linked_ids",
   /** The hop metrics (`backwork_hop_*`). */
@@ -61,6 +63,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   hops: "Hop records",
   stores: "Database and cache calls",
   named_fields: "Named fields",
+  statements: "Query text",
   linked_ids: "Linked IDs",
   metrics: "Performance figures",
   filter: "Sensitive-data filter",
@@ -72,6 +75,7 @@ export const FEATURE_EFFECT: Record<Feature, string> = {
   hops: 'Hop records are no longer saved; the request view and the Performance page stop for this scope.',
   stores: "Database and cache call records and their totals are no longer saved.",
   named_fields: "The named fields (f_ fields) on hop records are removed before saving.",
+  statements: "The table and the statement shape (table, stmt) on database hop records are removed before saving.",
   linked_ids: "Link lines are no longer saved.",
   metrics: "Hop metrics are no longer saved.",
   filter: "Sensitive values are no longer replaced with [filtered].",

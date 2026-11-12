@@ -52,6 +52,8 @@ export interface HopRecord {
   via: Via;
   method?: string;
   op?: string;
+  /** SQL data-store end records: the table (spec 0.9, section 13.2). */
+  table?: string;
   peer?: string;
   attempt?: number;
   outcome?: Outcome;
@@ -64,6 +66,8 @@ export interface HopRecord {
   cache_us?: number;
   /** f_{name} named fields, in insertion order. */
   fields?: Record<string, string>;
+  /** SQL data-store end records: the statement shape, always written last (spec HOP-14, 13.2). */
+  stmt?: string;
 }
 
 export interface LinkLine {
@@ -83,7 +87,7 @@ export type Emission =
 
 const FIELD_ORDER: readonly (keyof HopRecord)[] = [
   "trace_id", "hop", "hop_id", "parent_hop", "hop_sent", "tracer", "parent_id", "service", "adapter", "via",
-  "method", "op", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
+  "method", "op", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
 ];
 
 /** Ordered [key, value] pairs of a record, exactly as HOP-8/HOP-14 list them. */
@@ -95,6 +99,7 @@ export function recordPairs(rec: HopRecord): [string, string | number | boolean]
     out.push([k, v as string | number | boolean]);
   }
   for (const [n, v] of Object.entries(rec.fields ?? {})) out.push([`f_${n}`, v]);
+  if (rec.stmt !== undefined) out.push(["stmt", rec.stmt]);
   return out;
 }
 
@@ -150,6 +155,7 @@ export const FRAME_HEALTHY: HealthyIds = {
   apiIn: "1f0a6c2e9b7d4405", apiOutRisk: "2c51e8a04f9b7d13", riskIn: "a7d03b5e9c2f4816", riskCache: "e19c4d72b05a3f68",
   apiOutPay: "83c2d1907ae45b16", payIn: "5d9e0b3347c1a2f8", payDb1: "b6f20e9d41c7a385", payOutAcq: "4e8a1c73d0b25f96",
   payDb2: "d3071fa5c8e29b40", apiDb: "7b4e92c0a1d5f836", apiOutJob: "0f6d3a8e5b2c7419", workerIn: "c82a5f1e93d047b6",
+  apiDbMerchant: "3a9d5e1c7f2b4068",
 };
 
 export function randomHealthyIds(): HealthyIds {
@@ -157,6 +163,7 @@ export function randomHealthyIds(): HealthyIds {
     trace: hex(16), parentId: hex(8),
     apiIn: hex(8), apiOutRisk: hex(8), riskIn: hex(8), riskCache: hex(8), apiOutPay: hex(8), payIn: hex(8),
     payDb1: hex(8), payOutAcq: hex(8), payDb2: hex(8), apiDb: hex(8), apiOutJob: hex(8), workerIn: hex(8),
+    apiDbMerchant: hex(8),
   };
 }
 
@@ -174,10 +181,13 @@ export function healthyOrder(id: HealthyIds, opts: { status?: number; orderId?: 
   const riskCache: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.riskCache, parent_hop: id.riskIn, hop_sent: false, parent_id: pid, service: R, adapter: "ioredis", via: "cache", op: "get", peer: "redis.internal", outcome: "ok", duration_us: 400 };
   const outPay: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutPay, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "finch", via: "http", method: "POST", peer: "payments.internal" };
   const payIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.payIn, parent_hop: id.apiOutPay, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/charges" };
-  const payDb1: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.payDb1, parent_hop: id.payIn, hop_sent: false, parent_id: pid, service: P, adapter: "postgres", via: "db", op: "select", peer: "payments-db", outcome: "ok", duration_us: 1200 };
+  // Statement fields as spec 0.9 section 13.2 writes them; payDb1's statement holds `status=?`, which must stay inside stmt.
+  const payDb1: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.payDb1, parent_hop: id.payIn, hop_sent: false, parent_id: pid, service: P, adapter: "postgres", via: "db", op: "select", table: "charges", peer: "payments-db", outcome: "ok", duration_us: 1200, stmt: "select c0.id, c0.status from charges as c0 where (c0.order_id = ?) and status=? limit ?" };
   const outAcq: HopRecord = { trace_id: t, hop: "out", hop_id: id.payOutAcq, parent_hop: id.payIn, hop_sent: true, parent_id: pid, service: P, adapter: "fetch", via: "http", method: "POST", peer: "acquirer.example" };
-  const payDb2: HopRecord = { ...payDb1, hop_id: id.payDb2, op: "insert", duration_us: 2300 };
-  const apiDb: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.apiDb, parent_hop: id.apiIn, hop_sent: false, parent_id: pid, service: A, adapter: "ecto", via: "db", op: "insert", peer: "orders-db", outcome: "ok", duration_us: 3800 };
+  const payDb2: HopRecord = { ...payDb1, hop_id: id.payDb2, op: "insert", duration_us: 2300, stmt: "insert into charges (order_id, amount, currency, status) values (?) returning id" };
+  // The spec's example statement (section 13.2), from Ecto.
+  const apiDbMerchant: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.apiDbMerchant, parent_hop: id.apiIn, hop_sent: false, parent_id: pid, service: A, adapter: "ecto", via: "db", op: "select", table: "merchants", peer: "orders-db", outcome: "ok", duration_us: 2600, stmt: "select ... from merchants as m0 where (m0.username = ?) limit ?" };
+  const apiDb: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.apiDb, parent_hop: id.apiIn, hop_sent: false, parent_id: pid, service: A, adapter: "ecto", via: "db", op: "insert", table: "orders", peer: "orders-db", outcome: "ok", duration_us: 3800, stmt: "insert into orders (merchant_id, total, currency, inserted_at, updated_at) values (?) returning id" };
   const outJob: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutJob, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "oban", via: "job", op: "Receipts.SendEmail", peer: "receipts" };
   const workerIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.workerIn, parent_hop: id.apiOutJob, parent_id: pid, service: W, adapter: "oban", via: "job", op: "Receipts.SendEmail", attempt: 1 };
   const end = (r: HopRecord, x: Partial<HopRecord>): HopRecord => ({ ...r, hop: r.hop === "in" ? "in_end" : "out_end", outcome: "ok", ...x });
@@ -185,6 +195,7 @@ export function healthyOrder(id: HealthyIds, opts: { status?: number; orderId?: 
   return [
     { at: 0, service: A, kind: "hop", rec: apiIn },
     { at: 1, service: A, kind: "log", level: "info", msg: "order received", trace_id: t },
+    { at: 2.9, service: A, kind: "hop", rec: apiDbMerchant },
     { at: 3.1, service: A, kind: "hop", rec: outRisk },
     { at: 3.4, service: R, kind: "hop", rec: riskIn },
     { at: 4.3, service: R, kind: "hop", rec: riskCache },
@@ -211,7 +222,7 @@ export function healthyOrder(id: HealthyIds, opts: { status?: number; orderId?: 
       { at: 51.4, service: A, kind: "hop", rec: apiDb } as Emission,
       { at: 52.0, service: A, kind: "hop", rec: outJob } as Emission,
       { at: 53.1, service: A, kind: "hop", rec: end(outJob, { duration_us: 1100 }) } as Emission,
-      { at: 61.2, service: A, kind: "hop", rec: end(apiIn, { status, duration_us: 61200, db_n: 1, db_us: 3800 }) } as Emission,
+      { at: 61.2, service: A, kind: "hop", rec: end(apiIn, { status, duration_us: 61200, db_n: 2, db_us: 6400 }) } as Emission,
       { at: 2353, service: W, kind: "hop", rec: workerIn } as Emission,
       { at: 2500, service: W, kind: "log", level: "info", msg: "receipt email queued for delivery", trace_id: t } as Emission,
       { at: 2765, service: W, kind: "hop", rec: end(workerIn, { duration_us: 412000 }) } as Emission,
@@ -244,7 +255,7 @@ export function stalledPayout(id: StalledIds): Emission[] {
   const apiIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.apiIn, parent_id: pid, service: A, adapter: "phoenix", via: "http", method: "POST", op: "/payouts/:id/release" };
   const outPay: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutPay, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "finch", via: "http", method: "POST", peer: "payments.internal" };
   const payIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.payIn, parent_hop: id.apiOutPay, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/transfers" };
-  const payDb: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.payDb, parent_hop: id.payIn, hop_sent: false, parent_id: pid, service: P, adapter: "postgres", via: "db", op: "select", peer: "payments-db", outcome: "ok", duration_us: 2100 };
+  const payDb: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.payDb, parent_hop: id.payIn, hop_sent: false, parent_id: pid, service: P, adapter: "postgres", via: "db", op: "select", table: "transfers", peer: "payments-db", outcome: "ok", duration_us: 2100, stmt: "select t0.id, t0.amount, t0.status from transfers as t0 where (t0.payout_id = ?) for update" };
   const outBank: HopRecord = { trace_id: t, hop: "out", hop_id: id.payOutBank, parent_hop: id.payIn, hop_sent: true, parent_id: pid, service: P, adapter: "fetch", via: "http", method: "POST", peer: "bank-gw.internal" };
   const outJob: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutJob, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "oban", via: "job", op: "Notifications.PayoutDelayed", peer: "notifications" };
   return [
@@ -335,6 +346,7 @@ export function seededHealthyIds(seed: number): HealthyIds {
     apiIn: h("apiIn", 8), apiOutRisk: h("apiOutRisk", 8), riskIn: h("riskIn", 8), riskCache: h("riskCache", 8),
     apiOutPay: h("apiOutPay", 8), payIn: h("payIn", 8), payDb1: h("payDb1", 8), payOutAcq: h("payOutAcq", 8),
     payDb2: h("payDb2", 8), apiDb: h("apiDb", 8), apiOutJob: h("apiOutJob", 8), workerIn: h("workerIn", 8),
+    apiDbMerchant: h("apiDbMerchant", 8),
   };
 }
 

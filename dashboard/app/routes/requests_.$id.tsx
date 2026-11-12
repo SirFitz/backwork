@@ -15,6 +15,7 @@ import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
+import { sharedDatabaseHost, storeLabel } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
@@ -184,8 +185,8 @@ function noteOf(hop: Hop): string {
 
 // ---------------------------------------------------------------- shared bits
 
-function Mono({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={cn("font-mono tabular-nums", className)}>{children}</span>;
+function Mono({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
+  return <span className={cn("font-mono tabular-nums", className)} title={title}>{children}</span>;
 }
 
 function Dot({ colour }: { colour: string }) {
@@ -604,6 +605,7 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
     }
   };
   for (const r of ctx.tree.roots) pushHop(r, 0);
+  const dbHost = sharedDatabaseHost(ctx.tree.hops);
   return (
     <Card className="relative">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -615,6 +617,9 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
           {ctx.tree.services.map((s) => (
             <span key={s} className="inline-flex items-center gap-1.5"><Dot colour={ctx.colours.get(s) as string} />{s}</span>
           ))}
+          {dbHost ? (
+            <span className="inline-flex min-w-0 items-center gap-1.5"><Database className="h-3 w-3 shrink-0 text-faint" /><span>database</span><Mono className="min-w-0 truncate text-fg">{dbHost}</Mono></span>
+          ) : null}
           {anyOpen ? (
             <>
               <span className="inline-flex items-center gap-1.5"><i className="inline-block h-2 w-[18px] rounded-sm bg-muted" />finished</span>
@@ -651,18 +656,21 @@ function GapRow({ depth, title, text, note = false, icon }: { depth: number; tit
 }
 
 function HopText({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
-  const method = hop.isStore ? hop.op : hop.method;
-  const label = hop.dir === HopDir.In ? hop.op ?? hop.via : hop.isStore ? hop.peer ?? hop.via : outLabel(hop);
+  const method = hop.isStore ? null : hop.method;
+  const label = hop.dir === HopDir.In ? hop.op ?? hop.via : hop.isStore ? storeLabel(hop) : outLabel(hop);
   return (
     <>
       <IoTag dir={hop.dir} />
       <Dot colour={ctx.colours.get(hop.service) as string} />
       {hop.dir === HopDir.In ? <b className="shrink-0 font-semibold">{hop.service}</b> : null}
       {hop.isStore ? storeIcon(hop.via, "h-[13px] w-[13px] shrink-0 text-faint") : null}
-      <Mono className="min-w-0 truncate text-[12.5px]">
+      <Mono className={cn("min-w-0 truncate text-[12.5px]", hop.stmt && "shrink-0")}>
         {method ? <span className="font-medium text-faint">{method} </span> : null}
         {label}
       </Mono>
+      {hop.stmt ? (
+        <Mono className="min-w-0 truncate text-[12px] text-faint" title={hop.stmt}>{hop.stmt}</Mono>
+      ) : null}
     </>
   );
 }
@@ -701,10 +709,13 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
           <Dot colour={colour} />
           <span className="min-w-0 [overflow-wrap:anywhere]">
             {hop.dir === HopDir.In ? <b className="font-semibold">{hop.service} </b> : null}
-            <Mono className="text-xs">{hop.isStore ? `${hop.op ?? ""} ${hop.peer ?? ""}`.trim() : `${hop.method ? `${hop.method} ` : ""}${hop.dir === HopDir.In ? hop.op ?? hop.via : outLabel(hop)}`}</Mono>
+            <Mono className="text-xs">{hop.isStore ? storeLabel(hop) : `${hop.method ? `${hop.method} ` : ""}${hop.dir === HopDir.In ? hop.op ?? hop.via : outLabel(hop)}`}</Mono>
           </span>
           {status.text === "stopped here" ? <span className="ml-auto shrink-0"><Badge tone="err">stopped here</Badge></span> : null}
         </div>
+        {hop.stmt ? (
+          <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt}>{hop.stmt}</div>
+        ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
           {[hop.via, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), tookText(hop, ctx.now)].filter(Boolean).join(" · ")}
         </div>
@@ -722,6 +733,10 @@ function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }
     ["Started", <Clock key="s" ts={hop.startMs} />],
     ["Ended", hop.endMs !== null ? <Clock key="e" ts={hop.endMs} /> : "no end record"],
   ];
+  if (hop.isStore && hop.via === Via.Db) {
+    if (hop.peer) facts.push(["Database", hop.peer]);
+    if (hop.table) facts.push(["Table", hop.table]);
+  }
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
   const storeChip = hop.totals && (hop.totals.dbCalls || hop.totals.cacheCalls)
@@ -742,6 +757,12 @@ function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11.5px] text-muted">
           {facts.map(([k, v]) => <span key={k} className="min-w-0"><em className="not-italic text-faint">{k}</em> <Mono className="font-medium text-fg [overflow-wrap:anywhere]">{v}</Mono></span>)}
         </div>
+        {hop.stmt ? (
+          <div className="mt-2.5">
+            <div className="text-[11.5px] text-faint">Statement <span className="text-faint/80">(values replaced by ?)</span></div>
+            <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-border bg-bg px-3 py-2 font-mono text-xs leading-relaxed text-fg [overflow-wrap:anywhere]">{hop.stmt}</pre>
+          </div>
+        ) : null}
         {hasFields ? (
           <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
             <span className="mr-0.5 text-[11.5px] text-faint">Fields</span>

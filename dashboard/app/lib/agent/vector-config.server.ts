@@ -131,7 +131,24 @@ if is_object(bw_json) {
   }
 } else if contains(bw_raw, "trace_id=") {
   bw_fmt = "kv"
-  bw_src = parse_key_value(bw_raw, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+  # stmt is the last pair and runs to the end of the line, spaces included (spec HOP-14, 13.2):
+  # split it off first, so text inside it never becomes a field.
+  bw_kvp = parse_regex(bw_raw, r'^(?P<head>.*?)(?: stmt=(?P<stmt>.*))?$') ?? {}
+  bw_kvh = to_string(get(bw_kvp, ["head"]) ?? bw_raw) ?? bw_raw
+  # A host's log format may print trace_id (and more) in front of the message too: read the
+  # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
+  bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$') ?? {}
+  bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
+  bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+  # A key repeated with equal values is read once; differing values stay a list (not a record).
+  bw_src = map_values(bw_src) -> |v| {
+    if is_array(v) {
+      bw_u = unique(array!(v))
+      if length(bw_u) == 1 { bw_u[0] } else { v }
+    } else { v }
+  }
+  bw_kvs = get(bw_kvp, ["stmt"]) ?? null
+  if bw_kvs != null { bw_src = set(bw_src, ["stmt"], bw_kvs) ?? bw_src }
 }
 bw_tid = to_string(get(bw_src, ["trace_id"]) ?? "") ?? ""
 if match(bw_tid, r'^[0-9a-f]{32}$') {
@@ -243,7 +260,11 @@ const sw = (f: Feature): string => `bw_on_${f}`;
 
 /** Design 19: switches and filter, as one remap program for one project. */
 export function controlsVrl(snap: ControlsSnapshot): string {
-  const lines: string[] = [`# backwork switches and sensitive-data filter (design 19). Version ${snap.version.replace(/[^a-z0-9]/gi, "")}.`, NAMING_VRL.trimEnd()];
+  const lines: string[] = [
+    `# backwork switches and sensitive-data filter (design 19). Version ${snap.version.replace(/[^a-z0-9]/gi, "")}.`,
+    REDETECT_VRL.trimEnd(),
+    NAMING_VRL.trimEnd(),
+  ];
   for (const f of FEATURES) lines.push(`${sw(f)} = ${snap.project[f] ? "true" : "false"}`);
   const overrides = Object.entries(snap.services).filter(([, eff]) => FEATURES.some((f) => eff[f] !== snap.project[f]));
   if (overrides.length > 0) lines.push(`bw_svc = to_string(.service) ?? ""`);
@@ -265,18 +286,29 @@ if bw_type == "hop" && (bw_via == "db" || bw_via == "cache") && !${sw("stores")}
 %bw_stores = ${sw("stores")}
 bw_drop_f = !${sw("named_fields")}
 bw_drop_s = !${sw("stores")}
-if bw_type == "hop" && (bw_drop_f || bw_drop_s) {
+bw_drop_q = !${sw("statements")}
+if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q) {
   if (to_string(%bw_fmt) ?? "") == "json" {
     bw_o = object(parse_json(to_string(.message) ?? "") ?? {}) ?? {}
     bw_box = to_string(%bw_box) ?? ""
     bw_c = bw_o
     if bw_box != "" { bw_c = object(get(bw_o, [bw_box]) ?? {}) ?? {} }
-    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k))) }
+    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k)) || (bw_drop_q && includes(["table", "stmt"], k))) }
     if bw_box == "" { bw_o = bw_c } else { bw_o = set(bw_o, [bw_box], bw_c) ?? bw_o }
     .message = encode_json(bw_o)
   } else {
-    if bw_drop_f { .message = replace(to_string(.message) ?? "", r' f_[a-z0-9_]+=\\S*', "") }
-    if bw_drop_s { .message = replace(to_string(.message) ?? "", r' (?:db|cache)_(?:n|us)=\\S*', "") }
+    # Only the pairs before stmt are edited; stmt is removed whole (Query text off) or kept as is.
+    bw_line = to_string(.message) ?? ""
+    bw_lp = parse_regex(bw_line, r'^(?P<head>.*?)(?P<tail> stmt=.*)?$') ?? {}
+    bw_head = to_string(get(bw_lp, ["head"]) ?? bw_line) ?? bw_line
+    bw_tail = to_string(get(bw_lp, ["tail"]) ?? "") ?? ""
+    if bw_drop_f { bw_head = replace(bw_head, r' f_[a-z0-9_]+=\\S*', "") }
+    if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us)=\\S*', "") }
+    if bw_drop_q {
+      bw_head = replace(bw_head, r' table=\\S*', "")
+      bw_tail = ""
+    }
+    .message = bw_head + bw_tail
     .display = .message
   }
 }`);
@@ -292,6 +324,19 @@ if bw_type == "hop" && (bw_drop_f || bw_drop_s) {
   lines.push(SLIM_VRL.trimEnd());
   return lines.join("\n") + "\n";
 }
+
+/**
+ * Detection again, inside the controls program, for lines that may hold a hop record: agents
+ * installed earlier run an older bw_detect (from their agent.yaml) that loses a record over a
+ * repeated key or reads text inside `stmt` as fields. The controls program reaches them through
+ * the poller, so the current rules apply without a reinstall. Detection is idempotent.
+ */
+export const REDETECT_VRL = `# Hop detection with the current rules (repeated keys, stmt read first), for every agent.
+if contains(to_string(.message) ?? "", "trace_id=") {
+  %bw_type = ""
+${DETECT_VRL.trimEnd().split("\n").map((l) => (l ? "  " + l : l)).join("\n")}
+}
+`;
 
 /** First step of bw_controls (so agents installed earlier get it through the controls poller):
  *  a hop record is named by its own service field, the name the developer set and the one that
