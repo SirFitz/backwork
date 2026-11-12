@@ -169,3 +169,29 @@ export const apiKeys = pgTable("api_keys", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ orgIdx: index("api_keys_org_idx").on(t.orgId), hashUniq: uniqueIndex("api_keys_hash_uniq").on(t.keyHash) }));
+
+// Data controls (design 19.1): explicit switch settings. No row = on.
+// project_id null + service null = organisation level.
+export const dataControls = pgTable("data_controls", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  service: text("service"),
+  feature: text("feature").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ orgIdx: index("data_controls_org_idx").on(t.orgId) }));
+
+// Sensitive-data filter patterns (design 19.2). built_in rows only carry the
+// enabled override of a built-in pattern; its regex lives in code.
+export const filterPatterns = pgTable("filter_patterns", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  pattern: text("pattern").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  builtIn: boolean("built_in").notNull().default(false),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ orgNameUniq: uniqueIndex("filter_patterns_org_name_uniq").on(t.orgId, t.name) }));
