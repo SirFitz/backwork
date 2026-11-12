@@ -1,4 +1,4 @@
-// The request view moved to /requests/$id (2026-11-12, stack slimmed: no Jaeger).
+// The request view moved to /requests/$id (2026-11-12, BAC-49): old links redirect.
 // Old links keep working through this redirect, query string included.
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";

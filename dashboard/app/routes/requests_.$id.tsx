@@ -14,12 +14,15 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
+import { calledPeers, peerPairs } from "~/lib/hops/peers";
+import { knownPeersFor } from "~/lib/hops/peers.server";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
-import { cn, fmtClock } from "~/lib/utils";
+import { cn } from "~/lib/utils";
+import { Clock, useHydrated } from "~/components/time";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: `Request ${data?.traceId.slice(0, 8) ?? ""} · backwork.dev` }];
 
-/** A trace ID in the path: up to 32 hex (Jaeger may trim leading zeros), padded to 32. */
+/** A trace ID in the path: up to 32 hex (older links may have trimmed leading zeros), padded to 32. */
 function traceIdFromPath(raw: string | undefined): TraceId | null {
   if (!raw || raw.length > 32) return null;
   const lower = raw.toLowerCase();
@@ -35,9 +38,18 @@ interface Found {
   records: HopRecord[];
   links: LinkedId[];
   window: SearchWindow;
+  /** Peers some service of the organisation has answered as (design 9); null when unknown. */
+  knownPeers: string[] | null;
 }
 
-const toFound = (r: WindowResult): Found | null => (r.found ? { records: r.records, links: r.links, window: r.window } : null);
+/** A found window, with the peers it calls looked up (and the pairs it links saved). */
+function toFound(orgId: string): (r: WindowResult) => Promise<Found | null> {
+  return async (r) => {
+    if (!r.found) return null;
+    const knownPeers = await knownPeersFor(orgId, peerPairs(r.records), calledPeers(r.records));
+    return { records: r.records, links: r.links, window: r.window, knownPeers };
+  };
+}
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -59,18 +71,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!traceId) throw new Response("Not a trace ID", { status: 404 });
 
   const lookup = progressiveLookup(traceId, tenant, now);
+  const found = toFound(ctx.org.id);
   const logs = lookup.retention.then((r) => (r.found ? logLinesFor(traceId, r, tenant, now) : []));
   // Hop records off: the lines alone, grouped by service (design 7.2).
   const onlyLogs = lookup.retention.then((r) => (r.found ? null : logsOnly(traceId, tenant, now)));
   return defer({
     traceId,
-    jaegerId: params.id as string,
     // The original input when it was not the trace ID itself (a request ID, a UUID, a traceparent).
     input: q && q.toLowerCase() !== traceId ? q.slice(0, 200) : null,
     now,
-    hour: settle(lookup.hour.then(toFound)),
-    day: settle(lookup.day.then(toFound)),
-    retention: settle(lookup.retention.then(toFound)),
+    hour: settle(lookup.hour.then(found)),
+    day: settle(lookup.day.then(found)),
+    retention: settle(lookup.retention.then(found)),
     logs: settle(logs),
     onlyLogs: settle(onlyLogs),
   });
@@ -100,11 +112,18 @@ function tookText(hop: Hop, now: number): string {
   return hop.state === HopState.Finished ? (hop.durationUs !== null ? fmtUs(hop.durationUs) : "") : `${fmtUs(elapsedUs(hop, now))} +`;
 }
 
-function dayWord(ts: number, now: number): string {
+function dayWord(ts: number, now: number, local: boolean): string {
   const a = new Date(ts);
   const b = new Date(now);
-  if (a.toDateString() === b.toDateString()) return "today";
-  return a.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const day = (d: Date): string => (local ? d.toDateString() : d.toISOString().slice(0, 10));
+  if (day(a) === day(b)) return "today";
+  return a.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(local ? {} : { timeZone: "UTC" }) });
+}
+
+/** "today" or "12 Nov", in the viewer's zone once hydrated (components/time.tsx). */
+function DayWord({ ts, now }: { ts: number; now: number }) {
+  const local = useHydrated();
+  return <span suppressHydrationWarning>{dayWord(ts, now, local)}</span>;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -158,6 +177,7 @@ function noteOf(hop: Hop): string {
   const parts: string[] = [];
   if (hop.error) parts.push(hop.error);
   if (hop.gaps.some((g) => g.kind === GapKind.NotLinked)) parts.push("outside");
+  if (hop.gaps.some((g) => g.kind === GapKind.NotInstrumented)) parts.push("not instrumented yet");
   for (const g of hop.gaps) if (g.kind === GapKind.Retry) parts.push(g.label.toLowerCase());
   return parts.join(" · ");
 }
@@ -336,7 +356,7 @@ function RequestView({ found, d }: { found: Found; d: Data }) {
 
 function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: TraceLogLine[]; logsState: LogsState }) {
   const tree = useMemo(
-    () => buildRequestTree(found.records, logs, d.now, found.links),
+    () => buildRequestTree(found.records, logs, d.now, found.links, found.knownPeers ? new Set(found.knownPeers) : null),
     [found, logs, d.now],
   );
   const colours = useMemo(() => colourMap(tree.services), [tree.services]);
@@ -398,7 +418,7 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
         <div className="hidden md:block"><Title head={head} /></div>
         <div className="md:hidden"><Title head={head} size="sm" /></div>
         <div className="mt-2 flex flex-wrap gap-x-[18px] gap-y-1 text-[12.5px] text-muted">
-          <span className={fact}>Started <Mono className="font-medium text-fg">{fmtClock(head.startMs)}</Mono><span className="hidden md:inline"> {dayWord(head.startMs, d.now)}</span></span>
+          <span className={fact}>Started <Mono className="font-medium text-fg"><Clock ts={head.startMs} /></Mono><span className="hidden md:inline"> <DayWord ts={head.startMs} now={d.now} /></span></span>
           <span className={fact}>Took <Mono className="font-medium text-fg">{tookText(head, d.now)}</Mono></span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.hops.filter((h) => !h.isStore).length}</b> hops</span>
@@ -456,9 +476,9 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
             <div>
               <b className="font-semibold">Stopped in {h.service}.</b>{" "}
               {h.dir === HopDir.Out ? <>The call to <Mono className="text-xs">{outLabel(h)}</Mono></> : <Mono className="text-xs">{h.op ?? h.via}</Mono>}
-              <span className="hidden md:inline"> started at <Mono className="text-xs">{fmtClock(h.startMs)}</Mono> and</span> never finished.
+              <span className="hidden md:inline"> started at <Mono className="text-xs"><Clock ts={h.startMs} /></Mono> and</span> never finished.
               {lastLog !== null && logsState === LogsState.Ready ? (
-                <span className="hidden md:inline"> Last log line for this request: <Mono className="text-xs">{fmtClock(lastLog)}</Mono>.</span>
+                <span className="hidden md:inline"> Last log line for this request: <Mono className="text-xs"><Clock ts={lastLog} /></Mono>.</span>
               ) : null}
             </div>
           </div>
@@ -695,12 +715,12 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
 }
 
 function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
-  const facts: Array<[string, string]> = [
+  const facts: Array<[string, ReactNode]> = [
     ["Hop", hop.hopId],
     ["Parent", hop.parentHop ?? "none"],
     ["Adapter", hop.adapter ?? "not reported"],
-    ["Started", fmtClock(hop.startMs)],
-    ["Ended", hop.endMs !== null ? fmtClock(hop.endMs) : "no end record"],
+    ["Started", <Clock key="s" ts={hop.startMs} />],
+    ["Ended", hop.endMs !== null ? <Clock key="e" ts={hop.endMs} /> : "no end record"],
   ];
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
@@ -770,7 +790,7 @@ function DetailLines({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
     <div className={box}>
       {shown.map((l, i) => (
         <div key={i} className="grid grid-cols-[96px_40px_minmax(0,1fr)] gap-2.5 max-md:grid-cols-[auto_minmax(0,1fr)] max-md:gap-x-2.5">
-          <span className="text-faint">{fmtClock(l.timeMs)}</span>
+          <span className="text-faint"><Clock ts={l.timeMs} /></span>
           <span className={cn("text-[11px] font-medium text-muted", LEVEL_CLASS[l.level ?? ""])}>{l.level ?? ""}</span>
           <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] max-md:col-span-2">{l.line}</span>
         </div>
@@ -823,7 +843,7 @@ function LogsOnly({ d }: { d: Data }) {
                   <div className="font-mono text-xs leading-[1.75]">
                     {ls.map((l, i) => (
                       <div key={i} className="grid grid-cols-[96px_40px_minmax(0,1fr)] gap-2.5 max-md:grid-cols-[auto_minmax(0,1fr)] max-md:gap-x-2.5">
-                        <span className="text-faint">{fmtClock(l.timeMs)}</span>
+                        <span className="text-faint"><Clock ts={l.timeMs} /></span>
                         <span className={cn("text-[11px] text-muted", LEVEL_CLASS[l.level ?? ""])}>{l.level ?? ""}</span>
                         <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] max-md:col-span-2">{l.line}</span>
                       </div>

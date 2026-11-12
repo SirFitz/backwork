@@ -26,7 +26,7 @@ Auth (pick one):
 
 - **Existing account** — `BW_EMAIL=you@example.com BW_PASSWORD=… npm run overflow`
 - **Self-register** — omit creds; it creates an isolated throwaway org
-  (`qa2del-overflow-*@example.com`), seeds wide errors/logs/traces, and prints the
+  (`qa2del-overflow-*@example.com`), seeds wide errors, log lines and hop records, and prints the
   email so you can delete it afterward. Prefer running against a staging instance, or
   clean up the throwaway (it's labeled `qa2del-*`).
 

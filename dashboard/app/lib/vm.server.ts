@@ -16,8 +16,8 @@ export type Series = { metric: Record<string, string>; points: Array<{ t: number
 // Customer metrics are stamped org_id=<id> at the ingest proxy (VM extra_label).
 // VM's extra_filters[] applies an org_id matcher to EVERY series selector in the
 // query server-side (robust for bare/multi-metric expressions), so a customer
-// only sees its own series. Platform (Inkress, which owns the cAdvisor host
-// metrics that have no org_id) gets no filter — its view is unchanged.
+// only sees its own series. The platform org (backwork's own series, which have
+// no org_id) gets no filter.
 function applyScope(params: URLSearchParams, t?: Tenant): URLSearchParams {
   if (t && !t.platform) params.append("extra_filters[]", `{org_id=${JSON.stringify(t.orgId)}}`);
   return params;

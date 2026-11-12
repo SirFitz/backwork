@@ -18,7 +18,7 @@ const SECTIONS: [string, string[]][] = [
   ]],
   ["What we process (managed cloud)", [
     "Account data: your name, email address, organization and team membership, and a securely hashed password. We use this to authenticate you and operate your account.",
-    "Telemetry you send us: when you use the managed cloud, the logs, metrics and traces you ship are stored to provide the service. You are the controller of this data; we process it on your behalf and isolate it to your organization.",
+    "Telemetry you send us: when you use the managed cloud, the log lines, hop records and request figures you ship are stored to provide the service. You are the controller of this data; we process it on your behalf and isolate it to your organization.",
     "Operational data: minimal request logs and metrics about the service itself, used to keep it secure and reliable.",
   ]],
   ["Cookies", [

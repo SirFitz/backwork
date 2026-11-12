@@ -19,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 const VALUES = [
   { icon: Server, title: "You own your data", body: "Observability data describes exactly how your systems work. It should live on your infrastructure, not someone else's billing system." },
   { icon: Eye, title: "Honesty over theatre", body: "A dashboard is only useful if you can trust it. We never coerce missing data to zero or paint a dead pipeline green." },
-  { icon: Layers, title: "One pane, open standards", body: "Logs, metrics and traces belong together — built on OpenTelemetry, Loki, VictoriaMetrics and Jaeger, not a walled garden." },
+  { icon: Layers, title: "One pane, open standards", body: "A request, its figures and its log lines belong together: built on Correlator, Loki, VictoriaMetrics and Vector, not a walled garden." },
 ];
 
 export default function About() {
@@ -36,8 +36,8 @@ export default function About() {
 
       <section className="mx-auto max-w-3xl px-5 sm:px-6">
         <div data-reveal className="space-y-4 text-[14.5px] leading-relaxed text-muted">
-          <p>So we built the opposite. One self-hosted stack that brings logs, metrics, distributed traces, requests, incidents and alerts into a single pane — running on your own hardware, with one Docker command, for free.</p>
-          <p>It's multi-tenant from the ground up, so a whole team (or a whole fleet of customers) can share one deployment with strict per-tenant isolation. It's OpenTelemetry-native, so it works with the instrumentation you already have. And it's engineered to tell the truth: an outage in the telemetry path reads as <span className="font-medium text-fg">no data</span>, never <span className="font-medium text-fg">all clear</span>.</p>
+          <p>So we built the opposite. One light, self-hosted stack that finds any request across your services and shows where it went, where the time went and what it logged, with figures per service, log search and alerts. It runs on your own hardware, with one Docker command, for free.</p>
+          <p>It's multi-tenant from the ground up, so a whole team (or a whole fleet of customers) can share one deployment with strict per-tenant isolation. It reads Correlator's hop records from your ordinary logs, so it works beside the tools you already run. And it's engineered to tell the truth: an outage in the telemetry path reads as <span className="font-medium text-fg">no data</span>, never <span className="font-medium text-fg">all clear</span>.</p>
           <p>backwork is open source. Read the code, run it yourself, or let us host it — either way, the data stays yours.</p>
         </div>
       </section>

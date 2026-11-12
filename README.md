@@ -1,39 +1,44 @@
 # backwork.dev
 
-Self-hosted **log aggregation + APM** in one box. Deploys onto the Docker host
-it monitors and surfaces what's broken right now: crashes, OOM kills, restart
-loops, error spikes, resource pressure. All telemetry is real container data,
-never synthetic. Designed to stay under ~$50/mo by running everything on a
-single VPS.
+Self-hosted **request tracing, performance figures and log search** for services
+that use Correlator. Paste any ID (trace ID, request ID, UUID or `traceparent`)
+and see the whole request: every service it crossed, database and cache time,
+where it stopped, and the log lines it wrote. Every number comes from real hop
+records and log lines, never synthetic data. Light: five containers.
 
 **Live:** https://backwork.dev
 
 ## How it works
 
-It runs as a docker-compose stack on the host and reads that host's real
-telemetry directly:
+Services write Correlator hop records (one log line when a request, job or call
+starts and one when it ends) beside their ordinary log lines. Vector reads them,
+VictoriaMetrics keeps the figures, Loki keeps the lines.
 
-| Component | Tool | Role |
+| Container | Tool | Role |
 |---|---|---|
-| Logs | **Loki** | LogQL search, 7-day hot retention (hop records 30 days) |
-| Metrics | **VictoriaMetrics** | PromQL time-series store |
-| Container metrics | **cAdvisor** | real per-container CPU / memory / network / disk |
-| Traces | **Jaeger** | OTLP ingest (for apps that emit spans) |
-| Collector | **Vector** | tails every container's logs into Loki |
-| Dashboard | **backwork** (Remix) | queries all of it; also reads the Docker Engine API for true container state |
+| Collector | **Vector** | reads backwork's own containers; other hosts run the agent (`/install.sh`, Vector only) |
+| Logs | **Loki** | LogQL search; hop records 30 days, other lines 7 |
+| Metrics | **VictoriaMetrics** | the `backwork_hop_*` figures (rate, errors, latency, database and cache time) |
+| Accounts | **Postgres** | users, organisations, projects, tokens, switches, filter patterns, alert rules |
+| Dashboard | **backwork** (Remix) | the pages below |
 
 Service names come from each container's `coolify.resourceName` / compose
-labels, so the dashboard speaks in app names, not container hashes.
+labels (or the PM2 process name), so the dashboard speaks in app names.
 
 ## Dashboard
 
-- **Overview** — host vitals, what needs attention (worst first), the service table, log-volume trend
-- **Containers** — every service with live CPU / memory / network, restarts, log + error rate, sortable and filterable, inline sparklines
-- **Logs** — full-text + structured LogQL search across all sources, live tail
-- **Metrics** — CPU / memory / network charts and the heaviest consumers, from cAdvisor
-- **Incidents** — auto-detected OOM kills, failing healthchecks, stopped containers, restart loops and error spikes, with the error log evidence
-- **Alerts** — thresholds on real metrics and log rates, evaluated live
-- **Traces** — distributed traces for any app that emits OpenTelemetry spans
+- **Overview**: what needs attention in the last 15 minutes (services failing or slower than usual, requests that stopped, calls never received), the services table, the latest failed requests, log volume
+- **Requests**: every inbound HTTP request from hop records, filters by service, status, method and route, older pages on demand
+- **Request view** (`/requests/<id>`, also the header search): the path through each service with time bars, database and cache calls, gaps, linked IDs, named fields and the log lines under each hop
+- **Performance**: services, routes and connections with request rate, errors, p50/p95/p99 and time in databases and caches
+- **Logs**: full-text and LogQL search, live tail, a link to the request from every line that carries a trace ID
+- **Errors**: grouped exceptions from the error ingest endpoint
+- **Alerts**: thresholds on error and log rates, delivered to webhook, Slack, Discord, email or SMS
+- **Projects / Settings**: ingest tokens, the switches and the sensitive-data filter
+
+Health checks (`/healthz`, `/health`, `/ready`, `/live`, `/livez`, `/readyz`,
+`/ping`) are left out of the Overview, Requests and Performance figures unless
+"Show health checks" is on; the request view and Logs always show everything.
 
 Light by default, with a persisted dark mode toggle.
 
@@ -84,13 +89,16 @@ The dashboard reads backend URLs from env (defaults target the compose network):
 |---|---|
 | `LOKI_URL` | `http://loki:3100` |
 | `VM_URL` | `http://victoriametrics:8428` |
-| `JAEGER_URL` | `http://jaeger:16686` |
-| `DOCKER_SOCKET` | `/var/run/docker.sock` (read-only, for container state) |
-| `DATA_DIR` | `/data` (alert-rule persistence) |
+| `DATABASE_URL` | the compose Postgres |
+| `DATA_DIR` | `/data` (legacy alert-rule import) |
+| `PUBLIC_URL` | `https://backwork.dev` (used by the agent installer) |
 
-## Notes for busy hosts
+## Notes
 
-- cAdvisor needs a recent image on Docker 28+ hosts (API ≥ 1.44); this ships
-  `v0.52.1` with `DOCKER_API_VERSION` pinned.
+- The stack collector reads only containers labelled `dev.backwork.collect=true`
+  (backwork's own). Every other service ships through the agent under its own
+  organisation, so nothing is stored twice.
+- Stored lines keep only the line, service, host, project, level and kind; Docker's
+  label set, container id and image are dropped before Loki.
 - Many containers can exhaust `fs.inotify.max_user_instances`; raise it
-  (`sysctl fs.inotify.max_user_instances=8192`) if cAdvisor crash-loops.
+  (`sysctl fs.inotify.max_user_instances=8192`) if Vector stops tailing.

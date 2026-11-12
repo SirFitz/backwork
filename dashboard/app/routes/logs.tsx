@@ -10,8 +10,9 @@ import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
-import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
+import { cn, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 import { traceIdOfLine } from "~/lib/hops/parse";
+import { Clock } from "~/components/time";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
 /** pino writes numeric levels; show their names. */
@@ -85,7 +86,7 @@ export default function Logs() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <PageTitle title="Logs" sub="Full-text and structured search across every container's output. Pick a service and level, or paste raw LogQL." />
+      <PageTitle title="Logs" sub="Full-text and structured search across every service's log lines. Pick a service and level, or paste raw LogQL." />
 
       <Form method="get" className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[280px] flex-1">
@@ -132,7 +133,7 @@ export default function Logs() {
                 </div>
                 {entries.map((e, i) => (
                   <div key={i} className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-baseline gap-x-2 border-b border-border/40 px-3 py-1 font-mono hover:bg-surface-2/50 sm:px-4 md:grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] md:gap-x-3">
-                    <span className="shrink-0 tabular-nums text-faint md:col-start-1 md:row-start-1">{fmtClock(e.ts)}</span>
+                    <span className="shrink-0 tabular-nums text-faint md:col-start-1 md:row-start-1"><Clock ts={e.ts} /></span>
                     <span className={cn("w-9 shrink-0 font-semibold uppercase md:order-none md:w-auto", LEVEL_TEXT[e.level] || "text-faint", "md:col-start-3 md:row-start-1")}>{e.level}</span>
                     <span className="truncate text-accent max-md:text-right md:col-start-2 md:row-start-1" title={e.service}>{e.service}</span>
                     <span className="col-span-3 min-w-0 whitespace-pre-wrap break-words text-fg/90 md:col-span-1 md:col-start-4 md:row-start-1">{e.message}</span>

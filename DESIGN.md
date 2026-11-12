@@ -2,9 +2,9 @@
 
 ## Theme decision (the scene)
 
-"An inkress developer, mid-workday in a well-lit office, glancing at ~80
-production containers on a 1440p monitor to confirm nothing's broken, and
-occasionally on-call at night triaging an incident."
+"An inkress developer, mid-workday in a well-lit office, glancing at the
+Overview on a 1440p monitor to confirm no service is slow or failing, and
+occasionally on-call at night following one failed request across services."
 
 The dominant moment is a daytime glance in bright ambient light → **light is the
 default**. Night on-call is real but secondary → **dark is a first-class toggle**
@@ -62,7 +62,7 @@ used ≤10%. Status triad is separate and sacred.
   time range). Content max ~1400px, generous gutters.
 - NOT a grid of identical cards. Use a primary focal region (what's broken) +
   supporting tables and inline sparklines. Vary section spacing (24/16/12).
-- Tables are the primary affordance for container/health/log data. Row hover,
+- Tables are the primary affordance for service, request and log data. Row hover,
   zebra off, 1px full borders only (NEVER side-stripe borders).
 - Sparklines inline in table rows; full charts only where trend matters.
 - Whitespace separates sections; avoid wrapping everything in a box. No nested
@@ -78,8 +78,8 @@ a class swap.
 ## States (required on every data surface)
 
 - Loading: skeleton rows/shimmer, never layout shift.
-- Empty: plain sentence + the reason (e.g. "No traces. Apps must emit OTLP spans
-  with correlation IDs.").
+- Empty: plain sentence + the reason (e.g. "No service reports requests yet. Add
+  Correlator to a service and run the agent on its host.").
 - Error: inline note "data source unavailable — <reason>", panel degrades alone.
 
 ## Motion

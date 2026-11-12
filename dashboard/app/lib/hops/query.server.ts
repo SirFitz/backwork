@@ -1,10 +1,10 @@
 // Request lookup queries (design 7.2), through the existing scoped Loki client. Hop records and
-// log lines only: Jaeger left the stack on 2026-11-12, so there is no span step.
+// log lines only (the slimmed stack has no span store).
 // Every query passes the viewer's tenant, so a trace ID of another organisation returns nothing.
 // Only a validated TraceId is ever placed in a query.
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
-import { isTraceId, parseHopRecord, parseLinkLine, toTraceLogLine, type RawLogEntry } from "./parse";
+import { isTraceId, parseHopRecord, parseLinkLine, sourceOf, toTraceLogLine, type RawLogEntry } from "./parse";
 import { HOP_RETENTION_DAYS, LOG_PAGE, LOG_RETENTION_DAYS, SearchWindow, WINDOW_LABEL, type HopRecord, type LinkedId, type TraceId, type TraceLogLine } from "./types";
 
 const HOUR = 60 * 60 * 1000;
@@ -89,7 +89,13 @@ export function progressiveLookup(traceId: TraceId, tenant: Tenant, now: number,
   return { hour, day, retention };
 }
 
-/** Step 2: ordinary log lines of the services found, from 5 s before the first record to 5 s after the last. */
+/**
+ * Step 2: ordinary log lines holding the trace ID, from every service of the organisation, from
+ * 5 s before the first record to 5 s after the last. Not narrowed to the services found: hop
+ * records name the service the developer set (`service=fs-hono`), while ordinary lines carry the
+ * collector's container name (`fs-web-hono-bserve`), so a service filter would miss them. Each
+ * line is then named after the hop service whose records came from the same source.
+ */
 export async function logLinesFor(
   traceId: TraceId,
   result: WindowResult,
@@ -100,16 +106,33 @@ export async function logLinesFor(
   assertTraceId(traceId);
   const times = [...result.records.map((r) => r.timeMs), ...result.links.map((l) => l.timeMs)];
   if (times.length === 0) return [];
-  const services = [...new Set([...result.records.map((r) => r.service), ...result.links.map((l) => l.service)])];
-  const selector = services.length
-    ? `{service=~${JSON.stringify(services.map(escapeRegex).join("|"))}, kind!="hop"}`
-    : `{service=~".+", kind!="hop"}`;
   const start = Math.min(...times) - LOG_PAD_MS;
   // A hop still running may log after its last record, so then the window runs to now.
   const last = Math.max(...times) + LOG_PAD_MS;
   const end = hasOpenHop(result) ? Math.max(last, now) : last;
-  const entries = await query(`${selector} |= "${traceId}"`, { start, end, limit: LOG_PAGE }, tenant);
-  return entries.map((e) => toTraceLogLine(toRaw(e))).sort((a, b) => a.timeMs - b.timeMs);
+  const entries = await query(`{service=~".+", kind!="hop"} |= "${traceId}"`, { start, end, limit: LOG_PAGE }, tenant);
+  const bySource = serviceBySource(result.records);
+  return entries.map((e) => named(toTraceLogLine(toRaw(e)), e, bySource)).sort((a, b) => a.timeMs - b.timeMs);
+}
+
+/** Source name -> the service its hop records name. A source whose records name several services keeps its own name. */
+export function serviceBySource(records: readonly HopRecord[]): Map<string, string> {
+  const seen = new Map<string, Set<string>>();
+  for (const r of records) {
+    if (!r.source) continue;
+    const set = seen.get(r.source) ?? new Set<string>();
+    set.add(r.service);
+    seen.set(r.source, set);
+  }
+  const out = new Map<string, string>();
+  for (const [source, names] of seen) if (names.size === 1) out.set(source, [...names][0]);
+  return out;
+}
+
+function named(line: TraceLogLine, entry: loki.LogEntry, bySource: ReadonlyMap<string, string>): TraceLogLine {
+  const source = sourceOf(entry.labels, entry.line);
+  const service = source ? bySource.get(source) : undefined;
+  return service ? { ...line, service } : line;
 }
 
 function hasOpenHop(result: WindowResult): boolean {
@@ -124,6 +147,3 @@ export async function logsOnly(traceId: TraceId, tenant: Tenant, now: number, qu
   return entries.map((e) => toTraceLogLine(toRaw(e))).sort((a, b) => a.timeMs - b.timeMs);
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

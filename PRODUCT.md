@@ -4,23 +4,23 @@ register: product
 
 ## Product purpose
 
-Self-hosted log aggregation + application performance monitoring for developers
-running mixed Docker infrastructure. It ingests real container telemetry (logs
-via Vector, resource metrics via cAdvisor, traces via Jaeger when apps emit
-them), retains it cheaply, and surfaces what is broken right now: crashes,
-restarts, error spikes, resource pressure. The product replaces expensive hosted
-tools (AppSignal, LogDNA/Mezmo) with a developer-owned alternative that stays
-under ~$50/mo in infra.
+Self-hosted request tracing, performance figures and log search for developers
+running many services. Services that use Correlator write hop records beside
+their log lines; backwork turns them into one view per request (every service it
+crossed, database and cache time, where it stopped, its log lines), per-service
+and per-route figures, and a log search that links back to the request. It
+replaces expensive hosted tools (AppSignal, LogDNA/Mezmo) with a developer-owned
+alternative that stays light: five containers.
 
-It monitors a real Docker host. The reference deployment watches ~80 production
-containers (the inkress app fleet). Data is never synthetic.
+The reference deployment holds the Inkress and FleekSite dev services. Data is
+never synthetic.
 
 ## Users
 
 Solo developers and small platform teams who self-host many services on a few
 VPSs. They are technical, comfortable with LogQL/PromQL, and value density and
-speed over hand-holding. Primary job: "is anything broken, and where?" Secondary:
-"this container is slow/leaking, show me why." They check it during the workday
+speed over hand-holding. Primary job: "is anything slow or failing, and where?"
+Secondary: "this request was slow or failed, show me why." They check it during the workday
 and when paged at night.
 
 ## Brand & tone
@@ -49,5 +49,5 @@ never signals status.
 3. Status color is sacred: green/amber/red mean operational/degraded/down and
    nothing else. Brand coral is never a status.
 4. Light by default (daytime glance), dark by choice (night triage).
-5. Honest about limits: traces require instrumented apps; if none emit spans, the
-   Traces view says so instead of faking it.
+5. Honest about limits: request figures need services that write hop records; a
+   page with none says so and how to add one instead of faking it.

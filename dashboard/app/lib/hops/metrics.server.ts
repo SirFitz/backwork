@@ -10,6 +10,8 @@ import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { Via } from "~/lib/hops/types";
+import { HealthChecks, PROM_NOT_HEALTH_CHECK } from "~/lib/hops/health";
+export { HealthChecks };
 
 // ---------------------------------------------------------------- fixed sets
 
@@ -77,8 +79,13 @@ export interface RouteKey {
 
 type Matchers = Record<string, string>;
 
-function selector(metric: string, matchers: Matchers): string {
-  const parts = Object.entries(matchers).map(([k, v]) => `${k}=${promString(v)}`);
+/** Health-check operations are left out of inbound figures unless shown (`health.ts`). */
+function healthMatchers(dir: "in" | "out" | null, health: HealthChecks): string[] {
+  return dir !== "out" && health === HealthChecks.Hidden ? [PROM_NOT_HEALTH_CHECK] : [];
+}
+
+function selector(metric: string, matchers: Matchers, raw: readonly string[] = []): string {
+  const parts = [...Object.entries(matchers).map(([k, v]) => `${k}=${promString(v)}`), ...raw];
   return parts.length ? `${metric}{${parts.join(",")}}` : metric;
 }
 
@@ -94,20 +101,20 @@ export interface Scope {
   by: readonly string[];
   /** Extra exact matchers, e.g. { service: "commerce-api" }. */
   where: Matchers;
+  /** Inbound health-check hops hidden (the default) or shown. */
+  health: HealthChecks;
 }
 
-const SERVICES_SCOPE: Scope = { by: ["service"], where: {} };
-
-export function servicesScope(): Scope {
-  return SERVICES_SCOPE;
+export function servicesScope(health: HealthChecks = HealthChecks.Hidden): Scope {
+  return { by: ["service"], where: {}, health };
 }
 
-export function routesScope(service: string): Scope {
-  return { by: ["service", "method", "op"], where: { service } };
+export function routesScope(service: string, health: HealthChecks = HealthChecks.Hidden): Scope {
+  return { by: ["service", "method", "op"], where: { service }, health };
 }
 
 export function connectionsScope(): Scope {
-  return { by: ["service", "peer", "via"], where: {} };
+  return { by: ["service", "peer", "via"], where: {}, health: HealthChecks.Shown };
 }
 
 function by(labels: readonly string[], extra: readonly string[] = []): string {
@@ -116,7 +123,7 @@ function by(labels: readonly string[], extra: readonly string[] = []): string {
 
 /** Requests (or calls) per second over the range. */
 export function rateQuery(dir: "in" | "out", scope: Scope, range: PerfRange): string {
-  const sel = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where });
+  const sel = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
   return `sum ${by(scope.by)} (rate(${sel}[${windowOf(range)}]))`;
 }
 
@@ -126,43 +133,48 @@ export function rateQuery(dir: "in" | "out", scope: Scope, range: PerfRange): st
  *  side for a key present in both, and `+` would drop keys present in one.) */
 export function errorRateQueries(dir: "in" | "out", scope: Scope, range: PerfRange): [string, string] {
   const w = windowOf(range);
-  const failed = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where, outcome: "error" });
+  const hm = healthMatchers(dir, scope.health);
+  const failed = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where, outcome: "error" }, hm);
   const fivexx = `${HopMetric.Duration}_count{${[
     `dir=${promString(dir)}`,
     ...Object.entries(scope.where).map(([k, v]) => `${k}=${promString(v)}`),
     `outcome!="error"`,
     `status_class="5xx"`,
+    ...hm,
   ].join(",")}}`;
   return [`sum ${by(scope.by)} (rate(${failed}[${w}]))`, `sum ${by(scope.by)} (rate(${fivexx}[${w}]))`];
 }
 
 /** Latency quantile in seconds over the range. */
 export function quantileQuery(q: Quantile, dir: "in" | "out", scope: Scope, range: PerfRange, window?: string): string {
-  const sel = selector(`${HopMetric.Duration}_bucket`, { dir, ...scope.where });
+  const sel = selector(`${HopMetric.Duration}_bucket`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
   return `histogram_quantile(${q}, sum ${by(scope.by, ["le"])} (rate(${sel}[${window ?? windowOf(range)}])))`;
 }
 
 /** Share of inbound time spent in databases and caches (0..1). */
 export function storeShareQuery(scope: Scope, range: PerfRange): string {
   const w = windowOf(range);
-  const store = selector(HopMetric.StoreSeconds, scope.where);
-  const total = selector(`${HopMetric.Duration}_sum`, { dir: "in", ...scope.where });
+  const hm = healthMatchers("in", scope.health);
+  const store = selector(HopMetric.StoreSeconds, scope.where, hm);
+  const total = selector(`${HopMetric.Duration}_sum`, { dir: "in", ...scope.where }, hm);
   return `sum ${by(scope.by)} (rate(${store}[${w}])) / sum ${by(scope.by)} (rate(${total}[${w}]))`;
 }
 
 /** Data-store calls per inbound request. */
 export function storeCallsPerRequestQuery(scope: Scope, range: PerfRange): string {
   const w = windowOf(range);
-  const calls = selector(HopMetric.StoreCalls, scope.where);
-  const reqs = selector(`${HopMetric.Duration}_count`, { dir: "in", ...scope.where });
+  const hm = healthMatchers("in", scope.health);
+  const calls = selector(HopMetric.StoreCalls, scope.where, hm);
+  const reqs = selector(`${HopMetric.Duration}_count`, { dir: "in", ...scope.where }, hm);
   return `sum ${by(scope.by)} (rate(${calls}[${w}])) / sum ${by(scope.by)} (rate(${reqs}[${w}]))`;
 }
 
 /** Inbound hops started and not yet finished over the last 15 minutes, by service, never
  *  below zero. A service with starts and no finishes keeps its starts (`or`). */
-export function inProgressQuery(): string {
-  const started = `sum by (service) (increase(${HopMetric.Started}{dir="in"}[${IN_PROGRESS_WINDOW}]))`;
-  const finished = `sum by (service) (increase(${HopMetric.Duration}_count{dir="in"}[${IN_PROGRESS_WINDOW}]))`;
+export function inProgressQuery(health: HealthChecks = HealthChecks.Hidden): string {
+  const hm = healthMatchers("in", health);
+  const started = `sum by (service) (increase(${selector(HopMetric.Started, { dir: "in" }, hm)}[${IN_PROGRESS_WINDOW}]))`;
+  const finished = `sum by (service) (increase(${selector(`${HopMetric.Duration}_count`, { dir: "in" }, hm)}[${IN_PROGRESS_WINDOW}]))`;
   return `clamp_min(${started} - ${finished}, 0) or ${started}`;
 }
 
@@ -172,13 +184,13 @@ export function trendStep(range: PerfRange): string {
 }
 
 /** p95 per service as a range query with one point per trend step. */
-export function trendQuery(range: PerfRange): string {
-  return quantileQuery(Quantile.P95, "in", SERVICES_SCOPE, range, trendStep(range));
+export function trendQuery(range: PerfRange, health: HealthChecks = HealthChecks.Hidden): string {
+  return quantileQuery(Quantile.P95, "in", servicesScope(health), range, trendStep(range));
 }
 
 /** Requests per second by service and `via`, used to know which services serve HTTP. */
-export function viaRateQuery(range: PerfRange): string {
-  return rateQuery("in", { by: ["service", "via"], where: {} }, range);
+export function viaRateQuery(range: PerfRange, health: HealthChecks = HealthChecks.Hidden): string {
+  return rateQuery("in", { by: ["service", "via"], where: {}, health }, range);
 }
 
 // ---------------------------------------------------------------- result shapes
@@ -312,25 +324,31 @@ async function figuresFor(
 
 const TTL_MS = 10_000;
 
-function cacheKey(tenant: Tenant, range: PerfRange, table: string, selection = ""): string {
-  return `perf:${tenant.platform ? "platform" : tenant.orgId}:${range}:${table}:${selection}`;
+function cacheKey(tenant: Tenant, range: PerfRange, table: string, selection = "", health: HealthChecks = HealthChecks.Hidden): string {
+  return `perf:${tenant.platform ? "platform" : tenant.orgId}:${range}:${table}:${selection}:${health}`;
 }
 
 // ---------------------------------------------------------------- tables
 
 /** Services table, busiest first. */
-export function servicesTable(range: PerfRange, tenant: Tenant, client: PromClient = vmClient, now = Date.now()): Promise<ServiceRow[]> {
-  return cached(cacheKey(tenant, range, "services"), TTL_MS, async () => {
-    const scope = servicesScope();
+export function servicesTable(
+  range: PerfRange,
+  tenant: Tenant,
+  client: PromClient = vmClient,
+  now = Date.now(),
+  health: HealthChecks = HealthChecks.Hidden
+): Promise<ServiceRow[]> {
+  return cached(cacheKey(tenant, range, "services", "", health), TTL_MS, async () => {
+    const scope = servicesScope(health);
     const end = Math.floor(now / 1000) * 1000;
     const start = end - RANGE_SECONDS[range] * 1000;
     const [base, share, calls, inflight, vias, trend] = await Promise.all([
       figuresFor(client, "in", scope, range, tenant),
       client.instant(storeShareQuery(scope, range), tenant),
       client.instant(storeCallsPerRequestQuery(scope, range), tenant),
-      client.instant(inProgressQuery(), tenant),
-      client.instant(viaRateQuery(range), tenant),
-      client.range(trendQuery(range), { start, end, step: trendStep(range) }, tenant),
+      client.instant(inProgressQuery(health), tenant),
+      client.instant(viaRateQuery(range, health), tenant),
+      client.range(trendQuery(range, health), { start, end, step: trendStep(range) }, tenant),
     ]);
     const shareM = toMap(share, scope.by);
     const callsM = toMap(calls, scope.by);
@@ -364,10 +382,16 @@ export function servicesTable(range: PerfRange, tenant: Tenant, client: PromClie
 }
 
 /** Routes of one service, slowest (p95) first. */
-export function routesTable(service: string, range: PerfRange, tenant: Tenant, client: PromClient = vmClient): Promise<RouteRow[]> {
+export function routesTable(
+  service: string,
+  range: PerfRange,
+  tenant: Tenant,
+  client: PromClient = vmClient,
+  health: HealthChecks = HealthChecks.Hidden
+): Promise<RouteRow[]> {
   if (!isLabelValue(service)) return Promise.resolve([]);
-  return cached(cacheKey(tenant, range, "routes", service), TTL_MS, async () => {
-    const scope = routesScope(service);
+  return cached(cacheKey(tenant, range, "routes", service, health), TTL_MS, async () => {
+    const scope = routesScope(service, health);
     const [base, share] = await Promise.all([
       figuresFor(client, "in", scope, range, tenant),
       client.instant(storeShareQuery(scope, range), tenant),
@@ -435,23 +459,29 @@ export interface InboundTotals {
 }
 
 /** Inbound HTTP hops finished over a window, by status class. */
-export function httpTotalsQuery(range: string, service: string | null): string {
+export function httpTotalsQuery(range: string, service: string | null, health: HealthChecks = HealthChecks.Hidden): string {
   const where: Matchers = { dir: "in", via: Via.Http, ...(service ? { service } : {}) };
-  return `sum by (status_class, outcome) (increase(${selector(`${HopMetric.Duration}_count`, where)}[${range}]))`;
+  return `sum by (status_class, outcome) (increase(${selector(`${HopMetric.Duration}_count`, where, healthMatchers("in", health))}[${range}]))`;
 }
 
-export function httpP95Query(range: string, service: string | null): string {
+export function httpP95Query(range: string, service: string | null, health: HealthChecks = HealthChecks.Hidden): string {
   const where: Matchers = { dir: "in", via: Via.Http, ...(service ? { service } : {}) };
-  return `histogram_quantile(0.95, sum by (le) (rate(${selector(`${HopMetric.Duration}_bucket`, where)}[${range}])))`;
+  return `histogram_quantile(0.95, sum by (le) (rate(${selector(`${HopMetric.Duration}_bucket`, where, healthMatchers("in", health))}[${range}])))`;
 }
 
 /** Inbound HTTP totals for the Requests page's summary and status counts. */
-export function inboundHttpTotals(range: string, service: string | null, tenant: Tenant, client: PromClient = vmClient): Promise<InboundTotals> {
+export function inboundHttpTotals(
+  range: string,
+  service: string | null,
+  tenant: Tenant,
+  client: PromClient = vmClient,
+  health: HealthChecks = HealthChecks.Hidden
+): Promise<InboundTotals> {
   const svc = service && isLabelValue(service) ? service : null;
-  return cached(cacheKey(tenant, range as PerfRange, "http-totals", svc ?? ""), TTL_MS, async () => {
+  return cached(cacheKey(tenant, range as PerfRange, "http-totals", svc ?? "", health), TTL_MS, async () => {
     const [counts, p95] = await Promise.all([
-      client.instant(httpTotalsQuery(range, svc), tenant),
-      client.instant(httpP95Query(range, svc), tenant),
+      client.instant(httpTotalsQuery(range, svc, health), tenant),
+      client.instant(httpP95Query(range, svc, health), tenant),
     ]);
     const byClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
     let total = 0;

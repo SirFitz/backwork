@@ -53,8 +53,8 @@ async function notify(
   byId: Map<string, channels.Channel>,
   kind: "firing" | "resolved"
 ) {
+  if (!alerts.isAlertMetric(rule.metric)) return; // retired or unknown kind: never notifies
   const meta = alerts.METRIC_META[rule.metric];
-  if (!meta) return; // unknown/invalid metric — don't crash the notifier
   const scope = rule.service === "*" ? "any service" : rule.service;
   const title = kind === "firing" ? `FIRING: ${rule.name}` : `RESOLVED: ${rule.name}`;
   const body =
@@ -71,7 +71,8 @@ async function notify(
 export function ensureEvaluator() {
   if (globalThis.__bwEvaluatorStarted) return;
   globalThis.__bwEvaluatorStarted = true;
-  void alerts.seedPlatformDefaults();
+  // Seed first, then turn off any stored rule of a kind that can no longer run (BAC-49).
+  void alerts.seedPlatformDefaults().then(() => alerts.retireContainerRules()).catch(() => {});
   setTimeout(() => void tick(), 8000); // seed baseline shortly after boot
   setInterval(() => void tick(), 60000);
 }

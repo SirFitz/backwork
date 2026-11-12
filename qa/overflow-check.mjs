@@ -14,7 +14,7 @@
 //   # Auth: provide an existing account…
 //   BW_EMAIL=you@example.com BW_PASSWORD=… node overflow-check.mjs
 //   # …or omit creds and it self-registers an isolated throwaway (qa2del-overflow-*),
-//   #   seeds wide errors/logs/traces, and prints the email so you can delete it.
+//   #   seeds wide errors, log lines and hop records, and prints the email so you can delete it.
 //   HEADED=1 node overflow-check.mjs    # watch it run
 //
 // Exit code: 0 = all pass, 1 = at least one page overflowed (or setup failed).
@@ -28,8 +28,8 @@ const HEADED = !!process.env.HEADED;
 const TOL = 1; // px slack for sub-pixel / scrollbar
 
 const ROUTES = [
-  "/", "/containers", "/logs", "/metrics", "/traces", "/requests",
-  "/errors", "/incidents", "/alerts", "/projects", "/members",
+  "/", "/requests", "/performance", "/logs",
+  "/errors", "/alerts", "/projects", "/members",
   "/settings", "/audit", "/api-keys", "/account",
 ];
 const VIEWPORTS = [
@@ -105,21 +105,17 @@ async function seedWideData(token) {
     streams: [{ stream: { service: "overflow-qa" }, values: [[String(Date.now() * 1e6),
       "GET " + LONG + "?trace_id=" + hex(16) + "&extremely_long_query_param=" + hex(40) + " 200 in 1234ms"]] }],
   }) }).catch(() => {});
-  // 3) wide trace (OTLP/JSON) → Requests/Traces/APM
-  const now = Date.now() * 1e6;
-  await fetch(`${BASE}/otlp/v1/traces`, { method: "POST", headers: H, body: JSON.stringify({
-    resourceSpans: [{
-      resource: { attributes: [{ key: "service.name", value: { stringValue: "overflow-qa-very-long-service-name-here" } }] },
-      scopeSpans: [{ spans: [{
-        traceId: hex(16), spanId: hex(8), name: "GET", kind: 2,
-        startTimeUnixNano: String(now), endTimeUnixNano: String(now + 5e6),
-        attributes: [
-          { key: "http.method", value: { stringValue: "GET" } },
-          { key: "http.target", value: { stringValue: LONG } },
-          { key: "http.status_code", value: { intValue: "200" } },
-        ],
-      }] }],
-    }],
+  // 3) wide request: a hop record pair with a long route and service name -> Requests, request view
+  const trace = hex(16);
+  const hop = hex(8);
+  const svc = "overflow-qa-very-long-service-name-here";
+  const t0 = Date.now();
+  const rec = (kind, extra) => `trace_id=${trace} hop=${kind} hop_id=${hop} parent_id=${hex(8)} service=${svc} adapter=qa via=http method=GET op=${LONG}${extra}`;
+  await fetch(`${BASE}/ingest/loki/api/v1/push`, { method: "POST", headers: H, body: JSON.stringify({
+    streams: [{ stream: { service: svc, kind: "hop" }, values: [
+      [String(t0 * 1e6), rec("in", "")],
+      [String((t0 + 5) * 1e6), rec("in_end", " outcome=ok status=200 duration_us=5000")],
+    ] }],
   }) }).catch(() => {});
   // give the batch/ingest a moment to land
   await new Promise((r) => setTimeout(r, 4000));

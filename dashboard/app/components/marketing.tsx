@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 
 export const SITE = "https://backwork.dev";
 export const REPO = "https://github.com/SirFitz/backwork";
-export const TAGLINE = "Logs, metrics, and traces — self-hosted, multi-tenant, and honest about your data.";
+export const TAGLINE = "Find any request across your services: where it went, where the time went, what it logged. Self-hosted and light.";
 
 /** Per-page SEO meta (title, description, canonical, OpenGraph, Twitter). */
 export function seo({ title, description, path = "/", image = "/og.png" }: { title: string; description: string; path?: string; image?: string }) {
@@ -109,8 +109,8 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
           <FooterCol title="Company" links={[["About", "/about"], ["Privacy", "/privacy"], ["Terms", "/terms"]]} />
         </div>
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 border-t border-border/70 px-5 py-5 text-2xs text-faint sm:flex-row sm:px-6">
-          <span>© {2026} backwork · self-hosted observability</span>
-          <span className="font-mono">Loki · VictoriaMetrics · Jaeger · OpenTelemetry · Vector</span>
+          <span>© {2026} backwork · self-hosted request tracing</span>
+          <span className="font-mono">Correlator · Loki · VictoriaMetrics · Vector</span>
         </div>
       </footer>
     </div>
@@ -179,7 +179,7 @@ function HeroVisual() {
         <div className="grid grid-cols-[120px_1fr] divide-x divide-border">
           {/* mini sidebar */}
           <div className="hidden flex-col gap-1 p-3 sm:flex">
-            {[["Overview", true], ["Logs", false], ["Metrics", false], ["Traces", false], ["Alerts", false]].map(([l, on]) => (
+            {[["Overview", true], ["Requests", false], ["Performance", false], ["Logs", false], ["Alerts", false]].map(([l, on]) => (
               <div key={l as string} className={cn("flex items-center gap-2 rounded px-2 py-1.5 text-2xs", on ? "bg-brand/10 text-brand" : "text-faint")}>
                 <span className={cn("h-1.5 w-1.5 rounded-full", on ? "bg-brand" : "bg-faint/50")} />{l}
               </div>
@@ -227,18 +227,19 @@ function HeroVisual() {
 /* ---------- features ---------- */
 const DIFFS = [
   { icon: Server, title: "Own your data", body: "Self-hosted on your own box with one Docker command. Your telemetry never leaves your infrastructure — no per-GB bill, no third-party retention." },
-  { icon: Layers, title: "Multi-tenant, SaaS-ready", body: "Organizations, teams, roles and per-project ingest tokens. Every tenant's logs, metrics and traces are isolated to the byte." },
+  { icon: Layers, title: "Multi-tenant, SaaS-ready", body: "Organizations, teams, roles and per-project ingest tokens. Every tenant's requests, figures and log lines are kept apart." },
   { icon: ShieldCheck, title: "Honest by design", body: "No demo data, no fake green. A data-source outage reads as “no data,” never “healthy” — so you trust the dashboard when it matters." },
-  { icon: Terminal, title: "One command to ship", body: "curl | sh drops an agent on any host for logs and metrics. Point any OpenTelemetry SDK at one endpoint for traces. That's it." },
+  { icon: Terminal, title: "One command to ship", body: "Add Correlator to a service, then curl | sh drops the agent on its host. Requests, figures and log lines arrive within a minute." },
 ];
 
-const STACK = ["OpenTelemetry", "Loki", "VictoriaMetrics", "Jaeger", "Prometheus", "Vector", "Grafana-compatible", "Docker"];
+const STACK = ["Correlator", "Loki", "VictoriaMetrics", "Vector", "PromQL", "LogQL", "Postgres", "Docker"];
 
 const FAQ = [
   ["Is backwork open source?", "Yes. The full stack lives in a public repo — clone it and run it yourself for free, forever."],
   ["Is it really self-hosted?", "Yes. backwork runs on your own host via Docker Compose, and your telemetry stays on your infrastructure."],
-  ["Does it work with OpenTelemetry?", "Natively. Point any OTLP exporter at a single endpoint and your traces, requests and APM metrics appear automatically."],
-  ["What's it built on?", "Battle-tested open standards — Loki for logs, VictoriaMetrics for metrics, Jaeger for traces and Vector for collection — unified behind one dashboard."],
+  ["How do my services send requests?", "With Correlator. Each service writes a short log line when a request, job or call starts and ends. The agent ships those lines with your ordinary logs; nothing else runs in your app."],
+  ["Does it work alongside AppSignal or Sentry?", "Yes. Correlator writes its records beside whatever tracing you already run, and backwork reads only those records and your log lines."],
+  ["What's it built on?", "Five containers: Vector to collect, Loki for log lines, VictoriaMetrics for the figures, Postgres for accounts and settings, and the dashboard."],
   ["Can my whole team use it?", "Yes. Create organizations and teams, assign roles, and issue per-project ingest tokens that keep each tenant's data isolated."],
   ["How is it different from Grafana or Datadog?", "One integrated pane instead of a wall of dashboards, self-hosted economics instead of per-GB pricing, and states you can trust — it never shows green when your pipeline is down."],
 ];
@@ -258,10 +259,10 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
         <div data-reveal>
           <Eyebrow>Self-hosted observability</Eyebrow>
           <h1 className="mt-5 text-4xl font-semibold leading-[1.07] tracking-tight sm:text-5xl">
-            Your logs, metrics, and traces — in one <span className="text-brand">honest</span> pane.
+            Find any request. See where the time <span className="text-brand">went</span>.
           </h1>
           <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">
-            backwork unifies logs, metrics, distributed traces, requests, incidents and alerts into a single self-hosted dashboard. Multi-tenant, OpenTelemetry-native, and engineered to never show you green when your pipeline is down.
+            Paste a trace ID or a request ID and backwork shows the whole request: every service it crossed, its database and cache time, where it stopped, and the log lines it wrote. Plus figures per service and route, log search and alerts, self-hosted in five containers.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
             <Link to="/register" className="inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-brand-fg shadow-sm transition hover:opacity-90">Start free <ArrowRight className="h-4 w-4" /></Link>
@@ -302,12 +303,12 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
         <div data-reveal className="mb-10 max-w-2xl">
           <Eyebrow>One tool, the whole picture</Eyebrow>
           <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">Everything you need to watch a system.</h2>
-          <p className="mt-4 text-[15px] text-muted">Logs, metrics and traces share one timeline, one search and one set of alerts — no tab-juggling.</p>
+          <p className="mt-4 text-[15px] text-muted">Requests, figures and log lines share one search: any line with a trace ID opens its request.</p>
         </div>
         <div className="grid gap-3 lg:grid-cols-6">
           {/* Logs — wide */}
           <BentoTile span="lg:col-span-4" wide icon={ScrollText} name="Logs" line="Every line, searchable."
-            body="Full-text and LogQL search across every container, with level, service and time filters and a live volume chart."
+            body="Full-text and LogQL search across every service, with level, service and time filters. A line that carries a trace ID opens its request."
             visual={
               <div className="space-y-1.5 rounded-lg border border-border bg-bg p-3 font-mono text-[10.5px] leading-snug">
                 {[["12:04:21", "INFO", "GET /checkout 200 · 142ms", "text-info"], ["12:04:21", "WARN", "retry upstream payments (1/3)", "text-warn"], ["12:04:20", "ERR", "POST /charge 500 · timeout", "text-err"], ["12:04:19", "INFO", "cache hit user:8842", "text-info"], ["12:04:18", "INFO", "GET /api/orders 200", "text-info"]].map((l, i) => (
@@ -315,9 +316,9 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
                 ))}
               </div>
             } />
-          {/* Metrics */}
-          <BentoTile span="lg:col-span-2" icon={Activity} name="Metrics" line="Host to container to app."
-            body="node-exporter and cAdvisor metrics plus RED rates from real traces — PromQL underneath."
+          {/* Performance */}
+          <BentoTile span="lg:col-span-2" icon={Activity} name="Performance" line="Per service, route and call."
+            body="Request rate, errors, p50/p95/p99 and time in databases and caches, from the requests themselves."
             visual={
               <div className="rounded-lg border border-border bg-bg p-2">
                 <svg viewBox="0 0 200 52" className="h-14 w-full" preserveAspectRatio="none" aria-hidden>
@@ -327,9 +328,9 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
                 </svg>
               </div>
             } />
-          {/* Traces */}
-          <BentoTile span="lg:col-span-2" icon={GitBranch} name="Traces" line="Follow every request."
-            body="OpenTelemetry-native spans with a waterfall and a dependency map."
+          {/* Request view */}
+          <BentoTile span="lg:col-span-2" icon={GitBranch} name="Request view" line="Follow every request."
+            body="The path through each service with time bars, database and cache calls, and where it stopped."
             visual={
               <div className="space-y-1.5 rounded-lg border border-border bg-bg p-3 font-mono text-[10px]">
                 {[["checkout-api", 2, 52], ["auth", 12, 20], ["payments", 28, 44], ["postgres", 40, 16]].map(([s, l, w], i) => (
@@ -339,7 +340,7 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
             } />
           {/* Requests */}
           <BentoTile span="lg:col-span-2" icon={Network} name="Requests" line="RED, at a glance."
-            body="A flat HTTP feed that jumps straight to the trace."
+            body="A feed of every request that opens straight into its path."
             visual={
               <div className="flex flex-wrap gap-1.5">
                 {[["GET", "/checkout", "200", "ok"], ["POST", "/charge", "500", "err"], ["GET", "/orders", "200", "ok"], ["GET", "/cart", "304", "muted"]].map((r, i) => (
@@ -347,13 +348,13 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
                 ))}
               </div>
             } />
-          {/* Incidents */}
-          <BentoTile span="lg:col-span-2" icon={AlertTriangle} name="Incidents" line="It tells you first."
-            body="Crash, OOM, restart-loop and error-spike detection from real signals."
+          {/* Needs attention */}
+          <BentoTile span="lg:col-span-2" icon={AlertTriangle} name="Needs attention" line="It tells you first."
+            body="Services failing or slower than usual, requests that stopped, and calls that never arrived."
             visual={
               <div className="rounded-lg border border-err/30 bg-err/5 p-3">
-                <div className="flex items-center gap-2 text-[12px] font-medium"><span className="h-2 w-2 rounded-full bg-err" />Error spike <span className="ml-auto rounded bg-err/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-err">critical</span></div>
-                <div className="mt-1.5 font-mono text-[10px] text-faint">checkout-api · 5xx rate ↑ · detected 2m ago</div>
+                <div className="flex items-center gap-2 text-[12px] font-medium"><span className="h-2 w-2 rounded-full bg-err" />Failing more than usual <span className="ml-auto rounded bg-err/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-err">15 min</span></div>
+                <div className="mt-1.5 font-mono text-[10px] text-faint">checkout-api · 12% failing, usually 1%</div>
               </div>
             } />
           {/* Alerts — wide */}
@@ -397,8 +398,8 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
         <div className="relative grid gap-8 md:grid-cols-3 md:gap-6">
           <div className="absolute inset-x-[16%] top-4 hidden h-px bg-gradient-to-r from-border via-border to-border md:block" aria-hidden />
           <FlowStep n="1" title="Create a project" body="Spin up an organization and get a per-project ingest token, scoped to your tenant." code={<><span className="text-faint"># in the dashboard</span>{"\n"}Projects → <span className="text-brand">New project</span></>} />
-          <FlowStep n="2" title="Ship your telemetry" body="One command for logs &amp; metrics on any host. One env var for OpenTelemetry traces." code={<>curl -fsSL <span className="text-brand">backwork.dev/install.sh</span> | sh</>} />
-          <FlowStep n="3" title="Watch it live" body="A unified dashboard that auto-refreshes, detects incidents and routes alerts where you'll see them." code={<>OTEL_EXPORTER_OTLP_ENDPOINT=<span className="text-brand">/otlp</span></>} />
+          <FlowStep n="2" title="Add Correlator" body="One install in each service. It writes a start and an end line for every request, job and call." code={<>import <span className="text-brand">"correlator/auto"</span>{"\n"}<span className="text-faint"># Elixir: mix correlator.install</span></>} />
+          <FlowStep n="3" title="Run the agent" body="One command on each host ships those lines with your logs. Find any request from the header search." code={<>curl -fsSL <span className="text-brand">backwork.dev/install.sh</span> | sh</>} />
         </div>
       </Section>
 
@@ -409,7 +410,7 @@ export function MarketingLanding({ authed }: { authed?: boolean }) {
             <div>
               <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><ShieldCheck className="h-3.5 w-3.5 text-brand" />Honest by design</div>
               <h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">It never shows you green when your pipeline is down.</h2>
-              <p className="mt-4 text-[15px] leading-relaxed text-muted">Most tools coerce a missing metric to zero and paint it healthy. backwork distinguishes <span className="font-medium text-fg">no data</span> from <span className="font-medium text-fg">all clear</span> — across overview, incidents and alerts — so an outage in the telemetry path is visible, not hidden.</p>
+              <p className="mt-4 text-[15px] leading-relaxed text-muted">Most tools coerce a missing metric to zero and paint it healthy. backwork distinguishes <span className="font-medium text-fg">no data</span> from <span className="font-medium text-fg">all clear</span> — across the Overview, Performance and alerts, so an outage in the telemetry path is visible, not hidden.</p>
             </div>
             <div className="space-y-3">
               <div className="rounded-xl border border-border bg-bg p-4">

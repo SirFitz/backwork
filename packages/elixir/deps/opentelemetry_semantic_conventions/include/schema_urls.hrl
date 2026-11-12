@@ -1,1 +1,0 @@
--define('V1_27_0', <<"https://opentelemetry.io/schemas/1.27.0">>).

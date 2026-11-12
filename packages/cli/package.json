@@ -1,7 +1,7 @@
 {
   "name": "@sirfitz/backwork-cli",
   "version": "0.1.0",
-  "description": "Command-line client for the backwork.dev observability read API — errors, incidents, and service health from your terminal.",
+  "description": "Command-line client for the backwork.dev observability read API — errors and request figures per service from your terminal.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -21,7 +21,6 @@
     "errors",
     "exception-tracking",
     "apm",
-    "incidents",
     "monitoring"
   ],
   "homepage": "https://backwork.dev/docs",

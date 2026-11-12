@@ -2,8 +2,8 @@ import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
 import { Link, useLoaderData, useNavigate } from "@remix-run/react";
 import type { ReactNode } from "react";
-import { ArrowRight, Gauge } from "lucide-react";
-import { Badge, Card, CardHead, Empty, ErrorNote, Sparkline } from "~/components/ui";
+import { ArrowRight, Check, Gauge } from "lucide-react";
+import { Badge, Card, CardHead, Empty, ErrorNote } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
@@ -21,6 +21,8 @@ import {
   type ServiceRow,
 } from "~/lib/hops/metrics.server";
 import { cn } from "~/lib/utils";
+import { NUM, ServicesTable, TD, TIGHT, Th, errorTone, fmtLatency, fmtRate, fmtShare, latencyTone } from "~/components/services-table";
+import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
 
 export const meta: MetaFunction = () => [{ title: "Performance · backwork" }];
 
@@ -36,9 +38,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const range = parseRange(url.searchParams.get("range"));
   const asked = url.searchParams.get("service");
   const requested = asked && isLabelValue(asked) ? asked : null;
+  const health = healthChecksFrom(url.searchParams.get(HEALTH_PARAM));
 
   // Each table is its own promise, so each loads, fails and shows its skeleton on its own.
-  const servicesP = servicesTable(range, tenant);
+  const servicesP = servicesTable(range, tenant, undefined, undefined, health);
   const selectedP: Promise<string | null> = requested
     ? Promise.resolve(requested)
     : servicesP.then(defaultService).catch(() => null);
@@ -48,90 +51,36 @@ export async function loader({ request }: LoaderFunctionArgs) {
   );
   const routes: Promise<Panel<{ service: string | null; rows: RouteRow[] }>> = safe(async () => {
     const service = await selectedP;
-    return { service, rows: service ? await routesTable(service, range, tenant) : [] };
+    return { service, rows: service ? await routesTable(service, range, tenant, undefined, health) : [] };
   }, { service: requested, rows: [] });
   const connections: Promise<Panel<ConnectionRow[]>> = safe(async () => {
     const known = new Set((await servicesP.catch(() => [] as ServiceRow[])).map((s) => s.service));
     return connectionsTable(range, tenant, known, await selectedP);
   }, []);
 
-  return defer({ range, requested, services, routes, connections });
+  return defer({ range, requested, health, services, routes, connections });
 }
 
 // ---------------------------------------------------------------- formatting
 
-/** Latency in seconds, as the frames write it: "0.6 ms", "38 ms", "2.4 s". */
-function fmtLatency(seconds: number | null): string {
-  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return "—";
-  const ms = seconds * 1000;
-  if (ms < 1) return `${ms.toFixed(1)} ms`;
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  return `${seconds.toFixed(1)} s`;
-}
-
-function fmtRate(perSecond: number): string {
-  if (perSecond > 0 && perSecond < 0.05) return "<0.1";
-  return perSecond.toFixed(1);
-}
-
-function fmtShare(share: number, digits = 1): string {
-  return `${(share * 100).toFixed(digits)}%`;
-}
-
-function errorTone(share: number): string {
-  if (share >= 0.05) return "text-err";
-  if (share >= 0.01) return "text-warn";
-  return "";
-}
-
-/** Latency is toned only where a person waits on it: HTTP and RPC, from one second. */
-function latencyTone(seconds: number | null, waitedOn: boolean): string {
-  return waitedOn && seconds !== null && seconds >= 1 ? "text-warn" : "";
-}
-
-/** Service colours from the design frames: cool hues only, so no service reads as a status
- *  (amber, red, green) or as the brand coral. A stable pick per service name. */
-const SERVICE_COLORS: readonly string[] = [
-  "oklch(0.62 0.12 240)",
-  "oklch(0.6 0.15 290)",
-  "oklch(0.64 0.1 195)",
-  "oklch(0.6 0.13 335)",
-  "oklch(0.6 0.08 265)",
-  "oklch(0.58 0.11 215)",
-];
-
-function serviceColor(service: string): string {
-  let h = 0;
-  for (let i = 0; i < service.length; i++) h = (h * 31 + service.charCodeAt(i)) >>> 0;
-  return SERVICE_COLORS[h % SERVICE_COLORS.length];
-}
-
 const REQUEST_RANGES: ReadonlySet<string> = new Set(["1h", "6h", "24h"]);
 
-function requestsHref(route: RouteRow, range: PerfRange): string {
+function requestsHref(route: RouteRow, range: PerfRange, health: HealthChecks): string {
   const p = new URLSearchParams({ service: route.service, range: REQUEST_RANGES.has(range) ? range : "24h" });
+  if (health === HealthChecks.Shown) p.set(HEALTH_PARAM, "1");
   if (route.method) p.set("method", route.method);
   if (route.op) p.set("route", route.op);
   return `/requests?${p.toString()}`;
 }
 
-function perfHref(range: PerfRange, service: string | null): string {
+function perfHref(range: PerfRange, service: string | null, health: HealthChecks): string {
   const p = new URLSearchParams({ range });
   if (service) p.set("service", service);
+  if (health === HealthChecks.Shown) p.set(HEALTH_PARAM, "1");
   return `/performance?${p.toString()}`;
 }
 
 // ---------------------------------------------------------------- table parts
-
-const TH = "whitespace-nowrap border-b border-border px-4 py-2 text-left text-2xs font-medium uppercase tracking-wide text-faint";
-const TD = "whitespace-nowrap border-b border-border px-4 py-2";
-const NUM = "text-right font-mono text-[12.5px] tabular-nums";
-/** Tighter cells for the two half-width tables (frame 5). */
-const TIGHT = "px-[7px] first:pl-4 last:pr-4";
-
-function Th({ children, num, className }: { children?: ReactNode; num?: boolean; className?: string }) {
-  return <th className={cn(TH, num && "text-right", className)}>{children}</th>;
-}
 
 function PanelBody<T>({ panel, empty, children }: { panel: Panel<T>; empty: ReactNode | null; children: (data: T) => ReactNode }) {
   return (
@@ -148,6 +97,8 @@ export default function Performance() {
   const d = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const range = d.range as PerfRange;
+  const health = d.health as HealthChecks;
+  const otherHealth = health === HealthChecks.Shown ? HealthChecks.Hidden : HealthChecks.Shown;
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -156,11 +107,24 @@ export default function Performance() {
           <h1 className="text-[22px] font-semibold tracking-tight">Performance</h1>
           <p className="mt-1 max-w-[70ch] text-[13.5px] text-muted">Request rate, errors and latency for every service that reports hops, by service, route and connection.</p>
         </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">
+        <Link
+          to={perfHref(range, d.requested, otherHealth)}
+          preventScrollReset
+          role="checkbox"
+          aria-checked={health === HealthChecks.Shown}
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted hover:text-fg"
+        >
+          <span aria-hidden className={cn("grid h-3.5 w-3.5 place-items-center rounded-[3px] border", health === HealthChecks.Shown ? "border-brand bg-brand text-brand-fg" : "border-border-strong")}>
+            {health === HealthChecks.Shown ? <Check className="h-2.5 w-2.5" /> : null}
+          </span>
+          Show health checks
+        </Link>
         <nav aria-label="Range" className="inline-flex h-9 shrink-0 items-center gap-0.5 self-start rounded-lg border border-border bg-surface p-[3px] text-xs text-muted">
           {PERF_RANGES.map((r) => (
             <Link
               key={r}
-              to={perfHref(r, d.requested)}
+              to={perfHref(r, d.requested, health)}
               aria-current={r === range ? "true" : undefined}
               className={cn("rounded-[5px] px-[9px] py-[5px] font-medium", r === range ? "bg-surface-2 text-fg" : "hover:text-fg")}
             >
@@ -168,6 +132,7 @@ export default function Performance() {
             </Link>
           ))}
         </nav>
+        </div>
       </div>
 
       <Card>
@@ -187,57 +152,12 @@ export default function Performance() {
                 )}
               >
                 {({ rows, selected }) => (
-                  <div className="overflow-x-auto scroll-thin">
-                    <table className="w-full border-collapse text-[13px]">
-                      <thead>
-                        <tr>
-                          <Th>Service</Th>
-                          <Th num>Req/s</Th>
-                          <Th num>Errors</Th>
-                          <Th num className="hidden md:table-cell">p50</Th>
-                          <Th num>p95</Th>
-                          <Th num className="hidden sm:table-cell">p99</Th>
-                          <Th num>DB + cache</Th>
-                          <Th num className="hidden lg:table-cell">p95 trend</Th>
-                          <Th num className="hidden md:table-cell">In progress</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((s) => {
-                          const color = serviceColor(s.service);
-                          const waited = s.mainVia === "http" || s.mainVia === "rpc";
-                          const on = s.service === selected;
-                          return (
-                            <tr
-                              key={s.service}
-                              onClick={() => navigate(perfHref(range, s.service), { preventScrollReset: true })}
-                              aria-selected={on}
-                              className={cn("cursor-pointer [&:last-child>td]:border-b-0 hover:bg-surface-2/50", on && "bg-surface-2 hover:bg-surface-2")}
-                            >
-                              <td className={TD}>
-                                <Link to={perfHref(range, s.service)} preventScrollReset className="inline-flex items-center font-semibold" onClick={(e) => e.stopPropagation()}>
-                                  <i className="mr-2 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
-                                  {s.service}
-                                </Link>
-                              </td>
-                              <td className={cn(TD, NUM)}>{fmtRate(s.rate)}</td>
-                              <td className={cn(TD, NUM, errorTone(s.errorShare))}>{fmtShare(s.errorShare)}</td>
-                              <td className={cn(TD, NUM, "hidden md:table-cell")}>{fmtLatency(s.p50)}</td>
-                              <td className={cn(TD, NUM)}>{fmtLatency(s.p95)}</td>
-                              <td className={cn(TD, NUM, "hidden sm:table-cell", latencyTone(s.p99, waited))}>{fmtLatency(s.p99)}</td>
-                              <td className={cn(TD, NUM)} title={s.storeCallsPerRequest !== null ? `${s.storeCallsPerRequest.toFixed(1)} data-store calls per request` : undefined}>
-                                {s.storeShare === null ? "—" : fmtShare(s.storeShare, 0)}
-                              </td>
-                              <td className={cn(TD, "hidden text-right lg:table-cell")}>
-                                <span className="inline-block align-middle"><Sparkline data={s.trend} color={color} width={96} height={22} /></span>
-                              </td>
-                              <td className={cn(TD, NUM, "hidden text-faint md:table-cell")}>{s.inProgress}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <ServicesTable
+                    rows={rows}
+                    selected={selected}
+                    hrefFor={(service) => perfHref(range, service, health)}
+                    onOpen={(service) => navigate(perfHref(range, service, health), { preventScrollReset: true })}
+                  />
                 )}
               </PanelBody>
             </>
@@ -278,9 +198,9 @@ export default function Performance() {
                         </thead>
                         <tbody>
                           {rows.map((r) => (
-                            <tr key={`${r.method} ${r.op}`} onClick={() => navigate(requestsHref(r, range))} className="cursor-pointer [&:last-child>td]:border-b-0 hover:bg-surface-2/50">
+                            <tr key={`${r.method} ${r.op}`} onClick={() => navigate(requestsHref(r, range, health))} className="cursor-pointer [&:last-child>td]:border-b-0 hover:bg-surface-2/50">
                               <td className={cn(TD, TIGHT, "font-mono text-[12.5px]")}>
-                                <Link to={requestsHref(r, range)} onClick={(e) => e.stopPropagation()} title="Open these requests">
+                                <Link to={requestsHref(r, range, health)} onClick={(e) => e.stopPropagation()} title="Open these requests">
                                   {r.method ? <span className="font-medium text-faint">{r.method} </span> : null}
                                   {r.op || <span className="text-faint">(no route)</span>}
                                 </Link>

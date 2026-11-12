@@ -17,8 +17,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 const PRINCIPLES = [
-  { icon: Server, title: "Self-hosted by default", body: "backwork runs on your own infrastructure. Logs, metrics and traces are stored on your disk and never traverse a third party — the strongest data-residency guarantee there is." },
-  { icon: Layers, title: "Per-tenant isolation, to the byte", body: "Every organization's data is scoped by an enforced org_id: injected into log stream labels, metric series and trace spans at ingest, and filtered server-side on every query. A tenant can never read another's telemetry." },
+  { icon: Server, title: "Self-hosted by default", body: "backwork runs on your own infrastructure. Requests, figures and log lines are stored on your disk and never traverse a third party — the strongest data-residency guarantee there is." },
+  { icon: Layers, title: "Per-tenant isolation, to the byte", body: "Every organization's data is scoped by an enforced org_id: injected into log stream labels and metric series at ingest, and filtered server-side on every query. A tenant can never read another's telemetry." },
   { icon: Lock, title: "Encryption & hashing at rest", body: "Alert-channel secrets are sealed with AES-256-GCM (HKDF-derived keys). Ingest tokens are stored only as SHA-256 hashes. Passwords use argon2id with a server-side pepper." },
   { icon: KeyRound, title: "Hardened sessions", body: "Signed, HttpOnly, Secure cookies with server-side revocation via a token version — logging out or changing a password invalidates captured cookies everywhere. Per-IP and per-account rate limiting throttles brute force." },
   { icon: ShieldAlert, title: "Safe by construction", body: "Same-origin (CSRF) checks on every state-changing action, SSRF guards that block alert webhooks from reaching internal or metadata endpoints, and path-only redirects that can't be hijacked." },

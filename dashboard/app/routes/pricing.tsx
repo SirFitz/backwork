@@ -25,7 +25,7 @@ const TIERS = [
     blurb: "The whole stack, on your own hardware. Open source.",
     cta: { label: "Get the code", href: REPO, external: true },
     highlight: false,
-    features: ["Logs, metrics, traces, requests, incidents & alerts", "Unlimited hosts, projects & retention (your disk)", "Organizations, teams & roles", "OpenTelemetry-native ingest", "One Docker-Compose deploy", "Community support on GitHub"],
+    features: ["Request view, Requests, Performance, Logs, Errors & Alerts", "Unlimited hosts, projects & retention (your disk)", "Organizations, teams & roles", "Correlator hop records, read from your logs", "One Docker-Compose deploy", "Community support on GitHub"],
   },
   {
     name: "Cloud",
@@ -34,7 +34,7 @@ const TIERS = [
     blurb: "Managed backwork, hosted by us — free while in beta.",
     cta: { label: "Start free", href: "/register", external: false },
     highlight: true,
-    features: ["Everything in Self-host, fully managed", "14-day metrics / 7-day log retention", "Multi-tenant orgs & per-project tokens", "Email alert channels included", "Free during beta — usage-based plans planned", "Best-effort support"],
+    features: ["Everything in Self-host, fully managed", "30-day hop records, 14-day figures, 7-day logs", "Multi-tenant orgs & per-project tokens", "Email alert channels included", "Free during beta — usage-based plans planned", "Best-effort support"],
   },
   {
     name: "Enterprise",
@@ -60,7 +60,7 @@ export default function Pricing() {
     <MarketingShell authed={authed} active="pricing">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
         "@context": "https://schema.org", "@type": "Product", name: "backwork",
-        description: "Self-hosted logs, metrics and traces in one dashboard.", url: SITE + "/pricing",
+        description: "Self-hosted request tracing, performance figures and log search in one dashboard.", url: SITE + "/pricing",
         offers: TIERS.map((t) => ({ "@type": "Offer", name: t.name, price: t.price === "Free" ? "0" : t.price === "Custom" ? undefined : t.price.replace("$", ""), priceCurrency: "USD" })),
       }) }} />
 

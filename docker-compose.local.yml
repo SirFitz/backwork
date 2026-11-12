@@ -20,20 +20,25 @@ services:
   # requests (POST /orders healthy; POST /payouts/:id/release stalled), then one
   # generated request every CYCLE_S seconds. The collector names each service
   # after its compose service, as it would for a real one. Formats differ on
-  # purpose so detection is exercised on every form.
+  # purpose so detection is exercised on every form. They carry the collect
+  # label because the stack collector reads only labelled containers.
   commerce-api:
     build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
     environment: { SERVICE: commerce-api, FORMAT: json, CYCLE_S: "30" }
     restart: unless-stopped
   commerce-payments:
     build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
     environment: { SERVICE: commerce-payments, FORMAT: kv, CYCLE_S: "30" }
     restart: unless-stopped
   commerce-risk:
     build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
     environment: { SERVICE: commerce-risk, FORMAT: json-nested, CYCLE_S: "30" }
     restart: unless-stopped
   commerce-worker:
     build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
     environment: { SERVICE: commerce-worker, FORMAT: kv, CYCLE_S: "30" }
     restart: unless-stopped
