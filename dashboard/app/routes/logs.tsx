@@ -14,6 +14,11 @@ import { cn, fmtClock, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 import { traceIdOfLine } from "~/lib/hops/parse";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
+/** pino writes numeric levels; show their names. */
+const PINO_LEVELS: Readonly<Record<string, string>> = { "10": "trace", "20": "debug", "30": "info", "40": "warn", "50": "error", "60": "fatal" };
+function levelName(level: string): string {
+  return PINO_LEVELS[level] ?? level;
+}
 const RANGES: Record<string, number> = { "15m": 15, "1h": 60, "6h": 360, "24h": 1440 };
 
 /** Hop records are log lines too (design 8): hidden unless "Show hop records" is on.
@@ -62,7 +67,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     query,
     filters: { service, level, q, range: rangeKey, hops: showHops, raw },
     entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) =>
-      list.map((e) => ({ ts: e.ts, level: e.level, service: e.service, message: e.message, traceId: traceIdOfLine(e.line) })),
+      list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: e.service, message: e.message, traceId: traceIdOfLine(e.line) })),
     ),
     hidden: showHops || raw ? Promise.resolve(0) : cached(`${ck}:h`, 5000, () => loki.scalar(hiddenQuery, 0, t)).catch(() => -1),
     volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }, t)).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
@@ -134,7 +139,7 @@ export default function Logs() {
                     <span className="col-span-3 md:col-span-1 md:col-start-5 md:row-start-1 md:text-right">
                       {e.traceId ? (
                         <Link
-                          to={`/traces/${e.traceId}`}
+                          to={`/requests/${e.traceId}`}
                           className="inline-flex items-center gap-[5px] rounded-[5px] border border-brand/30 px-1.5 py-px text-2xs font-medium text-brand hover:bg-brand/10"
                           title={`Open request ${e.traceId}`}
                         >

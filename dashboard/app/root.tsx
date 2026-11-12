@@ -20,11 +20,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
-  Activity,
-  AlertTriangle,
   ArrowRight,
   BellRing,
-  Boxes,
   Bug,
   Building2,
   Check,
@@ -33,7 +30,6 @@ import {
   Cog,
   FolderKanban,
   Gauge,
-  GitBranch,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -110,14 +106,10 @@ export function shouldRevalidate({ currentUrl, nextUrl, formMethod }: { currentU
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/containers", label: "Containers", icon: Boxes },
-  { to: "/logs", label: "Logs", icon: ScrollText },
-  { to: "/metrics", label: "Metrics", icon: Activity },
-  { to: "/traces", label: "Traces", icon: GitBranch },
   { to: "/requests", label: "Requests", icon: Network },
   { to: "/performance", label: "Performance", icon: Gauge },
+  { to: "/logs", label: "Logs", icon: ScrollText },
   { to: "/errors", label: "Errors", icon: Bug },
-  { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/alerts", label: "Alerts", icon: BellRing },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/settings", label: "Settings", icon: Cog },
@@ -141,7 +133,8 @@ function ThemeToggle() {
 
 function LiveStatus() {
   const revalidator = useRevalidator();
-  const [last, setLast] = useState<number>(Date.now());
+  // null until mounted: a clock rendered on the server never matches the browser's (hydration).
+  const [last, setLast] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
 
   useEffect(() => {
@@ -171,7 +164,7 @@ function LiveStatus() {
       <span className="hidden text-2xs tabular-nums text-faint sm:inline">
         {revalidator.state !== "idle"
           ? "refreshing"
-          : new Date(last).toLocaleTimeString("en-GB", { hour12: false })}
+          : last === null ? "" : new Date(last).toLocaleTimeString("en-GB", { hour12: false })}
       </span>
     </div>
   );
@@ -293,7 +286,7 @@ function FindRequest() {
 
   const data = q.trim() && fetcher.data && fetcher.data.q.trim() === q.trim() ? fetcher.data.preview : null;
   const busy = fetcher.state !== "idle" || (q.trim() !== "" && !data);
-  const target = data && data.ok ? `/traces/${data.traceId}${data.rule === "hex" ? "" : `?q=${encodeURIComponent(data.input)}`}` : null;
+  const target = data && data.ok ? `/requests/${data.traceId}${data.rule === "hex" ? "" : `?q=${encodeURIComponent(data.input)}`}` : null;
 
   const submit = (e: React.FormEvent) => {
     if (target) {
@@ -494,7 +487,7 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
         <div className="px-5 py-4 text-2xs leading-relaxed text-faint">
           <div className="mb-1 flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-faint" />
-            Loki · VictoriaMetrics · cAdvisor
+            Loki · VictoriaMetrics
           </div>
           self-hosted observability
         </div>
@@ -523,8 +516,9 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
 
 function MobileNav() {
   const [more, setMore] = useState(false);
-  const primary = NAV.slice(0, 5);
-  const rest = NAV.slice(5);
+  // Phone tabs: Overview, Requests, Performance, Logs, then More.
+  const primary = NAV.slice(0, 4);
+  const rest = NAV.slice(4);
   const tab = (active: boolean) => cn("flex flex-1 flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-[10px]", active ? "text-brand" : "text-muted");
   return (
     <>

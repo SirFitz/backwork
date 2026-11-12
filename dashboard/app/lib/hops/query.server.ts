@@ -1,11 +1,11 @@
-// Request lookup queries (design 7.2), through the existing scoped Loki and Jaeger clients.
+// Request lookup queries (design 7.2), through the existing scoped Loki client. Hop records and
+// log lines only: Jaeger left the stack on 2026-11-12, so there is no span step.
 // Every query passes the viewer's tenant, so a trace ID of another organisation returns nothing.
 // Only a validated TraceId is ever placed in a query.
 import * as loki from "~/lib/loki.server";
-import * as jaeger from "~/lib/jaeger.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { isTraceId, parseHopRecord, parseLinkLine, toTraceLogLine, type RawLogEntry } from "./parse";
-import { HOP_RETENTION_DAYS, LOG_PAGE, LOG_RETENTION_DAYS, SearchWindow, WINDOW_LABEL, type HopRecord, type LinkedId, type TraceId, type TraceLogLine, type TraceSpan } from "./types";
+import { HOP_RETENTION_DAYS, LOG_PAGE, LOG_RETENTION_DAYS, SearchWindow, WINDOW_LABEL, type HopRecord, type LinkedId, type TraceId, type TraceLogLine } from "./types";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -122,22 +122,6 @@ export async function logsOnly(traceId: TraceId, tenant: Tenant, now: number, qu
   assertTraceId(traceId);
   const entries = await query(`{service=~".+", kind!="hop"} |= "${traceId}"`, { start: now - DAY, end: now, limit: LOG_PAGE }, tenant);
   return entries.map((e) => toTraceLogLine(toRaw(e))).sort((a, b) => a.timeMs - b.timeMs);
-}
-
-/** Step 3: OpenTelemetry spans from Jaeger (tenant-checked by getTrace). */
-export async function spansFor(traceId: TraceId, tenant: Tenant): Promise<TraceSpan[]> {
-  assertTraceId(traceId);
-  const trace = await jaeger.getTrace(traceId, tenant);
-  if (!trace) return [];
-  return trace.spans.map((s) => ({
-    spanId: s.spanID,
-    parentSpanId: s.parentID ?? null,
-    service: s.service,
-    operation: s.operationName,
-    startMs: s.startMs,
-    durationUs: Math.round(s.durationMs * 1000),
-    error: s.error,
-  }));
 }
 
 function escapeRegex(s: string): string {

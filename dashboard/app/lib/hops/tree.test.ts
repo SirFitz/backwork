@@ -68,7 +68,7 @@ describe("straight chain", () => {
     ...hop("out", { id: 2, parent: 1, svc: API, peer: "payments.internal", start: 1, dur: 15.31 }),
     ...hop("in", { id: 3, parent: 2, svc: PAY, op: "/charges", start: 1.2, dur: 14.82 }),
   ];
-  const tree = buildRequestTree(records, [], [], NOW);
+  const tree = buildRequestTree(records, [], NOW);
   test("one root, each hop under the hop it names", () => {
     expect(tree.roots.map((h) => h.hopId)).toEqual([hid(1)]);
     expect(tree.roots[0].children[0].hopId).toBe(hid(2));
@@ -82,12 +82,12 @@ describe("straight chain", () => {
   });
   test("order comes from the records, not from clocks: a child logged with an earlier clock stays a child", () => {
     const skewed = records.map((r) => (r.hopId === hid(3) ? { ...r, timeMs: r.timeMs - 5000 } : r));
-    const t = buildRequestTree(skewed, [], [], NOW);
+    const t = buildRequestTree(skewed, [], NOW);
     expect(t.roots.length).toBe(1);
     expect(t.roots[0].children[0].children[0].hopId).toBe(hid(3));
   });
   test("a re-shipped duplicate line changes nothing", () => {
-    expect(buildRequestTree([...records, ...records], [], [], NOW).hops.length).toBe(3);
+    expect(buildRequestTree([...records, ...records], [], NOW).hops.length).toBe(3);
   });
 });
 
@@ -99,7 +99,7 @@ describe("parallel calls", () => {
     ...hop("in", { id: 4, parent: 2, svc: PAY, start: 2.5, dur: 29 }),
     ...hop("in", { id: 5, parent: 3, svc: RISK, start: 5.5, dur: 19 }),
   ];
-  const tree = buildRequestTree(records, [], [], NOW);
+  const tree = buildRequestTree(records, [], NOW);
   test("siblings are ordered by start time", () => {
     expect(tree.roots[0].children.map((h) => h.peer)).toEqual(["a", "b"]);
   });
@@ -124,7 +124,7 @@ describe("the healthy request of frame 2", () => {
     line(API, 1.0, "order received"),
     line(API, 90_000, "late line"),
   ];
-  const tree = buildRequestTree(healthy(), logs, [], NOW, links);
+  const tree = buildRequestTree(healthy(), logs, NOW, links);
   const byId = (n: number) => tree.hops.find((h) => h.hopId === hid(n))!;
 
   test("12 hops, 8 of them not data-store hops, 4 services, no faults", () => {
@@ -189,7 +189,7 @@ describe("stalled hop (frame 3)", () => {
     ...hop("out", { id: 6, parent: 1, svc: API, via: "job", peer: "notifications", start: 30000, dur: 0.9 }),
   ];
   const logs = [line(PAY, 381, "bank transfer submitted ref=TRF-88213"), line(PAY, 6386, "bank gateway slow, still waiting (6s)", "warn")];
-  const tree = buildRequestTree(records, logs, [], now);
+  const tree = buildRequestTree(records, logs, now);
   const byId = (n: number) => tree.hops.find((h) => h.hopId === hid(n))!;
 
   test("hops without an end record after 60 s are stalled; only the deepest is where it stopped", () => {
@@ -213,25 +213,25 @@ describe("stalled hop (frame 3)", () => {
     expect(byId(5).logs.length).toBe(2);
   });
   test("a hop without an end record younger than 60 s is open, not stalled", () => {
-    const t = buildRequestTree(records, [], [], T0 + 360 + STALL_AFTER_MS - 1);
+    const t = buildRequestTree(records, [], T0 + 360 + STALL_AFTER_MS - 1);
     expect(t.hops.find((h) => h.hopId === hid(3))?.state).toBe(HopState.Open);
     expect(t.gaps.some((g) => g.kind === GapKind.Stopped && g.hopId === hid(3))).toBe(false);
   });
   test("the time split of a request that has not finished runs to now", () => {
-    const t = buildRequestTree(records.filter((r) => r.hopId !== hid(1) || r.hop === "in"), [], [], now);
+    const t = buildRequestTree(records.filter((r) => r.hopId !== hid(1) || r.hop === "in"), [], now);
     expect(t.split?.totalUs).toBe((now - T0) * 1000);
   });
 });
 
 describe("missing caller", () => {
   test("an inbound hop whose parent is not among the records is a root with a gap", () => {
-    const tree = buildRequestTree(hop("in", { id: 3, parent: 99, svc: PAY, dur: 5 }), [], [], NOW);
+    const tree = buildRequestTree(hop("in", { id: 3, parent: 99, svc: PAY, dur: 5 }), [], NOW);
     expect(tree.roots.map((h) => h.hopId)).toEqual([hid(3)]);
     expect(tree.gaps.map((g) => g.kind)).toEqual([GapKind.MissingCaller]);
     expect(faultCount(tree)).toBe(1);
   });
   test("an inbound hop with no parent is a plain root", () => {
-    expect(buildRequestTree(hop("in", { id: 3, svc: PAY, dur: 5 }), [], [], NOW).gaps).toEqual([]);
+    expect(buildRequestTree(hop("in", { id: 3, svc: PAY, dur: 5 }), [], NOW).gaps).toEqual([]);
   });
 });
 
@@ -243,7 +243,7 @@ describe("retried job", () => {
     ...hop("in", { id: 4, parent: 2, svc: WORKER, via: "job", op: "Send", start: 2000, dur: 5, attempt: 2 }),
     ...hop("in", { id: 5, parent: 2, svc: WORKER, via: "job", op: "Send", start: 9000, dur: 5, attempt: 3 }),
   ];
-  const tree = buildRequestTree(records, [], [], NOW);
+  const tree = buildRequestTree(records, [], NOW);
   test("each attempt is its own inbound hop under the same caller", () => {
     expect(tree.roots[0].children[0].children.map((h) => h.attempt)).toEqual([1, 2, 3]);
   });
@@ -260,13 +260,13 @@ describe("tracer-only service in between", () => {
     ...hop("in", { id: 3, parent: 2, svc: PAY, start: 2, dur: 6, pid: inPid }),
   ];
   test("parent_id differs and the caller has no tracer field: passed through a tracer-only service", () => {
-    expect(buildRequestTree(mk(false, "c0ffee0000000001"), [], [], NOW).gaps.map((g) => g.kind)).toEqual([GapKind.TracerBetween]);
+    expect(buildRequestTree(mk(false, "c0ffee0000000001"), [], NOW).gaps.map((g) => g.kind)).toEqual([GapKind.TracerBetween]);
   });
   test("same parent_id: direct or through a proxy", () => {
-    expect(buildRequestTree(mk(false, "b7ad6b7169203331"), [], [], NOW).gaps).toEqual([]);
+    expect(buildRequestTree(mk(false, "b7ad6b7169203331"), [], NOW).gaps).toEqual([]);
   });
   test("the caller's own tracer wrote its span ID: nothing sat between", () => {
-    expect(buildRequestTree(mk(true, "c0ffee0000000001"), [], [], NOW).gaps).toEqual([]);
+    expect(buildRequestTree(mk(true, "c0ffee0000000001"), [], NOW).gaps).toEqual([]);
   });
 });
 
@@ -277,7 +277,7 @@ describe("data-store calls past the record limit", () => {
     ...hop("out", { id: 50, parent: 1, svc: API, via: "cache", op: "get", peer: "redis", start: 60, dur: 0.3, sent: false }),
     ...hop("out", { id: 51, parent: 1, svc: API, via: "cache", op: "get", peer: "redis", start: 61, dur: 0.3, sent: false }),
   ];
-  const tree = buildRequestTree(records, [], [], NOW);
+  const tree = buildRequestTree(records, [], NOW);
   test("one summary row for the calls not recorded one by one, with their combined time", () => {
     expect(tree.roots[0].unrecorded).toEqual([{ store: "db", calls: 5, us: 15000 }]);
   });
@@ -289,13 +289,13 @@ describe("data-store calls past the record limit", () => {
 
 describe("empty and odd input", () => {
   test("no records gives an empty tree", () => {
-    const t = buildRequestTree([], [line(API, 0, "x")], [], NOW);
+    const t = buildRequestTree([], [line(API, 0, "x")], NOW);
     expect(t.roots).toEqual([]);
     expect(t.split).toBeNull();
     expect(t.unplacedLogs[API].length).toBe(1);
   });
   test("a hop naming itself as parent is a root, not a loop", () => {
-    const t = buildRequestTree(hop("in", { id: 1, parent: 1, svc: API, dur: 1 }), [], [], NOW);
+    const t = buildRequestTree(hop("in", { id: 1, parent: 1, svc: API, dur: 1 }), [], NOW);
     expect(t.roots.length).toBe(1);
   });
 });

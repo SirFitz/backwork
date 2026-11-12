@@ -17,7 +17,6 @@ import {
   type TimeSplit,
   type TraceId,
   type TraceLogLine,
-  type TraceSpan,
   type UnrecordedStoreCalls,
 } from "./types";
 
@@ -188,14 +187,12 @@ function dedupeLinks(links: readonly LinkedId[]): LinkedId[] {
  * Build the tree of one trace.
  * @param records hop records of the trace (parsed, any order)
  * @param logs ordinary log lines of the trace
- * @param spans OpenTelemetry spans of the trace (shown in their own section, phase 2)
  * @param now epoch ms, for open and stalled hops
  * @param links linked-ID lines of the trace
  */
 export function buildRequestTree(
   records: readonly HopRecord[],
   logs: readonly TraceLogLine[],
-  spans: readonly TraceSpan[],
   now: number,
   links: readonly LinkedId[] = [],
 ): RequestTree {
@@ -295,7 +292,6 @@ export function buildRequestTree(
     linkedIds,
     gaps,
     unplacedLogs,
-    spans: [...spans].sort((a, b) => a.startMs - b.startMs),
     split: firstIn ? timeSplit(firstIn, now) : null,
     startMs: starts.length ? Math.min(...starts) : null,
     endMs: ends.length ? Math.max(...ends) : null,

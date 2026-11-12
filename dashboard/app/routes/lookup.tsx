@@ -1,5 +1,5 @@
 // Find a request by any ID (design 7.1, 8). GET /lookup?q=<input>
-//  - a valid input redirects to /traces/<trace_id>;
+//  - a valid input redirects to /requests/<trace_id>;
 //  - with &preview=1 it answers JSON for the header search (resolution and the request found);
 //  - an invalid input is rejected with a message and never reaches a query.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
@@ -32,7 +32,7 @@ export type LookupPreview =
 
 /** Where the request view lives for a resolved input. The original input is kept to show it beside the trace ID. */
 function requestHref(traceId: string, rule: IdRule, input: string): string {
-  return rule === IdRule.Hex ? `/traces/${traceId}` : `/traces/${traceId}?q=${encodeURIComponent(input)}`;
+  return rule === IdRule.Hex ? `/requests/${traceId}` : `/requests/${traceId}?q=${encodeURIComponent(input)}`;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -56,7 +56,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (e) {
     error = e instanceof Error ? e.message.slice(0, 160) : "lookup failed";
   }
-  const summary = result?.found ? requestSummary(buildRequestTree(result.records, [], [], now, result.links)) : null;
+  const summary = result?.found ? requestSummary(buildRequestTree(result.records, [], now, result.links)) : null;
   const body: LookupPreview = {
     ok: true,
     traceId: resolved.traceId,

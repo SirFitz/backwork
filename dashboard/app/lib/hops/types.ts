@@ -138,17 +138,6 @@ export interface TraceLogLine {
   line: string;
 }
 
-/** A minimal OpenTelemetry span, as shown in the request view's spans section. */
-export interface TraceSpan {
-  spanId: string;
-  parentSpanId: string | null;
-  service: string;
-  operation: string;
-  startMs: number;
-  durationUs: number;
-  error: boolean;
-}
-
 export interface Gap {
   kind: GapKind;
   /** The hop the gap is attached to. */
@@ -217,7 +206,6 @@ export interface RequestTree {
   gaps: Gap[];
   /** Log lines that fit no inbound hop, by service. */
   unplacedLogs: Record<string, TraceLogLine[]>;
-  spans: TraceSpan[];
   split: TimeSplit | null;
   startMs: number | null;
   endMs: number | null;
