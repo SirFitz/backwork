@@ -17,7 +17,7 @@ import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
-import { requestPath, routeHint } from "~/lib/hops/paths";
+import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
@@ -409,7 +409,8 @@ function Title({ head, size = "lg" }: { head: Hop; size?: "lg" | "sm" }) {
   return (
     <>
       <h1 className={cn("m-0 flex flex-wrap items-center gap-2.5 font-mono font-semibold tracking-tight", size === "lg" ? "text-[21px]" : "text-base leading-snug")}>
-        <span className="min-w-0 [overflow-wrap:anywhere]">
+        {/* A path wraps (HOP-24 caps it at 200 bytes); the whole value on hover too. */}
+        <span className="min-w-0 [overflow-wrap:anywhere]" title={pathTitle(head.path, head.op) ?? label ?? undefined}>
           {head.method ? <span className="font-medium text-faint">{head.method} </span> : null}
           {label}
         </span>

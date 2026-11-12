@@ -10,6 +10,7 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/hops/metrics.server";
 import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
+import { pathTitle } from "~/lib/hops/paths";
 import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
 import { cn, fmtMs, fmtPct } from "~/lib/utils";
 import { Clock } from "~/components/time";
@@ -271,13 +272,14 @@ function Feed({
               <li key={`m|${r.traceID}|${r.service}|${r.startMs}`}>
                 <Link to={`/requests/${r.traceID}`} className="block px-3.5 py-2.5 hover:bg-surface-2/50">
                   <div className="flex min-w-0 items-start justify-between gap-2.5 font-mono text-[12.5px]">
-                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                    {/* Long or odd paths (scanners: /.env, /debug/vars, 200-byte probes) wrap, at most two lines; the full value on hover. */}
+                    <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title={pathTitle(r.path, r.route)}>
                       {r.method ? <span className="font-semibold text-faint">{r.method} </span> : null}
                       {r.path ?? (r.route || <span className="text-faint">(no route)</span>)}
                     </span>
                     <span className={cn("shrink-0 font-semibold tabular-nums", statusTone(r.status))}>{r.status ?? "—"}</span>
                   </div>
-                  {r.path && r.route && r.route !== r.path ? <div className="mt-0.5 font-mono text-2xs text-faint [overflow-wrap:anywhere]">{r.route}</div> : null}
+                  {r.path && r.route && r.route !== r.path ? <div className="mt-0.5 truncate font-mono text-2xs text-faint" title={`route ${r.route}`}>{r.route}</div> : null}
                   <div className="mt-[3px] flex min-w-0 items-center justify-between gap-2.5 font-mono text-[11px]">
                     <span className="min-w-0 truncate text-accent">{r.service}</span>
                     <span className={cn("shrink-0 tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-faint")}>
@@ -307,7 +309,7 @@ function Feed({
                     <td className="px-4 py-1.5 tabular-nums text-faint"><Clock ts={r.startMs} /></td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
                     <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
-                    <td className="max-w-[360px] px-4 py-1.5 text-fg/90" title={r.path && r.route ? `route ${r.route}` : undefined}>
+                    <td className="max-w-[360px] px-4 py-1.5 text-fg/90" title={pathTitle(r.path, r.route)}>
                       {r.path ? (
                         <>
                           <span className="block truncate">{r.path}</span>
