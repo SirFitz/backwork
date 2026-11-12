@@ -480,11 +480,24 @@ export interface ControlsSnapshot {
   services: Record<string, Record<Feature, boolean>>;
   /** Enabled filter patterns, in order. Empty when the filter is off for the project. */
   patterns: { name: string; pattern: string; replacement: string }[];
+  /** Container or process name (`source`) -> the service its hop records name, where they
+   *  differ: ordinary lines of that source are stored under the service's own name (BAC-51). */
+  serviceNames: Record<string, string>;
+}
+
+/** Switch rows with any service written under a source name moved to that service's own name,
+ *  so a switch acts on the lines it names whichever label they were stored under. Off wins. */
+export function canonicalRows(rows: readonly ControlRow[], bySource: ReadonlyMap<string, string>): ControlRow[] {
+  return rows.map((r) => (r.service !== null && bySource.has(r.service) ? { ...r, service: bySource.get(r.service) as string } : r));
 }
 
 /** What an agent for one project must enforce. */
-export async function controlsSnapshot(orgId: string, projectId: string): Promise<ControlsSnapshot> {
-  const rows = await getControls(orgId);
+export async function controlsSnapshot(
+  orgId: string,
+  projectId: string,
+  serviceNames: Readonly<Record<string, string>> = {},
+): Promise<ControlsSnapshot> {
+  const rows = canonicalRows(await getControls(orgId), new Map(Object.entries(serviceNames)));
   const project = resolveAll(rows, projectId, null);
   const services: Record<string, Record<Feature, boolean>> = {};
   for (const r of rows) {
@@ -498,8 +511,9 @@ export async function controlsSnapshot(orgId: string, projectId: string): Promis
         replacement: p.builtIn ? p.replacement : FILTERED,
       }))
     : [];
-  const body = JSON.stringify({ project, services, patterns });
+  const names = Object.fromEntries(Object.entries(serviceNames).sort(([a], [b]) => a.localeCompare(b)));
+  const body = JSON.stringify({ project, services, patterns, serviceNames: names });
   const { createHash } = await import("node:crypto");
   const version = createHash("sha256").update(body).digest("hex").slice(0, 16);
-  return { version, project, services, patterns };
+  return { version, project, services, patterns, serviceNames: names };
 }

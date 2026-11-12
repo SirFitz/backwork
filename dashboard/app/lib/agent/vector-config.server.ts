@@ -252,6 +252,7 @@ export function defaultSnapshot(): ControlsSnapshot {
     project: all,
     services: {},
     patterns: BUILT_IN_PATTERNS.map((p) => ({ name: p.name, pattern: p.pattern, replacement: p.replacement })),
+    serviceNames: {},
   };
 }
 
@@ -265,6 +266,7 @@ export function controlsVrl(snap: ControlsSnapshot): string {
     REDETECT_VRL.trimEnd(),
     NEST_LEVEL_VRL.trimEnd(),
     NAMING_VRL.trimEnd(),
+    ...relabelVrl(snap.serviceNames),
   ];
   for (const f of FEATURES) lines.push(`${sw(f)} = ${snap.project[f] ? "true" : "false"}`);
   const overrides = Object.entries(snap.services).filter(([, eff]) => FEATURES.some((f) => eff[f] !== snap.project[f]));
@@ -326,6 +328,23 @@ if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q || bw_drop_p) {
   }
   lines.push(SLIM_VRL.trimEnd());
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Ordinary lines of a source whose hop records name a service are stored under that service's
+ * own name (BAC-51 step 2); `source` keeps the container. Runs before the switches, so a
+ * per-service switch acts on the lines it names. A source with no hop records is never in the
+ * map, so its lines keep their label. Empty map: nothing.
+ */
+export function relabelVrl(names: Readonly<Record<string, string>>): string[] {
+  const entries = Object.entries(names).filter(([src, svc]) => src && svc && src !== svc);
+  if (!entries.length) return [];
+  const obj = `{${entries.map(([src, svc]) => `${vrlString(src)}: ${vrlString(svc)}`).join(", ")}}`;
+  return [`# Ordinary lines under the service's own name (source -> service from hop records).
+if (to_string(.kind) ?? "log") == "log" {
+  bw_own = get(${obj}, [to_string(.source) ?? ""]) ?? null
+  if bw_own != null { .service = bw_own }
+}`];
 }
 
 /**

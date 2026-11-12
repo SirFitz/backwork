@@ -74,3 +74,17 @@ export function serviceMatcher(service: string, names: ServiceNames): string {
   if (sources && sources.length) return `source=~${JSON.stringify(alternation(sources))}`;
   return `service=${JSON.stringify(service)}`;
 }
+
+/** A name as the service's own name: a known source becomes its service; anything else stays. */
+export function canonicalName(name: string, bySource: ReadonlyMap<string, string>): string {
+  return bySource.get(name) ?? name;
+}
+
+/** The map as a plain object, source -> service, only where the two differ (for the agents). */
+export function relabelMap(names: ServiceNames): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [source, service] of [...names.bySource].sort(([a], [b]) => a.localeCompare(b))) {
+    if (source !== service) out[source] = service;
+  }
+  return out;
+}

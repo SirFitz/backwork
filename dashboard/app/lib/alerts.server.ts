@@ -9,6 +9,8 @@ import * as loki from "./loki.server";
 import { tenantOf, platformOrgId, type Tenant } from "./tenant.server";
 
 import { AlertMetric, isAlertMetric } from "./alert-kinds";
+import { EMPTY_NAMES, canonicalName, serviceMatcher, type ServiceNames } from "./service-names";
+import { serviceNamesWithin } from "./service-names.server";
 export { AlertMetric, isAlertMetric };
 
 /** Kinds that read container metrics, removed in BAC-49. Stored rules of these
@@ -83,23 +85,25 @@ export async function saveRules(orgId: string, rules: AlertRule[]): Promise<void
 
 // JSON.stringify escapes quotes/backslashes so a service value can't break out of the
 // matcher; org_id scoping is still enforced by loki.scoped.
-function lokiSel(service: string, extra = ""): string {
-  const parts = [extra, service === "*" ? `service=~".+"` : `service=${JSON.stringify(service)}`].filter(Boolean);
+function lokiSel(service: string, extra: string, names: ServiceNames): string {
+  // One service, one name (BAC-51): a service's lines under any of its sources.
+  // A rule saved under a container name (before lines were relabelled) means that service too.
+  const parts = [extra, service === "*" ? `service=~".+"` : serviceMatcher(canonicalName(service, names.bySource), names)].filter(Boolean);
   return `{${parts.join(",")}}`;
 }
 
 /** The LogQL a rule evaluates. Hop records are not log lines, so they never count. */
-export function ruleQuery(metric: AlertMetric, service: string): string {
+export function ruleQuery(metric: AlertMetric, service: string, names: ServiceNames = EMPTY_NAMES): string {
   switch (metric) {
     case AlertMetric.ErrorRate:
-      return `sum(rate(${lokiSel(service, 'kind!="hop",level="error"')}[5m]))`;
+      return `sum(rate(${lokiSel(service, 'kind!="hop",level="error"', names)}[5m]))`;
     case AlertMetric.LogRate:
-      return `sum(rate(${lokiSel(service, 'kind!="hop"')}[5m]))`;
+      return `sum(rate(${lokiSel(service, 'kind!="hop"', names)}[5m]))`;
   }
 }
 
 async function evalRule(metric: AlertMetric, rule: AlertRule, tenant: Tenant): Promise<number> {
-  return loki.scalar(ruleQuery(metric, rule.service), 0, tenant);
+  return loki.scalar(ruleQuery(metric, rule.service, await serviceNamesWithin(tenant, 3000)), 0, tenant);
 }
 
 export async function evaluate(tenant: Tenant): Promise<AlertState[]> {
