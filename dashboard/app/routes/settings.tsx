@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { defer } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { defer, json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Link } from "@remix-run/react";
@@ -7,10 +7,20 @@ import { Card, CardHead, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { config } from "~/lib/config.server";
 import * as vm from "~/lib/vm.server";
-import * as jaeger from "~/lib/jaeger.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
+import { DataControlsPanel } from "~/components/data-controls";
+import { assertSameOrigin } from "~/lib/auth/security.server";
+import { safe } from "~/lib/config.server";
+import {
+  GRID_HEAD,
+  applyControlChange,
+  canManageControls,
+  isControlIntent,
+  loadControlsView,
+  type ControlsView,
+} from "~/lib/controls-view.server";
 
 async function ping(url: string): Promise<boolean> {
   try {
@@ -35,16 +45,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // /ready can flap 503; the labels API is a truer "is Loki serving" check
     ping(`${config.lokiUrl}/loki/api/v1/labels`),
     vm.targetsUp().then((t) => ({ ok: true, t })).catch(() => ({ ok: false, t: {} as Record<string, boolean> })),
-    jaeger.services().then(() => true).catch(() => false),
-  ]).then(([lokiUp, targets, jaegerSvcs]) => ({
+  ]).then(([lokiUp, targets]) => ({
     loki: lokiUp,
     victoriametrics: targets.ok,
-    cadvisor: !!targets.t["cadvisor"],
     vector: !!targets.t["vector"],
-    jaeger: jaegerSvcs,
   }));
 
+  // The same switches as on Projects, for the whole organisation (design 19.1).
+  const controls: Promise<{ data: ControlsView | null; error: string | null }> = safe(
+    () => loadControlsView({ orgId: ctx.org.id, projectId: null, services: async () => [], canManage: canManageControls(ctx) }),
+    null
+  );
+
   return defer({
+    controls,
+    gridHeads: GRID_HEAD,
     publicUrl: config.publicUrl,
     isPlatform,
     // The legacy global token is platform-only; customer orgs use per-project
@@ -52,8 +67,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
     token: isPlatform && showToken ? config.ingestToken : "",
     tokenGated: isPlatform && !!settingsKey && !showToken,
     health,
-    retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", traces: "in-memory, ~20k (Jaeger)" },
+    retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", hops: "30 days (Loki, hop records)" },
   });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
+  const ctx = await requireOrg(request);
+  const fd = await request.formData();
+  const intent = String(fd.get("intent") ?? "");
+  if (!isControlIntent(intent)) return json({ ok: false, error: "Unknown action." }, { status: 400 });
+  // Organisation level only: a project id is never accepted here.
+  fd.set("projectId", "");
+  fd.set("service", "");
+  return applyControlChange(request, ctx, fd, new Set<string>());
 }
 
 function HealthRow({ name, up, note }: { name: string; up: boolean; note: string }) {
@@ -83,30 +110,18 @@ export default function Settings() {
   --token ${tok} \\
   --name $(hostname)`;
 
-  const sdkSnippet = `npm i @sirfitz/backwork
-BACKWORK_TOKEN=${tok} BACKWORK_SERVICE=my-api \\
-  node --import @sirfitz/backwork/register server.js`;
-
-  const otlpEnv = `# add to any OpenTelemetry-instrumented app
-OTEL_EXPORTER_OTLP_ENDPOINT=${d.publicUrl}/otlp
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${tok}
-OTEL_SERVICE_NAME=<your-service>`;
-
   return (
     <div className="space-y-5 animate-fade-in">
       <PageTitle title="Settings" sub="Connect more sources, check backend health, and see retention. Everything backwork ingests is real host telemetry." />
 
       <Card>
         <CardHead title={d.isPlatform ? "Backend health" : "backwork platform status"} sub={d.isPlatform ? "the storage + collection layer" : "the shared backend — not a check of your own data flow"} />
-        <Deferred resolve={d.health} fallback={<RowsSkeleton rows={5} />}>
+        <Deferred resolve={d.health} fallback={<RowsSkeleton rows={3} />}>
           {(h) => (
             <ul className="divide-y divide-border">
               <HealthRow name="Loki" up={h.loki} note="log storage · LogQL" />
               <HealthRow name="VictoriaMetrics" up={h.victoriametrics} note="metrics · PromQL" />
-              <HealthRow name="cAdvisor" up={h.cadvisor} note="per-container metrics (scrape target)" />
               <HealthRow name="Vector" up={h.vector} note="log collector (scrape target)" />
-              <HealthRow name="Jaeger" up={h.jaeger} note="traces · OTLP" />
             </ul>
           )}
         </Deferred>
@@ -122,31 +137,43 @@ OTEL_SERVICE_NAME=<your-service>`;
             </div>
           </Card>
           <Card>
-            <CardHead title="Send traces from an app" sub="one-line SDK, or raw OpenTelemetry" />
-            <div className="space-y-2 p-4">
-              <div className="text-2xs font-medium text-muted">SDK (Node / Bun)</div>
-              <CodeBlock>{sdkSnippet}</CodeBlock>
-              <div className="pt-1 text-2xs font-medium text-muted">…or raw OpenTelemetry env</div>
-              <CodeBlock>{otlpEnv}</CodeBlock>
-              <p className="text-2xs text-faint">Spans show up under Traces, Requests and Metrics → Application performance. Elixir: see <a href="/docs#traces" className="text-brand hover:underline">docs</a>.</p>
+            <CardHead title="Trace requests" sub="hop records from Correlator, read from the logs" />
+            <div className="space-y-2 p-4 text-[13px] text-muted">
+              <p>Add Correlator to a service and turn hop records on. They are ordinary log lines, so the agent above ships them with the rest of the logs; no other endpoint or token is needed.</p>
+              <p className="text-2xs text-faint">Requests and Performance fill in as hop records arrive.</p>
             </div>
           </Card>
         </div>
       ) : (
         <Card>
-          <CardHead title="Connect a source" sub="ship logs & traces from your own infrastructure" />
+          <CardHead title="Connect a source" sub="ship logs and hop records from your own infrastructure" />
           <div className="p-4 text-[13px] text-muted">
-            Create a <Link to="/projects" className="font-medium text-brand hover:underline">project</Link> to get an ingest token, then use the install + OpenTelemetry snippets shown there. Your data is isolated to this organization.
+            Create a <Link to="/projects" className="font-medium text-brand hover:underline">project</Link> to get an ingest token, then use the install command shown there. Your data is isolated to this organization.
           </div>
         </Card>
       )}
+
+      <Card>
+        <CardHead title="Data controls" sub="what backwork collects for the whole organisation · off here is off for every project" />
+        <div className="px-4 pb-4 pt-[18px] sm:pl-8 sm:pr-5">
+          <Deferred resolve={d.controls} fallback={<RowsSkeleton rows={6} className="p-0" />}>
+            {(panel) =>
+              panel.error || !panel.data ? (
+                <div className="text-2xs text-warn">data source unavailable — {(panel.error ?? "no data").slice(0, 180)}</div>
+              ) : (
+                <DataControlsPanel view={panel.data} heading="Collected from this organisation" gridHeads={d.gridHeads} />
+              )
+            }
+          </Deferred>
+        </div>
+      </Card>
 
       <Card>
         <CardHead title="Retention" sub="how long data is kept" />
         <ul className="divide-y divide-border text-[13px]">
           <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Logs</span><span className="font-mono">{d.retention.logs}</span></li>
           <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Metrics</span><span className="font-mono">{d.retention.metrics}</span></li>
-          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Traces</span><span className="font-mono">{d.retention.traces}</span></li>
+          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Hop records</span><span className="font-mono">{d.retention.hops}</span></li>
         </ul>
       </Card>
 
