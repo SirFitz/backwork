@@ -10,7 +10,12 @@ services:
   jaeger:
     ports: ["16686:16686", "4318:4318"]
   backwork:
-    ports: ["3000:3000"]
+    # BW_LOCAL_PORT: this Mac already has something on 3000.
+    ports: ["${BW_LOCAL_PORT:-3000}:3000"]
+    environment:
+      PUBLIC_URL: http://localhost:${BW_LOCAL_PORT:-3000}
+  vector:
+    ports: ["9598:9598"]
 
   # Fixture emitters (tests only, design section 14). Each writes the spec-exact
   # hop records, link lines and ordinary lines of one service of the two frame

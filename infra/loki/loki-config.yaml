@@ -30,6 +30,12 @@ schema_config:
 limits_config:
   # 7 days hot retention — matches the product brief's tiering model
   retention_period: 168h
+  # Hop records and link lines (kind="hop") are kept 30 days (design 6);
+  # ordinary lines stay at 7 days. Applied by the compactor per stream.
+  retention_stream:
+    - selector: '{kind="hop"}'
+      priority: 1
+      period: 720h
   reject_old_samples: false
   reject_old_samples_max_age: 168h
   allow_structured_metadata: true
