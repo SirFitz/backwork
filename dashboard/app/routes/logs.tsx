@@ -111,23 +111,23 @@ export default function Logs() {
         growRight
         right={
           <Form method="get" className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-            <div className="relative min-w-[140px] flex-1 md:min-w-[280px]">
+            <div className="relative min-w-[140px] flex-1 lg:min-w-[280px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
               <input name="q" defaultValue={f.q} placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'} className="h-8 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40" />
             </div>
-            {/* phone: service, level and range fold behind one button so the header stays one row */}
+            {/* below lg: service, level and range fold behind one button so the header stays one row */}
             <button
               type="button"
               onClick={() => setFiltersOpen((o) => !o)}
               aria-expanded={filtersOpen}
               aria-label={`Filters: ${filterText}`}
               title={filterText}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-muted hover:text-fg md:hidden"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-muted hover:text-fg lg:hidden"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
               {changed ? <span className="font-medium text-fg">{changed}</span> : null}
             </button>
-            <div className={cn("w-full flex-wrap items-center gap-2 md:flex md:w-auto", filtersOpen ? "flex" : "hidden")}>
+            <div className={cn("w-full flex-wrap items-center gap-2 lg:flex lg:w-auto", filtersOpen ? "flex" : "hidden")}>
               <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
                 <option value="all">all services</option>
                 <Suspense fallback={f.service !== "all" ? <option value={f.service}>{f.service}</option> : null}>
