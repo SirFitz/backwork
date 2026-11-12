@@ -13,13 +13,14 @@ import { Deferred, RowsSkeleton } from "~/components/defer";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
+import { splitRequests, type RequestPart } from "~/lib/hops/split";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
-import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
+import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
 
@@ -364,10 +365,63 @@ function RequestView({ found, d }: { found: Found; d: Data }) {
   );
 }
 
+/** One trace ID can hold several requests (a page's GET, then its form's POST): one switcher tab each. */
 function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: TraceLogLine[]; logsState: LogsState }) {
+  const parts = useMemo(() => splitRequests(found.records, logs, found.links), [found, logs]);
+  const [sel, setSel] = useState(0);
+  const part = parts[Math.min(sel, parts.length - 1)];
+  return (
+    <>
+      {parts.length > 1 ? <RequestSwitcher parts={parts} sel={sel} onSelect={setSel} /> : null}
+      <OneRequest key={sel} found={found} part={part} d={d} logsState={logsState} logsTotal={logs.length} />
+    </>
+  );
+}
+
+function partLabel(part: RequestPart): string {
+  const first = part.records.find((r) => r.hop === HopKind.In || r.hop === HopKind.InEnd) ?? part.records[0];
+  if (!first) return "request";
+  return `${first.method ? `${first.method} ` : ""}${first.path ?? first.op ?? first.service}`;
+}
+
+function RequestSwitcher({ parts, sel, onSelect }: { parts: RequestPart[]; sel: number; onSelect: (i: number) => void }) {
+  return (
+    <nav aria-label="Requests in this trace" className="mb-4 rounded-lg border border-border bg-surface px-3 py-2.5">
+      <p className="m-0 mb-1.5 text-2xs text-faint">
+        {parts.length} separate requests share this trace ID. Showing one at a time.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {parts.map((p, i) => (
+          <button
+            key={p.startMs + ":" + i}
+            type="button"
+            aria-pressed={i === sel}
+            onClick={() => onSelect(i)}
+            className={cn(
+              "max-w-full rounded-md border px-2.5 py-1 text-left font-mono text-xs [overflow-wrap:anywhere]",
+              i === sel ? "border-brand bg-surface-2 text-fg" : "border-border text-muted hover:text-fg",
+            )}
+          >
+            <span className="font-medium">{partLabel(p)}</span>
+            <span className="ml-2 text-faint">{i === 0 ? "first" : `+${fmtGap(p.startMs - parts[0].startMs)}`}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function fmtGap(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(2)} s`;
+  return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+}
+
+function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; part: RequestPart; d: Data; logsState: LogsState; logsTotal: number }) {
+  const logs = part.logs;
   const tree = useMemo(
-    () => buildRequestTree(found.records, logs, d.now, found.links, found.knownPeers ? new Set(found.knownPeers) : null),
-    [found, logs, d.now],
+    () => buildRequestTree(part.records, part.logs, d.now, part.links, found.knownPeers ? new Set(found.knownPeers) : null),
+    [part, found, d.now],
   );
   const colours = useMemo(() => colourMap(tree.services), [tree.services]);
   const defaultOpen = tree.gaps.find((g) => g.kind === GapKind.Stopped)?.hopId ?? null;
@@ -389,7 +443,7 @@ function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: Trac
         <IdList tree={tree} d={d} />
         <TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} />
       </div>
-      {logsState === LogsState.Ready && logs.length >= LOG_PAGE ? (
+      {logsState === LogsState.Ready && logsTotal >= LOG_PAGE ? (
         <p className="mt-3 text-2xs text-faint">
           The first {LOG_PAGE.toLocaleString("en-GB")} log lines are placed above.{" "}
           <Link className="text-brand" to={`/logs?q=${d.traceId}&range=24h`}>Open every line in Logs</Link>
