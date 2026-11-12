@@ -11,3 +11,26 @@ services:
     ports: ["16686:16686", "4318:4318"]
   backwork:
     ports: ["3000:3000"]
+
+  # Fixture emitters (tests only, design section 14). Each writes the spec-exact
+  # hop records, link lines and ordinary lines of one service of the two frame
+  # requests (POST /orders healthy; POST /payouts/:id/release stalled), then one
+  # generated request every CYCLE_S seconds. The collector names each service
+  # after its compose service, as it would for a real one. Formats differ on
+  # purpose so detection is exercised on every form.
+  commerce-api:
+    build: ./qa/fixtures
+    environment: { SERVICE: commerce-api, FORMAT: json, CYCLE_S: "30" }
+    restart: unless-stopped
+  commerce-payments:
+    build: ./qa/fixtures
+    environment: { SERVICE: commerce-payments, FORMAT: kv, CYCLE_S: "30" }
+    restart: unless-stopped
+  commerce-risk:
+    build: ./qa/fixtures
+    environment: { SERVICE: commerce-risk, FORMAT: json-nested, CYCLE_S: "30" }
+    restart: unless-stopped
+  commerce-worker:
+    build: ./qa/fixtures
+    environment: { SERVICE: commerce-worker, FORMAT: kv, CYCLE_S: "30" }
+    restart: unless-stopped
