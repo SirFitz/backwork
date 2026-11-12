@@ -1,3 +1,4 @@
+import { COUNTER_LOOKBACK_SECONDS, windowIncrease } from "./counter-window";
 import { describe, expect, test } from "bun:test";
 import {
   ATTENTION_WINDOW_MS,
@@ -68,13 +69,17 @@ describe("detectJumps", () => {
 describe("windowQueries", () => {
   test("current window and the 3 hours before it, without health checks", () => {
     const c = windowQueries(null);
-    expect(c.requests).toBe('sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in",op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"}[15m]))');
-    expect(windowQueries("15m").p95).toContain("[3h] offset 15m");
+    const sel = 'backwork_hop_duration_seconds_count{dir="in",op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"}';
+    expect(c.requests).toBe(windowIncrease(sel, "15m", ["service"]));
+    // The baseline: 3 hours ending where the current window starts.
+    expect(windowQueries("15m").requests).toBe(windowIncrease(sel, "3h", ["service"], "15m"));
+    expect(windowQueries("15m").p95).toContain(`[${10800 + COUNTER_LOOKBACK_SECONDS}s] offset 900s`);
   });
   test("serviceJumps joins both windows", async () => {
     const client: PromClient = {
       async instant(q) {
-        const base = q.includes("offset");
+        // Only the baseline's whole-window term ends 15 minutes back.
+        const base = /\] offset 900s\)\) -/.test(q);
         if (q.startsWith("histogram_quantile")) return [{ metric: { service: "api" }, value: base ? 0.2 : 0.8 }];
         if (q.includes('outcome="error"')) return [];
         if (q.includes("5xx")) return [];
