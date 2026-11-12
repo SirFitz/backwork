@@ -15,9 +15,14 @@ import type { Tenant } from "~/lib/tenant.server";
 import { cached } from "~/lib/cache.server";
 import { parseHopRecord } from "~/lib/hops/parse";
 import { STALL_AFTER_MS, isStoreVia } from "~/lib/hops/tree";
-import { HopKind, Outcome, type HopId, type HopRecord, type TraceId } from "~/lib/hops/types";
+import { HopKind, Outcome, type HopId, type HopRecord } from "~/lib/hops/types";
+import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type ServiceWindow, type StalledRequest, type UnreceivedCall } from "~/lib/hops/attention";
+export { JumpKind, LIST_LIMIT };
+export type { RecordScan, ServiceJump, ServiceWindow, StalledRequest, UnreceivedCall };
 import { HopMetric, vmClient, type PromClient } from "~/lib/hops/metrics.server";
 import { LOGQL_NOT_HEALTH_CHECK, PROM_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
+import { peerPairs } from "~/lib/hops/peers";
+import { knownPeersFor, peerStore, type PeerStore } from "~/lib/hops/peers.server";
 
 // ---------------------------------------------------------------- fixed values
 
@@ -41,60 +46,7 @@ export const LATENCY_MIN_RISE_S = 0.1;
 export const RECEIVE_GRACE_MS = 30_000;
 /** Lines read per check; the page says when the limit was reached. */
 export const RECORD_LIMIT = 3000;
-/** Rows shown per list. */
-export const LIST_LIMIT = 10;
 
-export const JumpKind = {
-  Errors: "errors",
-  Latency: "latency",
-} as const;
-export type JumpKind = (typeof JumpKind)[keyof typeof JumpKind];
-
-// ---------------------------------------------------------------- shapes
-
-export interface ServiceWindow {
-  service: string;
-  requests: number;
-  failed: number;
-  /** seconds, null without samples */
-  p95: number | null;
-}
-
-export interface ServiceJump {
-  service: string;
-  kind: JumpKind;
-  requests: number;
-  /** errors: share 0..1; latency: seconds */
-  now: number;
-  /** null when the service had no traffic before the window */
-  before: number | null;
-}
-
-export interface StalledRequest {
-  traceId: TraceId;
-  service: string;
-  method: string | null;
-  op: string | null;
-  startMs: number;
-}
-
-export interface UnreceivedCall {
-  traceId: TraceId;
-  service: string;
-  peer: string | null;
-  method: string | null;
-  op: string | null;
-  endMs: number;
-  failed: boolean;
-}
-
-export interface RecordScan<T> {
-  rows: T[];
-  /** total matching before the list limit */
-  total: number;
-  /** the record limit was reached, so older records in the window were not read */
-  truncated: boolean;
-}
 
 // ---------------------------------------------------------------- jumps (pure)
 
@@ -264,11 +216,25 @@ export async function stalledRequests(tenant: Tenant, now = Date.now(), read: Re
   return limitList(findStalled(records, now), truncated);
 }
 
-export async function unreceivedCalls(tenant: Tenant, now = Date.now(), read: RecordQueryFn = loki.queryRange): Promise<RecordScan<UnreceivedCall>> {
+/** Of the unanswered calls, the ones to a peer known to be a service (design 9); all when unknown. */
+export function onlyKnownPeers(calls: readonly UnreceivedCall[], known: ReadonlySet<string> | null): UnreceivedCall[] {
+  return known === null ? [...calls] : calls.filter((c) => c.peer !== null && known.has(c.peer));
+}
+
+export async function unreceivedCalls(
+  tenant: Tenant,
+  now = Date.now(),
+  read: RecordQueryFn = loki.queryRange,
+  peers: PeerStore = peerStore
+): Promise<RecordScan<UnreceivedCall>> {
   const [inbound, outbound] = await Promise.all([
     inboundRecords(tenant, now, read),
     cached(keyOf(tenant, "outbound"), TTL_MS, () => readRecords(OUTBOUND_CALLS_QUERY, tenant, now, read)),
   ]);
   const inboundFrom = inbound.truncated && inbound.records.length ? Math.min(...inbound.records.map((r) => r.timeMs)) : null;
-  return limitList(findUnreceived(outbound.records, inbound.records, now, inboundFrom), inbound.truncated || outbound.truncated);
+  const unanswered = findUnreceived(outbound.records, inbound.records, now, inboundFrom);
+  // A call to a host no service has ever answered as is "not instrumented yet", not a problem.
+  const all = [...outbound.records, ...inbound.records];
+  const known = unanswered.length ? await knownPeersFor(tenant.orgId, peerPairs(all), unanswered.map((c) => c.peer).filter((p): p is string => p !== null), peers) : [];
+  return limitList(onlyKnownPeers(unanswered, known === null ? null : new Set(known)), inbound.truncated || outbound.truncated);
 }

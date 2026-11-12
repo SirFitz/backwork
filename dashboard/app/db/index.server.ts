@@ -84,6 +84,11 @@ CREATE INDEX IF NOT EXISTS alert_channels_org_idx ON alert_channels (org_id);
 -- trace_services held the service names of OpenTelemetry span ingest, removed in BAC-49.
 DROP TABLE IF EXISTS trace_services;
 
+CREATE TABLE IF NOT EXISTS peer_services (
+  org_id text NOT NULL, peer text NOT NULL, service text NOT NULL,
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, peer, service));
+
 CREATE TABLE IF NOT EXISTS migrations (
   name text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
 

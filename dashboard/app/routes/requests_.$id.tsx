@@ -14,6 +14,8 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
+import { calledPeers, peerPairs } from "~/lib/hops/peers";
+import { knownPeersFor } from "~/lib/hops/peers.server";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
@@ -36,9 +38,18 @@ interface Found {
   records: HopRecord[];
   links: LinkedId[];
   window: SearchWindow;
+  /** Peers some service of the organisation has answered as (design 9); null when unknown. */
+  knownPeers: string[] | null;
 }
 
-const toFound = (r: WindowResult): Found | null => (r.found ? { records: r.records, links: r.links, window: r.window } : null);
+/** A found window, with the peers it calls looked up (and the pairs it links saved). */
+function toFound(orgId: string): (r: WindowResult) => Promise<Found | null> {
+  return async (r) => {
+    if (!r.found) return null;
+    const knownPeers = await knownPeersFor(orgId, peerPairs(r.records), calledPeers(r.records));
+    return { records: r.records, links: r.links, window: r.window, knownPeers };
+  };
+}
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -60,6 +71,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!traceId) throw new Response("Not a trace ID", { status: 404 });
 
   const lookup = progressiveLookup(traceId, tenant, now);
+  const found = toFound(ctx.org.id);
   const logs = lookup.retention.then((r) => (r.found ? logLinesFor(traceId, r, tenant, now) : []));
   // Hop records off: the lines alone, grouped by service (design 7.2).
   const onlyLogs = lookup.retention.then((r) => (r.found ? null : logsOnly(traceId, tenant, now)));
@@ -68,9 +80,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // The original input when it was not the trace ID itself (a request ID, a UUID, a traceparent).
     input: q && q.toLowerCase() !== traceId ? q.slice(0, 200) : null,
     now,
-    hour: settle(lookup.hour.then(toFound)),
-    day: settle(lookup.day.then(toFound)),
-    retention: settle(lookup.retention.then(toFound)),
+    hour: settle(lookup.hour.then(found)),
+    day: settle(lookup.day.then(found)),
+    retention: settle(lookup.retention.then(found)),
     logs: settle(logs),
     onlyLogs: settle(onlyLogs),
   });
@@ -165,6 +177,7 @@ function noteOf(hop: Hop): string {
   const parts: string[] = [];
   if (hop.error) parts.push(hop.error);
   if (hop.gaps.some((g) => g.kind === GapKind.NotLinked)) parts.push("outside");
+  if (hop.gaps.some((g) => g.kind === GapKind.NotInstrumented)) parts.push("not instrumented yet");
   for (const g of hop.gaps) if (g.kind === GapKind.Retry) parts.push(g.label.toLowerCase());
   return parts.join(" · ");
 }
@@ -343,7 +356,7 @@ function RequestView({ found, d }: { found: Found; d: Data }) {
 
 function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: TraceLogLine[]; logsState: LogsState }) {
   const tree = useMemo(
-    () => buildRequestTree(found.records, logs, d.now, found.links),
+    () => buildRequestTree(found.records, logs, d.now, found.links, found.knownPeers ? new Set(found.knownPeers) : null),
     [found, logs, d.now],
   );
   const colours = useMemo(() => colourMap(tree.services), [tree.services]);

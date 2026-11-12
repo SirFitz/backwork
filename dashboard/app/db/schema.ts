@@ -98,6 +98,16 @@ export const alertChannels = pgTable("alert_channels", {
   ...ts(),
 }, (t) => ({ orgIdx: index("alert_channels_org_idx").on(t.orgId) }));
 
+// Which service answered calls to a peer host or queue (design 9, phase 4). Saved whenever an
+// outbound hop is linked to its inbound hop; read to tell a known service that did not report
+// ("No record from") from a host that never has ("not instrumented yet").
+export const peerServices = pgTable("peer_services", {
+  orgId: text("org_id").notNull(),
+  peer: text("peer").notNull(),
+  service: text("service").notNull(),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.peer, t.service] }) }));
+
 export const migrations = pgTable("migrations", {
   name: text("name").primaryKey(),
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),

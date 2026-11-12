@@ -54,6 +54,9 @@ export const GapKind = {
   Stopped: "stopped",
   /** Outbound, hop_sent true, no child: "No record from <peer>". */
   NoReceiver: "no_receiver",
+  /** hop_sent true, no receiver, and the peer has never answered as a service: a third party or
+   *  a service without Correlator. Shown, not counted as a gap. */
+  NotInstrumented: "not_instrumented",
   /** Outbound, hop_sent false, not a data-store hop: "Not linked". */
   NotLinked: "not_linked",
   /** Inbound with a parent_hop not among the records: "Caller's record missing". */

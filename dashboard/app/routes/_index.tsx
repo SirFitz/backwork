@@ -17,17 +17,8 @@ import { tenantOf } from "~/lib/tenant.server";
 import { inboundServices, servicesTable, type ServiceRow } from "~/lib/hops/metrics.server";
 import { PerfRange } from "~/lib/hops/figures";
 import { hopRequestPage, type RequestListRow } from "~/lib/hops/requests.server";
-import {
-  JumpKind,
-  LIST_LIMIT,
-  serviceJumps,
-  stalledRequests,
-  unreceivedCalls,
-  type RecordScan,
-  type ServiceJump,
-  type StalledRequest,
-  type UnreceivedCall,
-} from "~/lib/hops/attention.server";
+import { serviceJumps, stalledRequests, unreceivedCalls } from "~/lib/hops/attention.server";
+import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type StalledRequest, type UnreceivedCall } from "~/lib/hops/attention";
 import { cn, fmtMs, fmtNum } from "~/lib/utils";
 import { MarketingLanding, seo, TAGLINE } from "~/components/marketing";
 

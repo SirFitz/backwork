@@ -20,7 +20,7 @@ function base(kind: HopKind, s: Spec, timeMs: number): HopRecord {
   return {
     traceId: TRACE, hop: kind, hopId: hid(s.id), parentHop: s.parent ? hid(s.parent) : null,
     hopSent: out ? s.sent ?? true : null, tracer: out ? s.tracer ?? false : false, parentId: s.pid ?? "b7ad6b7169203331",
-    service: s.svc, adapter: "test", via: s.via ?? "http", method: s.method ?? null, op: s.op ?? null, peer: out ? s.peer ?? null : null,
+    service: s.svc, source: s.svc, adapter: "test", via: s.via ?? "http", method: s.method ?? null, op: s.op ?? null, peer: out ? s.peer ?? null : null,
     attempt: out ? null : s.attempt ?? null, outcome: end ? s.outcome ?? "ok" : null, status: end ? s.status ?? null : null,
     error: end ? s.error ?? null : null, durationUs: end && s.dur !== undefined ? Math.round(s.dur * 1000) : null,
     totals: kind === "in_end" && s.totals ? { dbCalls: 0, dbUs: 0, cacheCalls: 0, cacheUs: 0, ...s.totals } : null,
@@ -297,5 +297,39 @@ describe("empty and odd input", () => {
   test("a hop naming itself as parent is a root, not a loop", () => {
     const t = buildRequestTree(hop("in", { id: 1, parent: 1, svc: API, dur: 1 }), [], NOW);
     expect(t.roots.length).toBe(1);
+  });
+});
+
+describe("calls with no record on the other side (design 7.4 and 9)", () => {
+  const recs = (): HopRecord[] => [
+    ...hop("in", { id: 1, svc: "commerce-risk", via: "job", op: "Assess", dur: 900 }),
+    ...hop("out", { id: 2, parent: 1, svc: "commerce-risk", peer: "kms.eu-west-1.amazonaws.com", start: 10, dur: 40, sent: true }),
+    ...hop("out", { id: 3, parent: 1, svc: "commerce-risk", peer: "payments.internal", start: 60, dur: 40, sent: true }),
+    ...hop("out", { id: 4, parent: 1, svc: "commerce-risk", peer: "s3.amazonaws.com", start: 110, dur: 40, sent: false }),
+  ];
+  test("a peer never seen answering is not instrumented yet, not a gap", () => {
+    const tree = buildRequestTree(recs(), [], T0 + 5000, [], new Set(["payments.internal"]));
+    const kinds = tree.gaps.map((g) => [g.kind, g.detail]);
+    expect(kinds).toContainEqual([GapKind.NotInstrumented, "kms.eu-west-1.amazonaws.com"]);
+    expect(kinds).toContainEqual([GapKind.NoReceiver, "payments.internal"]);
+    expect(kinds).toContainEqual([GapKind.NotLinked, "s3.amazonaws.com"]);
+    expect(faultCount(tree)).toBe(1);
+  });
+  test("hop_sent false is outside: never a gap, and its time counts as waiting on other services", () => {
+    const tree = buildRequestTree(recs(), [], T0 + 5000, [], new Set());
+    expect(faultCount(tree)).toBe(0);
+    expect(tree.split?.waitingUs).toBe(120_000);
+  });
+  test("known peers unknown (null) keeps the design default: every unanswered sent call is a gap", () => {
+    expect(faultCount(buildRequestTree(recs(), [], T0 + 5000))).toBe(2);
+  });
+  test("a peer answered elsewhere in the same request is known", () => {
+    const r = [
+      ...recs(),
+      ...hop("out", { id: 5, parent: 1, svc: "commerce-risk", peer: "kms.eu-west-1.amazonaws.com", start: 200, dur: 40, sent: true }),
+      ...hop("in", { id: 6, parent: 5, svc: "kms-proxy", start: 205, dur: 30 }),
+    ];
+    const tree = buildRequestTree(r, [], T0 + 5000, [], new Set());
+    expect(tree.gaps.filter((g) => g.kind === GapKind.NoReceiver).map((g) => g.detail)).toEqual(["kms.eu-west-1.amazonaws.com"]);
   });
 });

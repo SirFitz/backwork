@@ -189,12 +189,15 @@ function dedupeLinks(links: readonly LinkedId[]): LinkedId[] {
  * @param logs ordinary log lines of the trace
  * @param now epoch ms, for open and stalled hops
  * @param links linked-ID lines of the trace
+ * @param knownPeers peers some service of the organisation has answered as (design 9); null when
+ *   not known, and then every unanswered call is a gap (design 7.4)
  */
 export function buildRequestTree(
   records: readonly HopRecord[],
   logs: readonly TraceLogLine[],
   now: number,
   links: readonly LinkedId[] = [],
+  knownPeers: ReadonlySet<string> | null = null,
 ): RequestTree {
   const traceId = (records[0]?.traceId ?? links[0]?.traceId ?? "") as TraceId;
   const byId = new Map<HopId, Hop>();
@@ -247,13 +250,18 @@ export function buildRequestTree(
     gaps.push(g);
     byId.get(g.hopId)?.gaps.push(g);
   };
+  // Peers answered within this request count as known too.
+  const answered = new Set<string>();
+  for (const h of flat) if (h.dir === HopDir.Out && h.peer && h.children.some((c) => c.dir === HopDir.In)) answered.add(h.peer);
+  const isKnownPeer = (h: Hop): boolean => knownPeers === null || (h.peer !== null && (knownPeers.has(h.peer) || answered.has(h.peer)));
   for (const h of flat) {
     if (h.state === HopState.Stalled && !hasStalledDescendant(h)) add(gap(GapKind.Stopped, h, "Stopped here"));
     if (h.dir === HopDir.Out && !h.isStore) {
       const received = h.children.some((c) => c.dir === HopDir.In);
       // A call still running has not been answered yet; only a finished call can be "never received".
       if (h.hopSent === true && !received && h.state === HopState.Finished) {
-        add(gap(GapKind.NoReceiver, h, `No record from ${peerName(h)}`, peerName(h)));
+        if (isKnownPeer(h)) add(gap(GapKind.NoReceiver, h, `No record from ${peerName(h)}`, peerName(h)));
+        else add(gap(GapKind.NotInstrumented, h, "Not instrumented yet", peerName(h)));
       }
       if (h.hopSent === false) add(gap(GapKind.NotLinked, h, "Not linked", peerName(h)));
     }

@@ -128,7 +128,7 @@ export default function Settings() {
       </Card>
 
       {d.isPlatform ? (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <Card>
             <CardHead title="Ship logs from another server" sub="one command installs a Vector agent" />
             <div className="space-y-2 p-4">

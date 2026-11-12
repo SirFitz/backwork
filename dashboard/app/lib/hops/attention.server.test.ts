@@ -9,12 +9,14 @@ import {
   detectJumps,
   findStalled,
   findUnreceived,
+  onlyKnownPeers,
   serviceJumps,
   stalledRequests,
   unreceivedCalls,
   windowQueries,
   type RecordQueryFn,
   type ServiceWindow,
+  type UnreceivedCall,
 } from "./attention.server";
 import { parseHopRecord } from "./parse";
 import type { HopRecord } from "./types";
@@ -141,6 +143,15 @@ describe("findUnreceived", () => {
   });
 });
 
+describe("onlyKnownPeers", () => {
+  const call = (peer: string | null): UnreceivedCall => ({ traceId: T as UnreceivedCall["traceId"], service: "s", peer, method: null, op: null, endMs: NOW, failed: false });
+  test("only calls to peers some service answered as; all when unknown", () => {
+    const calls = [call("payments.internal"), call("kms.amazonaws.com"), call(null)];
+    expect(onlyKnownPeers(calls, new Set(["payments.internal"])).map((c) => c.peer)).toEqual(["payments.internal"]);
+    expect(onlyKnownPeers(calls, null).length).toBe(3);
+  });
+});
+
 describe("record reads", () => {
   test("queries narrow to inbound records without health checks, and outbound non-store calls", () => {
     expect(INBOUND_RECORDS_QUERY).toContain('{kind="hop"} |~ "\\\\bhop\\\\W{1,4}in(?:_end)?');
@@ -159,7 +170,7 @@ describe("record reads", () => {
     expect(s.total).toBe(LIST_LIMIT + 3);
     expect(s.rows.length).toBe(LIST_LIMIT);
     expect(s.truncated).toBe(false);
-    const u = await unreceivedCalls(t, NOW, read);
+    const u = await unreceivedCalls(t, NOW, read, { known: async () => new Set(), save: async () => {} });
     expect(u.rows).toEqual([]);
     expect(seen.filter((q) => q === INBOUND_RECORDS_QUERY).length).toBe(1);
     expect(RECORD_LIMIT).toBeGreaterThan(LIST_LIMIT);
