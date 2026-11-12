@@ -24,7 +24,7 @@ import {
 export const STALL_AFTER_MS = 60_000;
 
 /** Gaps that mean something went wrong, counted in the request's "gaps" fact. The others are notes. */
-export const FAULT_GAPS: readonly GapKind[] = [GapKind.Stopped, GapKind.NoReceiver, GapKind.MissingCaller];
+export const FAULT_GAPS: readonly GapKind[] = [GapKind.Stopped, GapKind.NoReceiver];
 
 export function isStoreVia(via: Via): boolean {
   return via === Via.Db || via === Via.Cache;
@@ -332,7 +332,7 @@ export function buildRequestTree(
       if (h.hopSent === false) add(gap(GapKind.NotLinked, h, "Not linked", peerName(h)));
     }
     if (h.dir === HopDir.In && h.parentHop && !byId.has(h.parentHop)) {
-      add(gap(GapKind.MissingCaller, h, "Caller's record missing"));
+      add(gap(GapKind.OutsideCaller, h, "Called from outside this organisation"));
     }
     if (h.dir === HopDir.In && h.parentHop) {
       const parent = byId.get(h.parentHop);
