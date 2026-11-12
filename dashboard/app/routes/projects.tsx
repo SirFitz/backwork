@@ -1,11 +1,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import { useState } from "react";
+import { defer, json, redirect } from "@remix-run/node";
+import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
+import { Fragment, useState } from "react";
 import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { randomBytes } from "node:crypto";
-import { Check, Copy, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, KeyRound, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { db } from "~/db/index.server";
 import { projects } from "~/db/schema";
@@ -16,6 +16,18 @@ import { hashToken, tenantOf } from "~/lib/tenant.server";
 import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
 import { slugify, cn } from "~/lib/utils";
+import { Deferred, RowsSkeleton } from "~/components/defer";
+import { DataControlsPanel } from "~/components/data-controls";
+import {
+  GRID_HEAD,
+  applyControlChange,
+  canManageControls,
+  isControlIntent,
+  loadControlsView,
+  projectServices,
+  type ControlsView,
+} from "~/lib/controls-view.server";
+import { safe } from "~/lib/config.server";
 
 function newToken(): string {
   return "bw_" + randomBytes(24).toString("hex");
@@ -31,13 +43,32 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const s = await getAuthSession(request);
   const flashed = s.get("newToken");
   const created = flashed ? (JSON.parse(flashed) as { token: string; slug: string }) : null;
-  return json(
+  // "Data controls" opens in place for one project (?controls=<id>); its panel streams on its own.
+  const openId = new URL(request.url).searchParams.get("controls");
+  const open = rows.find((p) => p.id === openId) ?? null;
+  const tenant = tenantOf(ctx.org.id);
+  const controls: Promise<{ data: ControlsView | null; error: string | null }> = open
+    ? safe(
+        () =>
+          loadControlsView({
+            orgId: ctx.org.id,
+            projectId: open.id,
+            services: (controlRows) => projectServices(tenant, open.slug, controlRows, open.id),
+            canManage: canManageControls(ctx),
+          }),
+        null
+      )
+    : Promise.resolve({ data: null, error: null });
+  return defer(
     {
       projects: rows.map((p) => ({ id: p.id, name: p.name, slug: p.slug, hasToken: !!p.hasToken })),
       role: ctx.role,
       publicUrl: config.publicUrl,
-      isPlatform: tenantOf(ctx.org.id).platform,
+      isPlatform: tenant.platform,
       created,
+      openId: open?.id ?? null,
+      controls,
+      gridHeads: GRID_HEAD,
     },
     { headers: { "Set-Cookie": await commitAuthSession(s) } }
   );
@@ -46,9 +77,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   assertSameOrigin(request);
   const ctx = await requireOrg(request);
-  requireRole(ctx, "admin");
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
+  // Switches and filter patterns: owners and admins only, checked inside, audited by setControl.
+  if (isControlIntent(intent)) {
+    const own = await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, ctx.org.id));
+    return applyControlChange(request, ctx, fd, new Set(own.map((p) => p.id)));
+  }
+  requireRole(ctx, "admin");
 
   // Post/Redirect/Get with a one-time flash for the new token, so a refresh
   // can't duplicate the project or mint/invalidate another token (M11).
@@ -173,16 +209,31 @@ export default function Projects() {
         ) : (
           <ul className="divide-y divide-border">
             {d.projects.map((p) => (
-              <li key={p.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
+              <Fragment key={p.id}>
+              <li className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
                 <KeyRound className="h-3.5 w-3.5 text-faint" />
-                <span className="font-medium">{p.name}</span>
+                <span className="font-semibold">{p.name}</span>
                 <span className="font-mono text-2xs text-faint">{p.slug}</span>
                 {p.hasToken ? <Badge tone="ok">token set</Badge> : <Badge tone="warn">no token</Badge>}
+                <div className="ml-auto flex items-center gap-4">
+                  <Link
+                    to={d.openId === p.id ? "/projects" : `/projects?controls=${encodeURIComponent(p.id)}`}
+                    preventScrollReset
+                    aria-expanded={d.openId === p.id}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 whitespace-nowrap rounded-[7px] border px-[9px] py-[5px] text-[12.5px] font-medium",
+                      d.openId === p.id ? "border-border-strong bg-surface-2 text-fg" : "border-border text-muted hover:text-fg"
+                    )}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Data controls</span>
+                    {d.openId === p.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </Link>
                 {canManage ? (
-                  <div className="ml-auto flex items-center gap-3">
+                  <div className="flex items-center gap-4">
                     <Form method="post" onSubmit={(e) => { if (!confirm(`Regenerate the ingest token for "${p.name}"? The current token stops working immediately — any agent or app using it will stop reporting until updated.`)) e.preventDefault(); }}>
                       <input type="hidden" name="intent" value="regenerate" /><input type="hidden" name="id" value={p.id} />
-                      <button className="inline-flex items-center gap-1 text-2xs text-muted hover:text-fg"><RefreshCw className="h-3 w-3" /> regenerate</button>
+                      <button className="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-fg"><RefreshCw className="h-3.5 w-3.5" /><span className="hidden sm:inline">regenerate</span></button>
                     </Form>
                     <Form method="post" onSubmit={(e) => { if (!confirm(`Delete project "${p.name}"? This can't be undone and its ingest token will stop working.`)) e.preventDefault(); }}>
                       <input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={p.id} />
@@ -190,7 +241,22 @@ export default function Projects() {
                     </Form>
                   </div>
                 ) : null}
+                </div>
               </li>
+              {d.openId === p.id ? (
+                <li className="bg-surface-2 px-4 pb-4 pt-[18px] sm:pl-8 sm:pr-5">
+                  <Deferred resolve={d.controls} fallback={<RowsSkeleton rows={6} className="p-0" />}>
+                    {(panel) =>
+                      panel.error || !panel.data ? (
+                        <div className="text-2xs text-warn">data source unavailable — {(panel.error ?? "no data").slice(0, 180)}</div>
+                      ) : (
+                        <DataControlsPanel view={panel.data} heading="Collected from this project" gridHeads={d.gridHeads} />
+                      )
+                    }
+                  </Deferred>
+                </li>
+              ) : null}
+              </Fragment>
             ))}
           </ul>
         )}

@@ -9,10 +9,7 @@
 import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
 import type { Tenant } from "~/lib/tenant.server";
-// Until t05's `lib/hops/types.ts` lands on main, the one fixed set used here is declared with the
-// same name and values (design 11). Replace with: import { Via } from "~/lib/hops/types";
-const Via = { Http: "http", Rpc: "rpc", Job: "job", Message: "message", Db: "db", Cache: "cache", Other: "other" } as const;
-type Via = (typeof Via)[keyof typeof Via];
+import { Via } from "~/lib/hops/types";
 
 // ---------------------------------------------------------------- fixed sets
 
@@ -488,3 +485,17 @@ export function inboundHttpTotals(range: string, service: string | null, tenant:
   });
 }
 
+
+// ---------------------------------------------------------------- services that report hops
+
+/** Services with inbound hop metrics in the last 14 days (the metrics retention). */
+export function inboundServicesQuery(): string {
+  return `count by (service) (last_over_time(${HopMetric.Started}{dir="in"}[14d]))`;
+}
+
+export function inboundServices(tenant: Tenant, client: PromClient = vmClient): Promise<string[]> {
+  return cached(cacheKey(tenant, PerfRange.D7, "inbound-services"), 30_000, async () => {
+    const rows = await client.instant(inboundServicesQuery(), tenant);
+    return [...new Set(rows.map((r) => r.metric.service ?? "").filter(isLabelValue))].sort();
+  });
+}

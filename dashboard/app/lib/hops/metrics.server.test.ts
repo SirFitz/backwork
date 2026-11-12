@@ -11,6 +11,7 @@ import {
   httpP95Query,
   httpTotalsQuery,
   inProgressQuery,
+  inboundServices,
   inboundHttpTotals,
   isLabelValue,
   parseRange,
@@ -356,5 +357,18 @@ describe("inboundHttpTotals", () => {
     expect(t.byClass).toEqual({ "2xx": 1252, "3xx": 4, "4xx": 17, "5xx": 12 });
     expect(t.errorShare).toBeCloseTo(13 / 1285, 10);
     expect(t.p95).toBe(0.412);
+  });
+});
+
+describe("inboundServices", () => {
+  test("lists valid service names once, sorted", async () => {
+    const { client, seen } = fakeClient([[/last_over_time/, [
+      { metric: { service: "b" }, value: 1 },
+      { metric: { service: "a" }, value: 2 },
+      { metric: { service: "bad name" }, value: 1 },
+      { metric: {}, value: 1 },
+    ]]]);
+    expect(await inboundServices(org(), client)).toEqual(["a", "b"]);
+    expect(seen).toEqual(['count by (service) (last_over_time(backwork_hop_started_total{dir="in"}[14d]))']);
   });
 });

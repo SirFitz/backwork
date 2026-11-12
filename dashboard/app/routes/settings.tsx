@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { defer } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { defer, json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Link } from "@remix-run/react";
@@ -11,6 +11,17 @@ import * as jaeger from "~/lib/jaeger.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
+import { DataControlsPanel } from "~/components/data-controls";
+import { assertSameOrigin } from "~/lib/auth/security.server";
+import { safe } from "~/lib/config.server";
+import {
+  GRID_HEAD,
+  applyControlChange,
+  canManageControls,
+  isControlIntent,
+  loadControlsView,
+  type ControlsView,
+} from "~/lib/controls-view.server";
 
 async function ping(url: string): Promise<boolean> {
   try {
@@ -44,7 +55,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     jaeger: jaegerSvcs,
   }));
 
+  // The same switches as on Projects, for the whole organisation (design 19.1).
+  const controls: Promise<{ data: ControlsView | null; error: string | null }> = safe(
+    () => loadControlsView({ orgId: ctx.org.id, projectId: null, services: async () => [], canManage: canManageControls(ctx) }),
+    null
+  );
+
   return defer({
+    controls,
+    gridHeads: GRID_HEAD,
     publicUrl: config.publicUrl,
     isPlatform,
     // The legacy global token is platform-only; customer orgs use per-project
@@ -54,6 +73,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
     health,
     retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", traces: "in-memory, ~20k (Jaeger)" },
   });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  assertSameOrigin(request);
+  const ctx = await requireOrg(request);
+  const fd = await request.formData();
+  const intent = String(fd.get("intent") ?? "");
+  if (!isControlIntent(intent)) return json({ ok: false, error: "Unknown action." }, { status: 400 });
+  // Organisation level only: a project id is never accepted here.
+  fd.set("projectId", "");
+  fd.set("service", "");
+  return applyControlChange(request, ctx, fd, new Set<string>());
 }
 
 function HealthRow({ name, up, note }: { name: string; up: boolean; note: string }) {
@@ -140,6 +171,21 @@ OTEL_SERVICE_NAME=<your-service>`;
           </div>
         </Card>
       )}
+
+      <Card>
+        <CardHead title="Data controls" sub="what backwork collects for the whole organisation · off here is off for every project" />
+        <div className="px-4 pb-4 pt-[18px] sm:pl-8 sm:pr-5">
+          <Deferred resolve={d.controls} fallback={<RowsSkeleton rows={6} className="p-0" />}>
+            {(panel) =>
+              panel.error || !panel.data ? (
+                <div className="text-2xs text-warn">data source unavailable — {(panel.error ?? "no data").slice(0, 180)}</div>
+              ) : (
+                <DataControlsPanel view={panel.data} heading="Collected from this organisation" gridHeads={d.gridHeads} />
+              )
+            }
+          </Deferred>
+        </div>
+      </Card>
 
       <Card>
         <CardHead title="Retention" sub="how long data is kept" />
