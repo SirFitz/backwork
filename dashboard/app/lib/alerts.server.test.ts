@@ -31,4 +31,9 @@ describe("one service, one name (BAC-51)", () => {
     expect(ruleQuery(AlertMetric.ErrorRate, "commerce-api", names)).toBe('sum(rate({kind!="hop",level="error",source=~"dev-commerce-api-dserve"}[5m]))');
     expect(ruleQuery(AlertMetric.LogRate, "worker", names)).toBe('sum(rate({kind!="hop",service="worker"}[5m]))');
   });
+  test("a rule saved under the container name keeps counting after lines are relabelled", async () => {
+    const { buildServiceNames } = await import("./service-names");
+    const names = buildServiceNames([{ source: "dev-commerce-api-dserve", service: "commerce-api" }]);
+    expect(ruleQuery(AlertMetric.LogRate, "dev-commerce-api-dserve", names)).toBe('sum(rate({kind!="hop",source=~"dev-commerce-api-dserve"}[5m]))');
+  });
 });

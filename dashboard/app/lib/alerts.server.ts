@@ -9,7 +9,7 @@ import * as loki from "./loki.server";
 import { tenantOf, platformOrgId, type Tenant } from "./tenant.server";
 
 import { AlertMetric, isAlertMetric } from "./alert-kinds";
-import { EMPTY_NAMES, serviceMatcher, type ServiceNames } from "./service-names";
+import { EMPTY_NAMES, canonicalName, serviceMatcher, type ServiceNames } from "./service-names";
 import { serviceNamesWithin } from "./service-names.server";
 export { AlertMetric, isAlertMetric };
 
@@ -87,7 +87,8 @@ export async function saveRules(orgId: string, rules: AlertRule[]): Promise<void
 // matcher; org_id scoping is still enforced by loki.scoped.
 function lokiSel(service: string, extra: string, names: ServiceNames): string {
   // One service, one name (BAC-51): a service's lines under any of its sources.
-  const parts = [extra, service === "*" ? `service=~".+"` : serviceMatcher(service, names)].filter(Boolean);
+  // A rule saved under a container name (before lines were relabelled) means that service too.
+  const parts = [extra, service === "*" ? `service=~".+"` : serviceMatcher(canonicalName(service, names.bySource), names)].filter(Boolean);
   return `{${parts.join(",")}}`;
 }
 
