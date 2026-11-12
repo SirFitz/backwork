@@ -13,6 +13,8 @@ import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 import { stripAnsi, traceIdOfLine } from "~/lib/hops/parse";
 import { Clock } from "~/components/time";
+import { displayService, serviceList, serviceMatcher, type ServiceNames } from "~/lib/service-names";
+import { serviceNames } from "~/lib/service-names.server";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
 /** pino writes numeric levels; show their names. */
@@ -24,18 +26,23 @@ const RANGES: Record<string, number> = { "15m": 15, "1h": 60, "6h": 360, "24h": 
 
 /** Hop records are log lines too (design 8): hidden unless "Show hop records" is on.
  *  A raw LogQL query is taken as written. */
-function matchers(service: string, level: string): string[] {
+function matchers(service: string, level: string, names: ServiceNames): string[] {
   const m: string[] = [];
-  if (service && service !== "all") m.push(`service=${JSON.stringify(service)}`);
+  // One service, one name: its hop records and its ordinary lines, under whichever label (BAC-51).
+  if (service && service !== "all") m.push(serviceMatcher(service, names));
   if (level && level !== "all") m.push(`level="${level}"`);
   if (m.length === 0) m.push(`service=~".+"`);
   return m;
 }
 
-function buildQuery(service: string, level: string, q: string, showHops: boolean): string {
+/** Which lines a query selects by kind: ordinary lines only, everything, or hop records only. */
+const KindFilter = { Ordinary: `kind!="hop"`, All: "", Hops: `kind="hop"` } as const;
+type KindFilter = (typeof KindFilter)[keyof typeof KindFilter];
+
+function buildQuery(service: string, level: string, q: string, kind: KindFilter, names: ServiceNames): string {
   if (q.trim().startsWith("{")) return q.trim();
-  const m = matchers(service, level);
-  if (!showHops) m.push(`kind!="hop"`);
+  const m = matchers(service, level, names);
+  if (kind) m.push(kind);
   let query = `{${m.join(", ")}}`;
   // literal, case-insensitive substring match — escape regex metacharacters so
   // a user search like "GET /x?y=1" or "(foo)" doesn't break the LogQL query (M9)
@@ -57,21 +64,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const start = end - mins * 60 * 1000;
   const showHops = url.searchParams.get("hops") === "1";
   const raw = q.trim().startsWith("{");
-  const query = buildQuery(service, level, q, showHops);
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
-  const ck = `logs:${t.orgId}:${rangeKey}:${query}`;
-  // How many hop records the switch hides, for the same filters and range.
-  const hiddenQuery = `sum(count_over_time({${[...matchers(service, level), `kind="hop"`].join(", ")}} [${mins}m]))`;
+  // The name map is cached; every part below waits only on it and on its own query.
+  const namesP = serviceNames(t);
+  const queryP = namesP.then((names) => buildQuery(service, level, q, showHops ? KindFilter.All : KindFilter.Ordinary, names));
+  const ck = (query: string): string => `logs:${t.orgId}:${rangeKey}:${query}`;
+  // How many hop records the switch hides, for the same filters, search text and range.
+  const hiddenQueryP = namesP.then((names) => `sum(count_over_time(${buildQuery(service, level, q, KindFilter.Hops, names)} [${mins}m]))`);
   return defer({
-    services: loki.services(t).catch(() => [] as string[]),
-    query,
+    services: Promise.all([loki.services(t).catch(() => [] as string[]), namesP]).then(([list, names]) => serviceList(list, names)),
+    query: queryP,
     filters: { service, level, q, range: rangeKey, hops: showHops, raw },
-    entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) =>
-      list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: e.service, message: stripAnsi(e.message), traceId: traceIdOfLine(e.line) })),
+    entries: Promise.all([queryP, namesP]).then(([query, names]) =>
+      cached(`${ck(query)}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) =>
+        list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: displayService(e.labels, names), message: stripAnsi(e.message), traceId: traceIdOfLine(e.line) })),
+      ),
     ),
-    hidden: showHops || raw ? Promise.resolve(0) : cached(`${ck}:h`, 5000, () => loki.scalar(hiddenQuery, 0, t)).catch(() => -1),
-    volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }, t)).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
+    hidden: showHops || raw
+      ? Promise.resolve(0)
+      : Promise.all([queryP, hiddenQueryP]).then(([query, hq]) => cached(`${ck(query)}:h`, 5000, () => loki.scalar(hq, 0, t))).catch(() => -1),
+    volume: queryP.then((query) =>
+      cached(`${ck(query)}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }, t)).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
+    ),
   });
 }
 
@@ -108,7 +123,7 @@ export default function Logs() {
       </Form>
 
       <Card>
-        <CardHead title="Volume" sub={<span className="font-mono">{d.query}</span>} />
+        <CardHead title="Volume" sub={<Suspense fallback={null}><Await resolve={d.query} errorElement={null}>{(query: string) => <span className="font-mono">{query}</span>}</Await></Suspense>} />
         <Deferred resolve={d.volume} fallback={<ChartSkeleton height={80} />}>
           {(points) => <div className="p-3"><AreaSeries points={points} color="oklch(0.58 0.13 240)" height={80} fmt={(n) => fmtNum(n, 0)} /></div>}
         </Deferred>
@@ -125,7 +140,7 @@ export default function Logs() {
         <Deferred resolve={d.entries} fallback={<RowsSkeleton rows={10} />}>
           {(entries) =>
             entries.length === 0 ? (
-              <Empty icon={<Search className="h-5 w-5" />} title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>
+              <NoLines filters={f} hidden={d.hidden} />
             ) : (
               <div className={cn("max-h-[62vh] overflow-auto scroll-thin text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
                 <div className="sticky top-0 z-[1] hidden grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] gap-3 border-b border-border bg-surface px-4 py-[7px] text-2xs font-medium uppercase tracking-wide text-faint md:grid">
@@ -162,17 +177,46 @@ export default function Logs() {
 
 type Filters = { service: string; level: string; q: string; range: string; hops: boolean; raw: boolean };
 
-/** "Show hop records": a link that flips the URL, so it works before JavaScript loads. */
-function HopSwitch({ on, filters, hidden }: { on: boolean; filters: Filters; hidden: Promise<number> }) {
+function hopsHref(filters: Filters, on: boolean): string {
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
   if (filters.service !== "all") params.set("service", filters.service);
   if (filters.level !== "all") params.set("level", filters.level);
   params.set("range", filters.range);
-  if (!on) params.set("hops", "1");
+  if (on) params.set("hops", "1");
+  return `?${params.toString()}`;
+}
+
+/** An honest empty state: when only hop records match, say so and offer the switch. */
+function NoLines({ filters, hidden }: { filters: Filters; hidden: Promise<number> }) {
+  const plain = <Empty icon={<Search className="h-5 w-5" />} title="No log lines match">Widen the time range, clear the filters, or check the query.</Empty>;
+  if (filters.hops || filters.raw) return plain;
+  return (
+    <Suspense fallback={plain}>
+      <Await resolve={hidden} errorElement={plain}>
+        {(n: number) =>
+          n > 0 ? (
+            <Empty
+              icon={<Search className="h-5 w-5" />}
+              title="No ordinary log lines match"
+              cta={<Link to={hopsHref(filters, true)} preventScrollReset className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-[12.5px] font-medium hover:bg-surface-2">{n === 1 ? "Show the hop record" : `Show the ${fmtNum(n, 0)} hop records`}</Link>}
+            >
+              {fmtNum(n, 0)} hop {n === 1 ? "record matches" : "records match"} these filters. Hop records are hidden unless "Show hop records" is on.
+            </Empty>
+          ) : (
+            plain
+          )
+        }
+      </Await>
+    </Suspense>
+  );
+}
+
+/** "Show hop records": a link that flips the URL, so it works before JavaScript loads. */
+function HopSwitch({ on, filters, hidden }: { on: boolean; filters: Filters; hidden: Promise<number> }) {
   return (
     <Link
-      to={`?${params.toString()}`}
+      to={hopsHref(filters, !on)}
       role="switch"
       aria-checked={on}
       preventScrollReset
