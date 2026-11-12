@@ -20,10 +20,13 @@ import {
   upsertFilterPattern,
   type ControlRow,
   type FilterPattern,
+  canonicalRows,
 } from "~/lib/controls.server";
 import { config, fetchJson } from "~/lib/config.server";
 import { hasRole, type OrgContext } from "~/lib/auth/context.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantOf, type Tenant } from "~/lib/tenant.server";
+import { canonicalName } from "~/lib/service-names";
+import { serviceNamesWithin } from "~/lib/service-names.server";
 import * as vm from "~/lib/vm.server";
 
 /** The switches shown in the "Collected" list and the by-service grid, in frame order. */
@@ -219,7 +222,13 @@ type LabelValues = { status: string; data?: string[] };
 
 /** Services seen for a project: log lines in Loki over 7 days, hop metrics in VictoriaMetrics,
  *  and any service that already has a switch. Every query carries the org scope. */
-export async function projectServices(tenant: Tenant, projectSlug: string, rows: readonly ControlRow[], projectId: string): Promise<string[]> {
+export async function projectServices(
+  tenant: Tenant,
+  projectSlug: string,
+  rows: readonly ControlRow[],
+  projectId: string,
+  serviceOf: ReadonlyMap<string, string> = new Map(),
+): Promise<string[]> {
   const names = new Set<string>();
   for (const r of rows) if (r.service && (r.projectId === projectId || r.projectId === null)) names.add(r.service);
   const matchers = [`project=${JSON.stringify(projectSlug)}`];
@@ -239,7 +248,8 @@ export async function projectServices(tenant: Tenant, projectSlug: string, rows:
       .catch(() => [] as string[]),
   ]);
   for (const s of [...logs, ...hops]) if (s && isValidServiceName(s)) names.add(s);
-  return [...names].sort();
+  // One row per service (BAC-51): a container name whose hop records name a service is that service.
+  return [...new Set([...names].map((n) => canonicalName(n, serviceOf)))].sort();
 }
 
 /** The view for one scope, loaded from the store. */
@@ -248,8 +258,11 @@ export async function loadControlsView(opts: {
   projectId: string | null;
   services: (rows: readonly ControlRow[]) => Promise<string[]>;
   canManage: boolean;
+  /** source -> service: switch rows written under a container name show on its service's row. */
+  serviceOf?: ReadonlyMap<string, string>;
 }): Promise<ControlsView> {
-  const [rows, patterns] = await Promise.all([getControls(opts.orgId, { fresh: true }), getFilterPatterns(opts.orgId)]);
+  const [stored, patterns] = await Promise.all([getControls(opts.orgId, { fresh: true }), getFilterPatterns(opts.orgId)]);
+  const rows = opts.serviceOf ? canonicalRows(stored, opts.serviceOf) : stored;
   const services = await opts.services(rows);
   return buildControlsView({ rows, patterns, projectId: opts.projectId, services, canManage: opts.canManage });
 }
@@ -304,6 +317,17 @@ export async function applyControlChange(
       if (service && (!projectId || !isValidServiceName(service))) return json<ControlResult>({ ok: false, error: "Invalid service." }, { status: 400 });
       if (service && feature === Feature.Filter) return json<ControlResult>({ ok: false, error: "The filter is set per project." }, { status: 400 });
       await setControl(orgId, { projectId, service }, feature, enabled, userId, request);
+      // Rows written earlier under one of this service's container names act on the same lines:
+      // give them the same value, so the merged row's switch is what holds (BAC-51).
+      if (service) {
+        const names = await serviceNamesWithin(tenantOf(orgId), 3000);
+        const sources = new Set(names.sourcesOf.get(service) ?? []);
+        sources.delete(service);
+        const stale = (await getControls(orgId, { fresh: true })).filter(
+          (r) => r.feature === feature && r.service !== null && sources.has(r.service) && r.projectId === projectId && r.enabled !== enabled,
+        );
+        for (const r of stale) await setControl(orgId, { projectId, service: r.service }, feature, enabled, userId, request);
+      }
       return json<ControlResult>({ ok: true });
     }
     if (intent === ControlIntent.PatternToggle) {

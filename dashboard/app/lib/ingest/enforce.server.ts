@@ -12,6 +12,7 @@
 import {
   Feature,
   applyFilter,
+  canonicalRows,
   resolveAll,
   type CompiledFilter,
   type ControlRow,
@@ -148,6 +149,9 @@ export interface LokiStream {
 export interface EnforceContext {
   projectId: string | null;
   rows: readonly ControlRow[];
+  /** source -> service (BAC-51): ordinary lines of a known source are stored under the service's
+   *  own name, and switches resolve on that name. Empty: labels are kept as sent. */
+  serviceOf?: ReadonlyMap<string, string>;
   /** The organisation's compiled filter (applied where the filter switch is on). */
   filter: CompiledFilter;
 }
@@ -172,8 +176,11 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
   let dropped = 0;
   for (const s of streams) {
     if (!isObject(s) || !isObject(s.stream) || !Array.isArray(s.values)) continue;
-    const service = typeof s.stream.service === "string" ? s.stream.service : null;
-    const on = resolveAll(ctx.rows, ctx.projectId, service);
+    const sent = typeof s.stream.service === "string" ? s.stream.service : null;
+    const source = typeof s.stream.source === "string" ? s.stream.source : null;
+    const own = source !== null ? ctx.serviceOf?.get(source) ?? null : null;
+    const service = own ?? sent;
+    const on = resolveAll(ctx.serviceOf ? canonicalRows(ctx.rows, ctx.serviceOf) : ctx.rows, ctx.projectId, service);
     for (const v of s.values) {
       if (!Array.isArray(v) || typeof v[0] !== "string" || typeof v[1] !== "string") continue;
       const line = v[1];
@@ -214,7 +221,8 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
       } else {
         out = on[Feature.Filter] ? applyFilter(raw, ctx.filter) : raw;
       }
-      const labels = { ...s.stream, kind: kindLabel };
+      // Never relabel a line whose source has no hop records (`own` is null then).
+      const labels = { ...s.stream, kind: kindLabel, ...(own !== null && kindLabel === "log" ? { service: own } : {}) };
       const key = JSON.stringify(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)));
       let g = groups.get(key);
       if (!g) {

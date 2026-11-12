@@ -23,3 +23,12 @@ describe("alert kinds", () => {
     expect(ruleQuery(AlertMetric.LogRate, 'a"b')).toBe('sum(rate({kind!="hop",service="a\\"b"}[5m]))');
   });
 });
+
+describe("one service, one name (BAC-51)", () => {
+  test("a rule for a service counts its lines under any of its sources", async () => {
+    const { buildServiceNames } = await import("./service-names");
+    const names = buildServiceNames([{ source: "dev-commerce-api-dserve", service: "commerce-api" }]);
+    expect(ruleQuery(AlertMetric.ErrorRate, "commerce-api", names)).toBe('sum(rate({kind!="hop",level="error",source=~"dev-commerce-api-dserve"}[5m]))');
+    expect(ruleQuery(AlertMetric.LogRate, "worker", names)).toBe('sum(rate({kind!="hop",service="worker"}[5m]))');
+  });
+});

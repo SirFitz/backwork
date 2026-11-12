@@ -218,3 +218,43 @@ tests:
               m = to_string(.message) ?? ""
               assert!(!contains(m, "path"))
               assert!(contains(m, "/v1/payments/:id"))
+
+  - name: an ordinary line of a source with hop records is stored under the service's own name (BAC-51)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: dev-commerce-api-dserve
+          message: "GET /api/v1/public/m/demo/products trace_id=6503f5f183b828139d5b143365ad72fa loading products"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "log")
+              assert_eq!(.service, "commerce-api")
+              assert_eq!(.source, "dev-commerce-api-dserve")
+
+  - name: a source with no hop records keeps its label (BAC-51)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "started in 120 ms"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.service, "commerce-web")
+              assert_eq!(.source, "commerce-web")
+
+  - name: a per-service switch acts on the lines it names under either label (BAC-51)
+    no_outputs_from: [bw_controls]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: quiet-box
+          message: "ordinary line of commerce-api-quiet"

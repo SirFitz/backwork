@@ -3,7 +3,8 @@ import { gunzipSync } from "node:zlib";
 import { config } from "~/lib/config.server";
 import { getCompiledFilter, getControls } from "~/lib/controls.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
-import { resolveIngestToken } from "~/lib/tenant.server";
+import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
+import { serviceNamesWithin } from "~/lib/service-names.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
 // <endpoint>/loki/api/v1/push. The bearer token resolves to an org + project;
@@ -41,8 +42,12 @@ export async function action({ request }: ActionFunctionArgs) {
     return new Response("invalid JSON", { status: 400 });
   }
 
-  const [rows, filter] = await Promise.all([getControls(tenant.orgId), getCompiledFilter(tenant.orgId)]);
-  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter });
+  const [rows, filter, names] = await Promise.all([
+    getControls(tenant.orgId),
+    getCompiledFilter(tenant.orgId),
+    serviceNamesWithin(tenantOf(tenant.orgId), 1500),
+  ]);
+  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource });
   for (const s of result.streams) s.stream = { ...s.stream, org_id: tenant.orgId, project: tenant.project };
   if (result.streams.length === 0) return new Response(null, { status: 204 });
 

@@ -13,6 +13,7 @@ import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { getAuthSession, commitAuthSession } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { hashToken, tenantOf } from "~/lib/tenant.server";
+import { serviceNamesWithin } from "~/lib/service-names.server";
 import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
 import { slugify, cn } from "~/lib/utils";
@@ -50,12 +51,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const controls: Promise<{ data: ControlsView | null; error: string | null }> = open
     ? safe(
         () =>
-          loadControlsView({
-            orgId: ctx.org.id,
-            projectId: open.id,
-            services: (controlRows) => projectServices(tenant, open.slug, controlRows, open.id),
-            canManage: canManageControls(ctx),
-          }),
+          serviceNamesWithin(tenant, 3000).then((names) =>
+            loadControlsView({
+              orgId: ctx.org.id,
+              projectId: open.id,
+              services: (controlRows) => projectServices(tenant, open.slug, controlRows, open.id, names.bySource),
+              canManage: canManageControls(ctx),
+              serviceOf: names.bySource,
+            })
+          ),
         null
       )
     : Promise.resolve({ data: null, error: null });

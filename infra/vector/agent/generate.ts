@@ -24,6 +24,10 @@ const noQuery = { ...snap.project, statements: false } as Record<Feature, boolea
 // Request paths off for one service (BAC-52).
 const noPaths = { ...snap.project, paths: false } as Record<Feature, boolean>;
 snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs, "svc-no-query": noQuery, "svc-no-paths": noPaths };
+// One service, one name (BAC-51 step 2): two containers whose hop records name a service.
+const quietLogs = { ...snap.project, logs: false } as Record<Feature, boolean>;
+snap.services["commerce-api-quiet"] = quietLogs;
+snap.serviceNames = { "dev-commerce-api-dserve": "commerce-api", "quiet-box": "commerce-api-quiet" };
 snap.patterns = [...snap.patterns, { name: "member", pattern: "MBR-\\d{6}", replacement: "[filtered]" }, { name: "end", pattern: "secret-tail$", replacement: "[filtered]" }];
 writeFileSync(join(out, "controls.yaml"), controlsTransformYaml(snap));
 console.log(`wrote ${out}`);

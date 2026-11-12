@@ -22,3 +22,8 @@ export function serviceNames(tenant: Tenant, read: PairReader = loki.labelSets):
     return buildServiceNames(pairs);
   }).catch(() => EMPTY_NAMES);
 }
+
+/** The map, but never slower than `ms`: an ingest or a poll does not wait on Loki for long. */
+export function serviceNamesWithin(tenant: Tenant, ms: number, read: PairReader = loki.labelSets): Promise<ServiceNames> {
+  return Promise.race([serviceNames(tenant, read), new Promise<ServiceNames>((r) => setTimeout(() => r(EMPTY_NAMES), ms))]);
+}
