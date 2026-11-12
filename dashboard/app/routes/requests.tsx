@@ -5,36 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Network, Search, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
-import * as jaeger from "~/lib/jaeger.server";
 import { safe } from "~/lib/config.server";
 import { requireOrg } from "~/lib/auth/context.server";
-import { tenantOf, type Tenant } from "~/lib/tenant.server";
-import { cached } from "~/lib/cache.server";
+import { tenantOf } from "~/lib/tenant.server";
 import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/hops/metrics.server";
-import { hopRequestPage, mergeRows, RowSource, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
+import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
 import { cn, fmtClock, fmtMs, fmtPct } from "~/lib/utils";
 
 const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
-
-/** Span-derived rows, as before: one Jaeger query per service, cached against the 10 s poll. */
-function spanRows(t: Tenant, list: string[], chosen: string, rangeKey: string, hrs: number) {
-  return cached(`req:rows:${t.orgId}:${chosen}:${rangeKey}`, 8000, async () => {
-    let rows: jaeger.RequestRow[] = [];
-    let error: string | null = null;
-    if (chosen === "all" && list.length) {
-      const batches = await Promise.all(
-        list.slice(0, 12).map((s) => safe(() => jaeger.recentRequests({ service: s, limit: 40, lookbackHours: hrs }, t), [] as jaeger.RequestRow[]))
-      );
-      rows = batches.flatMap((b) => b.data).sort((a, b) => b.startMs - a.startMs).slice(0, 200);
-      error = batches.find((b) => b.error)?.error ?? null;
-    } else if (chosen && list.includes(chosen)) {
-      const r = await safe(() => jaeger.recentRequests({ service: chosen, limit: 120, lookbackHours: hrs }, t), [] as jaeger.RequestRow[]);
-      rows = r.data;
-      error = r.error;
-    }
-    return { rows, error };
-  });
-}
 
 interface FeedData {
   rows: RequestListRow[];
@@ -52,12 +30,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const sinceMs = Date.now() - hrs * 3600_000;
   const beforeRaw = Number(url.searchParams.get("before"));
 
-  // cache the Jaeger fan-out so the 10s live-poll doesn't re-fire up to 12 trace queries every tick (PERF-3)
-  const [spanServices, hopServices] = await Promise.all([
-    cached(`req:svcs:${t.orgId}`, 30000, () => safe(() => jaeger.services(t), [] as string[])),
-    safe(() => inboundServices(t), [] as string[]),
-  ]);
-  const list = [...new Set([...spanServices.data, ...hopServices.data])].sort();
+  const services = await safe(() => inboundServices(t), [] as string[]);
+  const list = services.data;
   const chosen = requested === "all" ? "all" : list.includes(requested) ? requested : "all";
   const hopService = chosen === "all" ? null : chosen;
 
@@ -67,20 +41,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({ kind: "older" as const, page: page.data, error: page.error });
   }
 
-  const feed: Promise<FeedData> = Promise.all([
-    spanRows(t, spanServices.data, chosen, rangeKey, hrs),
-    safe(() => hopRequestPage(t, { service: hopService, sinceMs, before: Date.now() }), { rows: [], next: null } as HopPage),
-  ]).then(([spans, hops]) => ({
-    rows: mergeRows(hops.data.rows, spans.rows.map((r) => ({ ...r, source: RowSource.Span }))),
-    next: hops.data.next,
-    error: hops.error ?? spans.error,
-  }));
+  const feed: Promise<FeedData> = safe(
+    () => hopRequestPage(t, { service: hopService, sinceMs, before: Date.now() }),
+    { rows: [], next: null } as HopPage
+  ).then((hops) => ({ rows: hops.data.rows, next: hops.data.next, error: hops.error }));
   const totals: Promise<{ data: InboundTotals | null; error: string | null }> = safe(() => inboundHttpTotals(rangeKey, hopService, t), null);
 
   return defer({
     kind: "page" as const,
     services: list,
-    hopServices: hopServices.data,
     service: chosen,
     range: rangeKey,
     feed,
@@ -123,7 +92,7 @@ export default function Requests() {
           <div className="flex flex-col items-center px-6 py-14 text-center">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-surface-2 text-faint"><Network className="h-5 w-5" /></span>
             <p className="mt-4 text-sm font-medium">No services report requests yet</p>
-            <p className="mt-1 max-w-[56ch] text-[13px] text-muted">Requests appear here once a service runs Correlator with hop records on, or emits OpenTelemetry HTTP spans to backwork.</p>
+            <p className="mt-1 max-w-[56ch] text-[13px] text-muted">Requests appear here once a service runs Correlator with hop records on and its host runs the backwork collector or agent.</p>
           </div>
         </Card>
       ) : (
@@ -138,7 +107,7 @@ export default function Requests() {
             </>
           }
         >
-          {(feed) => <Feed key={`${d.service}|${d.range}`} feed={feed} totals={d.totals} services={d.services} hopServices={d.hopServices} service={d.service} range={d.range} />}
+          {(feed) => <Feed key={`${d.service}|${d.range}`} feed={feed} totals={d.totals} services={d.services} service={d.service} range={d.range} />}
         </Deferred>
       )}
     </div>
@@ -149,14 +118,12 @@ function Feed({
   feed,
   totals,
   services,
-  hopServices,
   service,
   range,
 }: {
   feed: FeedData;
   totals: Promise<{ data: InboundTotals | null; error: string | null }>;
   services: string[];
-  hopServices: string[];
   service: string;
   range: string;
 }) {
@@ -234,20 +201,15 @@ function Feed({
     return { total, errPct: total ? (errs / total) * 100 : 0, p95: pctl(rows.map((r) => r.durationMs), 95) };
   }, [rows]);
 
-  const hopSet = useMemo(() => new Set(hopServices), [hopServices]);
-  const spanOnly = useMemo(() => all.filter((r) => r.source === RowSource.Span && !hopSet.has(r.service)), [all, hopSet]);
 
   return (
     <>
-      {/* summary: range totals from hop metrics (plus span-only rows), or the filtered rows when a filter is on */}
+      {/* summary: range totals from the hop metrics, or the loaded rows when a filter is on */}
       <Deferred resolve={totals} fallback={<SummaryCards total={null} errPct={null} p95={null} />}>
         {(t) => {
           const tot = t.data;
           if (filtered || !tot || tot.total === 0) return <SummaryCards total={fromRows.total} errPct={fromRows.errPct} p95={fromRows.p95} />;
-          const spanErr = spanOnly.filter((r) => r.error || (r.status ?? 0) >= 500).length;
-          const total = tot.total + spanOnly.length;
-          const errPct = total ? ((tot.errorShare * tot.total + spanErr) / total) * 100 : 0;
-          return <SummaryCards total={total} errPct={errPct} p95={tot.p95 !== null ? tot.p95 * 1000 : fromRows.p95} />;
+          return <SummaryCards total={tot.total} errPct={tot.errorShare * 100} p95={tot.p95 !== null ? tot.p95 * 1000 : fromRows.p95} />;
         }}
       </Deferred>
 
@@ -268,8 +230,8 @@ function Feed({
             const counts =
               tot && tot.total > 0
                 ? {
-                    all: tot.total + spanOnly.length,
-                    ...Object.fromEntries(FILTERS.slice(1).map((f) => [f, tot.byClass[f as keyof InboundTotals["byClass"]] + spanOnly.filter((r) => cls(r.status) === f).length])),
+                    all: tot.total,
+                    ...Object.fromEntries(FILTERS.slice(1).map((f) => [f, tot.byClass[f as keyof InboundTotals["byClass"]]])),
                   }
                 : loadedCounts;
             return <StatusSeg counts={counts} value={statusFilter} onChange={setStatusFilter} />;
@@ -320,14 +282,14 @@ function Feed({
               </thead>
               <tbody className="font-mono">
                 {rows.map((r) => (
-                  <tr key={`${r.traceID}|${r.service}|${r.startMs}`} onClick={() => navigate(`/traces/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
+                  <tr key={`${r.traceID}|${r.service}|${r.startMs}`} onClick={() => navigate(`/requests/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
                     <td className="px-4 py-1.5 tabular-nums text-faint">{fmtClock(r.startMs)}</td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
                     <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
                     <td className="max-w-[360px] truncate px-4 py-1.5 text-fg/90">{r.route || <span className="text-faint">(no route)</span>}</td>
                     <td className={cn("px-4 py-1.5 text-right font-semibold tabular-nums", statusTone(r.status))}>{r.status ?? "—"}</td>
                     <td className={cn("px-4 py-1.5 text-right tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-muted")}>{fmtMs(r.durationMs)}</td>
-                    <td className="px-4 py-1.5 text-right"><Link to={`/traces/${r.traceID}`} onClick={(e) => e.stopPropagation()} className="font-sans text-2xs font-medium text-brand hover:underline">open</Link></td>
+                    <td className="px-4 py-1.5 text-right"><Link to={`/requests/${r.traceID}`} onClick={(e) => e.stopPropagation()} className="font-sans text-2xs font-medium text-brand hover:underline">open</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -1,6 +1,6 @@
-// Requests list rows from inbound HTTP hop records (design 8, Requests), merged with the rows
-// derived from OpenTelemetry spans. A row is one inbound HTTP hop: a request that crossed four
-// services that use Correlator shows as one row per service, all opening the same request view.
+// Requests list rows from inbound HTTP hop records (design 8, Requests; hop records only since
+// Romario's 2026-11-12 decision to drop Jaeger). A row is one inbound HTTP hop: a request that
+// crossed four services shows as one row per service, all opening the same request view.
 
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
@@ -8,11 +8,7 @@ import { parseHopRecord } from "~/lib/hops/parse";
 import { HopKind, Outcome, Via, type HopRecord } from "~/lib/hops/types";
 import { isLabelValue } from "~/lib/hops/metrics.server";
 
-/** Where a row came from. */
-export const RowSource = { Hop: "hop", Span: "span" } as const;
-export type RowSource = (typeof RowSource)[keyof typeof RowSource];
-
-/** Same shape as the span-derived row (`jaeger.RequestRow`), plus its source. */
+/** One inbound HTTP hop, as listed. */
 export interface RequestListRow {
   traceID: string;
   service: string;
@@ -22,7 +18,6 @@ export interface RequestListRow {
   durationMs: number;
   startMs: number;
   error: boolean;
-  source: RowSource;
 }
 
 /** Rows per page (design 13). */
@@ -50,17 +45,9 @@ export function rowsFromRecords(records: readonly HopRecord[]): RequestListRow[]
       durationMs,
       startMs: r.timeMs - durationMs,
       error: r.outcome === Outcome.Error,
-      source: RowSource.Hop,
     });
   }
   return out;
-}
-
-/** Pure: hop rows and span rows, newest first. A span row for a trace and service that already
- *  has a hop row is dropped: the hop row carries the same request. */
-export function mergeRows(hop: readonly RequestListRow[], span: readonly RequestListRow[]): RequestListRow[] {
-  const seen = new Set(hop.map((r) => `${r.traceID}|${r.service}`));
-  return [...hop, ...span.filter((r) => !seen.has(`${r.traceID}|${r.service}`))].sort((a, b) => b.startMs - a.startMs);
 }
 
 export interface HopPage {
@@ -81,7 +68,7 @@ export async function hopRequestPage(
     const rec = parseHopRecord({ ts: e.ts, line: e.line, labels: e.labels });
     if (rec) records.push(rec);
   }
-  const rows = rowsFromRecords(records);
+  const rows = rowsFromRecords(records).sort((a, b) => b.startMs - a.startMs);
   // Loki returned a full page: there may be more lines before the oldest one.
   const oldest = entries.length ? Math.min(...entries.map((e) => e.ts)) : null;
   return { rows, next: entries.length >= PAGE_SIZE && oldest !== null ? oldest : null };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { inboundEndQuery, mergeRows, rowsFromRecords, RowSource, type RequestListRow } from "./requests.server";
+import { inboundEndQuery, rowsFromRecords } from "./requests.server";
 import { parseHopRecord } from "./parse";
 import type { HopRecord } from "./types";
 
@@ -26,7 +26,7 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240`),
     ]);
     expect(rows).toEqual([
-      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false, source: RowSource.Hop },
+      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
     ]);
   });
   test("start records, outbound, jobs and data-store hops are not rows", () => {
@@ -45,21 +45,5 @@ describe("rowsFromRecords", () => {
     expect(row.error).toBe(true);
     expect(row.status).toBeNull();
     expect(row.durationMs).toBe(30000);
-  });
-});
-
-describe("mergeRows", () => {
-  const row = (traceID: string, service: string, startMs: number, source: RowSource): RequestListRow => ({
-    traceID, service, startMs, source, method: "GET", route: "/", status: 200, durationMs: 1, error: false,
-  });
-  test("newest first, span rows dropped where a hop row covers the same trace and service", () => {
-    const merged = mergeRows(
-      [row("t1", "api", 10, RowSource.Hop), row("t1", "pay", 12, RowSource.Hop)],
-      [row("t1", "api", 9, RowSource.Span), row("t2", "api", 11, RowSource.Span), row("t1", "risk", 13, RowSource.Span)]
-    );
-    expect(merged.map((r) => `${r.traceID}/${r.service}/${r.source}`)).toEqual(["t1/risk/span", "t1/pay/hop", "t2/api/span", "t1/api/hop"]);
-  });
-  test("empty inputs", () => {
-    expect(mergeRows([], [])).toEqual([]);
   });
 });

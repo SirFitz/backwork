@@ -9,9 +9,8 @@ import { PALETTE } from "~/components/charts";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { safe } from "~/lib/config.server";
+import { PERF_RANGES, PeerKind, type PerfRange } from "~/lib/hops/figures";
 import {
-  PERF_RANGES,
-  PeerKind,
   connectionsTable,
   defaultService,
   isLabelValue,
@@ -19,7 +18,6 @@ import {
   routesTable,
   servicesTable,
   type ConnectionRow,
-  type PerfRange,
   type RouteRow,
   type ServiceRow,
 } from "~/lib/hops/metrics.server";

@@ -13,16 +13,8 @@ import { Via } from "~/lib/hops/types";
 
 // ---------------------------------------------------------------- fixed sets
 
-/** The page's one range control (frame 5). */
-export const PerfRange = {
-  H1: "1h",
-  H6: "6h",
-  H24: "24h",
-  D7: "7d",
-} as const;
-export type PerfRange = (typeof PerfRange)[keyof typeof PerfRange];
-export const PERF_RANGES: readonly PerfRange[] = Object.values(PerfRange);
-export const DEFAULT_RANGE: PerfRange = PerfRange.H6;
+import { DEFAULT_RANGE, PERF_RANGES, PeerKind, PerfRange } from "~/lib/hops/figures";
+export { DEFAULT_RANGE, PERF_RANGES, PeerKind, PerfRange };
 
 const RANGE_SECONDS: Record<PerfRange, number> = {
   [PerfRange.H1]: 3600,
@@ -221,15 +213,6 @@ export interface RouteRow extends Figures {
   storeShare: number | null;
 }
 
-export const PeerKind = {
-  /** The peer is the name of a service that reports hops. */
-  Service: "service",
-  Database: "database",
-  Cache: "cache",
-  /** A host or queue name not matched to a service yet (design 9, phase 3). */
-  Unmatched: "unmatched",
-} as const;
-export type PeerKind = (typeof PeerKind)[keyof typeof PeerKind];
 
 export interface ConnectionRow extends Figures {
   service: string;
