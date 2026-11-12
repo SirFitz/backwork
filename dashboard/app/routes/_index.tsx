@@ -23,8 +23,11 @@ import { cn, fmtMs, fmtNum } from "~/lib/utils";
 import { seo, TAGLINE } from "~/components/marketing";
 import { MarketingLanding } from "~/components/site/landing";
 
-export const meta: MetaFunction = () =>
-  seo({ title: "backwork — follow any request, from one ID", description: TAGLINE, path: "/" });
+/** The public headline for visitors; the page's own title once signed in (BAC-41 row 20). */
+export const meta: MetaFunction<typeof loader> = ({ data }) =>
+  data && "marketing" in data
+    ? seo({ title: "backwork — follow any request, from one ID", description: TAGLINE, path: "/" })
+    : [{ title: "Overview · backwork" }];
 
 interface Panel<T> {
   data: T;

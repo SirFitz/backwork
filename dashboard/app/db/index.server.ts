@@ -1,11 +1,14 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
+import { survivePoolErrors } from "./pool-errors.server";
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://backwork:backwork_dev_pw@postgres:5432/backwork",
-  max: 8,
-});
+const pool = survivePoolErrors(
+  new pg.Pool({
+    connectionString: process.env.DATABASE_URL || "postgresql://backwork:backwork_dev_pw@postgres:5432/backwork",
+    max: 8,
+  }),
+);
 
 export const db = drizzle(pool, { schema });
 

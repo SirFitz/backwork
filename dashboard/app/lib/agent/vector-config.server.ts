@@ -264,6 +264,7 @@ export function controlsVrl(snap: ControlsSnapshot): string {
   const lines: string[] = [
     `# backwork switches and sensitive-data filter (design 19). Version ${snap.version.replace(/[^a-z0-9]/gi, "")}.`,
     REDETECT_VRL.trimEnd(),
+    NEST_LEVEL_VRL.trimEnd(),
     NAMING_VRL.trimEnd(),
     ...relabelVrl(snap.serviceNames),
   ];
@@ -345,6 +346,20 @@ if (to_string(.kind) ?? "log") == "log" {
   if bw_own != null { .service = bw_own }
 }`];
 }
+
+/**
+ * NestJS's built-in logger writes its level as a word in the line, not as a field:
+ * "[Nest] 4120  - 11/12/2026, 10:01:03 AM    WARN [Payouts] slow bank", often wrapped in ANSI
+ * colour codes. Read it there (BAC-41 row 9). In the controls program, so every agent and the
+ * stack collector apply it without a reinstall. Lines with a structured level are untouched.
+ */
+export const NEST_LEVEL_VRL = `# NestJS logger: the level word after the pid and timestamp.
+if (to_string(.kind) ?? "log") == "log" && contains(to_string(.message) ?? "", "[Nest]") {
+  bw_nest = parse_regex(to_string(.message) ?? "", r'^(?:\\x1b\\[[0-9;]*m)*\\[Nest\\][^\\n]*?\\s(?:\\x1b\\[[0-9;]*m)?\\s*(?P<lvl>LOG|ERROR|WARN|DEBUG|VERBOSE|FATAL)(?:\\x1b\\[[0-9;]*m)?\\s') ?? {}
+  bw_nl = to_string(get(bw_nest, ["lvl"]) ?? "") ?? ""
+  if bw_nl == "ERROR" { .level = "error" } else if bw_nl == "WARN" { .level = "warn" } else if bw_nl == "FATAL" { .level = "fatal" } else if bw_nl == "DEBUG" || bw_nl == "VERBOSE" { .level = "debug" } else if bw_nl == "LOG" { .level = "info" }
+}
+`;
 
 /**
  * Detection again, inside the controls program, for lines that may hold a hop record: agents

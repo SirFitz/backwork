@@ -10,6 +10,7 @@
 //               service recorded receiving (the request view's "No record from" gap).
 // Health checks are left out (`health.ts`). The rules are pure functions, tested on their own.
 
+import { windowIncrease } from "./counter-window";
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { cached } from "~/lib/cache.server";
@@ -87,13 +88,14 @@ const BUCKET = `${HopMetric.Duration}_bucket`;
 
 /** The four queries of one window: requests, failed (two disjoint halves), p95. */
 export function windowQueries(offset: string | null): { requests: string; errA: string; errB: string; p95: string } {
-  const range = offset ? `[${BASELINE}] offset ${offset}` : `[${WINDOW}]`;
+  // The baseline is the BASELINE-long window that ends where the current one starts.
+  const window = offset ? BASELINE : WINDOW;
   const inbound = `dir="in",${PROM_NOT_HEALTH_CHECK}`;
   return {
-    requests: `sum by (service) (increase(${COUNT}{${inbound}}${range}))`,
-    errA: `sum by (service) (increase(${COUNT}{${inbound},outcome="error"}${range}))`,
-    errB: `sum by (service) (increase(${COUNT}{${inbound},outcome!="error",status_class="5xx"}${range}))`,
-    p95: `histogram_quantile(0.95, sum by (service, le) (increase(${BUCKET}{${inbound}}${range})))`,
+    requests: windowIncrease(`${COUNT}{${inbound}}`, window, ["service"], offset),
+    errA: windowIncrease(`${COUNT}{${inbound},outcome="error"}`, window, ["service"], offset),
+    errB: windowIncrease(`${COUNT}{${inbound},outcome!="error",status_class="5xx"}`, window, ["service"], offset),
+    p95: `histogram_quantile(0.95, ${windowIncrease(`${BUCKET}{${inbound}}`, window, ["service", "le"], offset)})`,
   };
 }
 

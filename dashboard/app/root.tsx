@@ -155,12 +155,14 @@ function LiveStatus() {
       <button
         type="button"
         onClick={() => setPaused((p) => !p)}
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg sm:px-2.5"
         title={paused ? "Resume live updates" : "Pause live updates"}
+        aria-label={paused ? "Paused: resume live updates" : "Live: pause live updates"}
       >
         {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
         <span className={cn("h-1.5 w-1.5 rounded-full", paused ? "bg-faint" : "bg-ok")} />
-        {paused ? "Paused" : "Live"}
+        {/* On a phone the dot says it (BAC-41 row 25: nothing may scroll sideways at 320). */}
+        <span className="hidden sm:inline">{paused ? "Paused" : "Live"}</span>
       </button>
       <span className="hidden text-2xs tabular-nums text-faint sm:inline">
         {revalidator.state !== "idle"
@@ -498,10 +500,10 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-bg/85 px-4 backdrop-blur-sm sm:px-6">
           <div className="flex items-center gap-2 lg:hidden">
             <span className="grid h-6 w-6 place-items-center rounded bg-brand font-mono text-xs font-bold text-brand-fg">b</span>
-            <span className="text-sm font-semibold">backwork<span className="text-brand">.dev</span></span>
+            <span className="text-sm font-semibold">backwork<span className="hidden text-brand min-[360px]:inline">.dev</span></span>
           </div>
           <FindRequest />
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <LiveStatus />
             <ThemeToggle />
             <AuthMenu auth={auth} />
