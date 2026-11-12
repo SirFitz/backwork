@@ -212,6 +212,12 @@ transforms:
           %bw_box = bw_box
         }
       }
+      # NestJS logger: the level word after the pid and timestamp.
+      if (to_string(.kind) ?? "log") == "log" && contains(to_string(.message) ?? "", "[Nest]") {
+        bw_nest = parse_regex(to_string(.message) ?? "", r'^(?:\x1b\[[0-9;]*m)*\[Nest\][^\n]*?\s(?:\x1b\[[0-9;]*m)?\s*(?P<lvl>LOG|ERROR|WARN|DEBUG|VERBOSE|FATAL)(?:\x1b\[[0-9;]*m)?\s') ?? {}
+        bw_nl = to_string(get(bw_nest, ["lvl"]) ?? "") ?? ""
+        if bw_nl == "ERROR" { .level = "error" } else if bw_nl == "WARN" { .level = "warn" } else if bw_nl == "FATAL" { .level = "fatal" } else if bw_nl == "DEBUG" || bw_nl == "VERBOSE" { .level = "debug" } else if bw_nl == "LOG" { .level = "info" }
+      }
       # Hop records are named by their own service field; the container stays in .source (BAC-49).
       if !exists(.source) { .source = .service }
       if (to_string(.kind) ?? "") == "hop" {
