@@ -338,3 +338,36 @@ export function storeCallCounts(tree: RequestTree): { db: number; cache: number 
 export function isFailed(hop: Hop): boolean {
   return hop.outcome === Outcome.Error || (hop.status !== null && hop.status >= 500);
 }
+
+/** One line about a request, for the search result. */
+export interface RequestSummary {
+  traceId: TraceId;
+  service: string;
+  method: string | null;
+  op: string | null;
+  via: Via;
+  status: number | null;
+  failed: boolean;
+  state: HopState;
+  services: number;
+  durationUs: number | null;
+  startMs: number;
+}
+
+export function requestSummary(tree: RequestTree): RequestSummary | null {
+  const head = headHop(tree);
+  if (!head) return null;
+  return {
+    traceId: tree.traceId,
+    service: head.service,
+    method: head.method,
+    op: head.op,
+    via: head.via,
+    status: head.status,
+    failed: isFailed(head),
+    state: head.state,
+    services: tree.services.length,
+    durationUs: head.durationUs,
+    startMs: head.startMs,
+  };
+}

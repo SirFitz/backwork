@@ -313,18 +313,29 @@ const LEVEL_NAMES: Readonly<Record<string, string>> = {
   warning: "warn", err: "error", critical: "error", notice: "info",
 };
 
+/** The readable message of a line: `msg` / `message` / `display`, unwrapping one envelope (Vector's JSON encoding). */
+function messageOf(line: string): { message: string; level: string | null } {
+  let obj = tryJsonObject(line);
+  let message = line;
+  let level: unknown = obj?.level ?? null;
+  for (let depth = 0; obj && depth < 2; depth++) {
+    const m = obj.msg ?? obj.message ?? obj.display;
+    if (typeof m !== "string") break;
+    message = m;
+    const inner = tryJsonObject(m);
+    if (!inner) break;
+    obj = inner;
+    level = inner.level ?? level;
+  }
+  return { message, level: level === null || level === undefined ? null : String(level) };
+}
+
 /** An ordinary log line for the request view: level and readable message, never the raw JSON. */
 export function toTraceLogLine(entry: RawLogEntry): TraceLogLine {
-  const bag = fieldsOf(entry.line);
-  const rawLevel = bag?.get("level") ?? entry.labels.level ?? null;
-  const levelStr = rawLevel === null ? null : String(rawLevel).toLowerCase();
+  const parsed = messageOf(entry.line);
+  const rawLevel = parsed.level ?? entry.labels.level ?? null;
+  const levelStr = rawLevel === null ? null : rawLevel.toLowerCase();
   const level = levelStr === null ? null : LEVEL_NAMES[levelStr] ?? levelStr.slice(0, 8);
-  const obj = tryJsonObject(entry.line);
-  let message = entry.line;
-  if (obj) {
-    const m = obj.msg ?? obj.message ?? obj.display;
-    if (typeof m === "string") message = m;
-  }
   const service = entry.labels.service && isPrintableValue(entry.labels.service) ? entry.labels.service : "unknown";
-  return { service, level, timeMs: entry.ts, line: message.slice(0, 2000) };
+  return { service, level, timeMs: entry.ts, line: parsed.message.slice(0, 2000) };
 }

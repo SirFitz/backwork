@@ -10,23 +10,29 @@ import {
   Scripts,
   ScrollRestoration,
   isRouteErrorResponse,
+  useFetcher,
   useLoaderData,
+  useLocation,
+  useNavigate,
   useRevalidator,
   useRouteError,
 } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   BellRing,
   Boxes,
   Bug,
   Building2,
+  Check,
   ChevronDown,
   CircleUser,
   Cog,
   FolderKanban,
+  Gauge,
   GitBranch,
   KeyRound,
   LayoutDashboard,
@@ -37,6 +43,7 @@ import {
   Pause,
   Play,
   ScrollText,
+  Search,
   Sun,
   Users,
 } from "lucide-react";
@@ -45,7 +52,8 @@ import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
 import { ensureEvaluator } from "~/lib/evaluator.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
-import { cn } from "~/lib/utils";
+import { cn, fmtClock } from "~/lib/utils";
+import type { LookupPreview } from "~/routes/lookup";
 
 type AuthData = {
   user: { name: string; email: string };
@@ -107,6 +115,7 @@ const NAV = [
   { to: "/metrics", label: "Metrics", icon: Activity },
   { to: "/traces", label: "Traces", icon: GitBranch },
   { to: "/requests", label: "Requests", icon: Network },
+  { to: "/performance", label: "Performance", icon: Gauge },
   { to: "/errors", label: "Errors", icon: Bug },
   { to: "/incidents", label: "Incidents", icon: AlertTriangle },
   { to: "/alerts", label: "Alerts", icon: BellRing },
@@ -165,6 +174,241 @@ function LiveStatus() {
           : new Date(last).toLocaleTimeString("en-GB", { hour12: false })}
       </span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- find a request (design 7.1)
+
+type LookupData = { preview: LookupPreview; q: string };
+
+const RULE_LABEL: Record<string, string> = { hex: "trace ID", uuid: "UUID", traceparent: "traceparent", derived: "request ID" };
+
+function fmtTook(us: number | null): string {
+  if (us === null) return "";
+  const ms = us / 1000;
+  if (ms < 100) return `${ms.toFixed(1)} ms`;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function shortId(id: string): string {
+  return `${id.slice(0, 8)}…${id.slice(-8)}`;
+}
+
+/** One search box in the header of every page. Results open in the browser's top layer
+ *  (UI_ISSUES.md entry 2), positioned against the window, so no header, sidebar or table can cut them. */
+function FindRequest() {
+  const fetcher = useFetcher<LookupData>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [phone, setPhone] = useState(false);
+  const loadRef = useRef(fetcher.load);
+  loadRef.current = fetcher.load;
+
+  const place = useCallback(() => {
+    const pop = popRef.current;
+    if (!pop) return;
+    const narrow = window.innerWidth < 640;
+    setPhone(narrow);
+    if (narrow) {
+      Object.assign(pop.style, { top: "56px", left: "0px", width: "100vw", maxWidth: "100vw" });
+      return;
+    }
+    const box = anchorRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const width = Math.min(Math.max(box.width, 360), 560, window.innerWidth - 32);
+    const left = Math.min(box.left, window.innerWidth - width - 16);
+    Object.assign(pop.style, { top: `${box.bottom + 8}px`, left: `${Math.max(16, left)}px`, width: `${width}px`, maxWidth: "" });
+  }, []);
+
+  const show = useCallback(() => {
+    const pop = popRef.current;
+    if (!pop) return;
+    place();
+    if (!pop.matches(":popover-open")) pop.showPopover();
+    setOpen(true);
+  }, [place]);
+
+  const hide = useCallback(() => {
+    const pop = popRef.current;
+    if (pop?.matches(":popover-open")) pop.hidePopover();
+    setOpen(false);
+  }, []);
+
+  // The popover attribute is set here: React 18 does not type it.
+  useEffect(() => {
+    popRef.current?.setAttribute("popover", "manual");
+  }, []);
+
+  // Close and clear on navigation.
+  useEffect(() => {
+    hide();
+    setQ("");
+  }, [location.pathname, hide]);
+
+  // Resolve as the person types (debounced); only the server turns input into a query.
+  useEffect(() => {
+    const value = q.trim();
+    if (!value) return;
+    const t = setTimeout(() => loadRef.current(`/lookup?preview=1&q=${encodeURIComponent(value)}`), 220);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Cmd/Ctrl+K focuses the box; Escape closes; a click outside closes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (window.innerWidth < 640) { show(); setTimeout(() => phoneInputRef.current?.focus(), 0); }
+        else inputRef.current?.focus();
+      }
+      if (e.key === "Escape" && popRef.current?.matches(":popover-open")) {
+        hide();
+        inputRef.current?.blur();
+      }
+    };
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (popRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      hide();
+    };
+    const onResize = () => { if (popRef.current?.matches(":popover-open")) place(); };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onResize, true);
+    };
+  }, [hide, place, show]);
+
+  const data = q.trim() && fetcher.data && fetcher.data.q.trim() === q.trim() ? fetcher.data.preview : null;
+  const busy = fetcher.state !== "idle" || (q.trim() !== "" && !data);
+  const target = data && data.ok ? `/traces/${data.traceId}${data.rule === "hex" ? "" : `?q=${encodeURIComponent(data.input)}`}` : null;
+
+  const submit = (e: React.FormEvent) => {
+    if (target) {
+      e.preventDefault();
+      navigate(target);
+    }
+    // Without a resolution yet the form goes to /lookup, which redirects or explains.
+  };
+
+  const onChange = (value: string) => {
+    setQ(value);
+    if (value.trim()) show();
+    else if (!phone) hide();
+  };
+
+  const field = (ref: React.RefObject<HTMLInputElement>, autoFocus: boolean) => (
+    <form method="get" action="/lookup" onSubmit={submit} role="search" className="relative w-full">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-[15px] w-[15px] -translate-y-1/2 text-faint" />
+      <input
+        ref={ref}
+        name="q"
+        value={q}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => { if (q.trim()) show(); }}
+        placeholder="Find a request: paste a trace ID or request ID"
+        aria-label="Find a request by trace ID or request ID"
+        className="h-[34px] w-full rounded-lg border border-border bg-surface pl-[31px] pr-12 font-mono text-[12.5px] text-fg outline-none placeholder:font-sans placeholder:text-[13px] placeholder:text-faint focus:border-brand focus:ring-[3px] focus:ring-brand/15"
+      />
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border bg-bg px-[5px] py-px font-mono text-[10.5px] font-medium text-faint">
+        {open ? "esc" : "⌘K"}
+      </span>
+    </form>
+  );
+
+  return (
+    <>
+      <div ref={anchorRef} className="hidden max-w-[560px] flex-1 sm:block">{field(inputRef, false)}</div>
+      <button
+        type="button"
+        className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted hover:bg-surface-2 hover:text-fg sm:hidden"
+        aria-label="Find a request"
+        onClick={() => { if (open) hide(); else { show(); setTimeout(() => phoneInputRef.current?.focus(), 0); } }}
+      >
+        <Search className="h-[15px] w-[15px]" />
+      </button>
+      <div
+        ref={popRef}
+        className={cn(
+          "fixed m-0 overflow-auto border-border-strong bg-bg p-0 text-fg shadow-[0_1px_2px_oklch(0.2_0.01_60/0.06),0_22px_44px_-16px_oklch(0.2_0.01_60/0.28)]",
+          phone ? "max-h-[calc(100dvh-56px)] rounded-none border-0 border-b" : "max-h-[min(70vh,520px)] rounded-xl border",
+        )}
+        style={{ inset: "auto" }}
+      >
+        {phone ? <div className="px-4 py-2.5">{field(phoneInputRef, false)}</div> : null}
+        {!q.trim() ? (
+          <div className="flex gap-2 border-t border-border px-4 py-2.5 text-xs leading-normal text-muted">
+            Accepts a trace ID, a request ID, a UUID or a full <span className="font-mono">traceparent</span>.
+          </div>
+        ) : !data ? (
+          <div className="flex items-center gap-2 border-t border-border px-4 py-2.5 text-xs text-muted sm:border-t-0" role="status">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" /> Searching…
+          </div>
+        ) : !data.ok ? (
+          <div className="border-t border-border px-4 py-2.5 text-xs text-err sm:border-t-0" role="alert">{data.message}</div>
+        ) : (
+          <>
+            <div className={cn("flex border-b border-border px-4 py-2.5 text-xs text-muted sm:px-3.5", phone ? "flex-col items-start gap-1.5 border-t" : "items-center gap-2")}>
+              <div className="flex min-w-0 items-center"><span className="mr-1.5 text-[10.5px] uppercase tracking-wide text-faint">{RULE_LABEL[data.rule]}</span><span className="truncate font-mono text-[11.5px] text-fg">{data.input}</span></div>
+              {data.rule !== "hex" ? (
+                <>
+                  {phone ? null : <ArrowRight className="h-3.5 w-3.5 shrink-0" />}
+                  <div className="flex min-w-0 items-center"><span className="mr-1.5 text-[10.5px] uppercase tracking-wide text-faint">trace</span><span className="font-mono text-[11.5px] text-fg">{phone ? shortId(data.traceId) : data.traceId}</span></div>
+                </>
+              ) : null}
+            </div>
+            {data.summary && target ? (
+              <Link to={target} className="flex items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3 hover:bg-surface-2/70 sm:px-3.5">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 font-mono text-sm font-semibold">
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{data.summary.method ? <span className="font-medium text-faint">{data.summary.method} </span> : null}{data.summary.op ?? data.summary.service}</span>
+                    {data.summary.status !== null ? (
+                      <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 font-sans text-2xs font-medium ring-1 ring-inset", data.summary.status >= 500 ? "bg-err/10 text-err ring-err/25" : data.summary.status >= 400 ? "bg-warn/10 text-warn ring-warn/25" : "bg-ok/10 text-ok ring-ok/25")}>{data.summary.status}</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-[3px] text-xs text-muted">
+                    {data.summary.service} · {data.summary.services} {data.summary.services === 1 ? "service" : "services"}
+                    {data.summary.durationUs !== null ? <> · <span className="font-mono">{fmtTook(data.summary.durationUs)}</span></> : <> · still open</>}
+                    {phone ? null : <> · <span className="font-mono">{fmtClock(data.summary.startMs).slice(0, 8)}</span></>}
+                  </div>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-brand">
+                  {phone ? <ArrowRight className="h-[15px] w-[15px]" /> : <>Open <span className="rounded border border-border bg-bg px-[5px] py-px font-mono text-[10.5px] text-faint">&#8629;</span></>}
+                </span>
+              </Link>
+            ) : null}
+            <div className="flex gap-2 px-4 py-2.5 text-xs leading-normal text-muted sm:px-3.5">
+              {data.error ? (
+                <span className="text-err">Hop records unavailable: {data.error}</span>
+              ) : data.found ? (
+                <>
+                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ok" />
+                  <span>Found in {data.searched}.{phone ? null : <> Accepts a trace ID, a request ID, a UUID or a full <span className="font-mono">traceparent</span>. Search reaches back 30 days.</>}</span>
+                </>
+              ) : (
+                <span>No hop records in {data.searched}. <Link className="font-medium text-brand" to={target ?? "/lookup"}>Open the request anyway</Link> to search its log lines.</span>
+              )}
+            </div>
+          </>
+        )}
+        {busy && data ? <span className="sr-only">Updating</span> : null}
+      </div>
+    </>
   );
 }
 
@@ -262,8 +506,8 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
             <span className="grid h-6 w-6 place-items-center rounded bg-brand font-mono text-xs font-bold text-brand-fg">b</span>
             <span className="text-sm font-semibold">backwork<span className="text-brand">.dev</span></span>
           </div>
-          <div className="hidden text-[13px] text-muted lg:block">Log aggregation &amp; application performance monitoring</div>
-          <div className="flex items-center gap-2">
+          <FindRequest />
+          <div className="flex shrink-0 items-center gap-2">
             <LiveStatus />
             <ThemeToggle />
             <AuthMenu auth={auth} />

@@ -223,3 +223,24 @@ export interface RequestTree {
   endMs: number | null;
   services: string[];
 }
+
+/** Hop records are kept 30 days (design 6). */
+export const HOP_RETENTION_DAYS = 30;
+/** Ordinary log lines are kept 7 days. */
+export const LOG_RETENTION_DAYS = 7;
+/** Log lines in the request view load this many at a time (design 13). */
+export const LOG_PAGE = 1000;
+
+/** The progressive search windows of design 7.2 step 1. */
+export const SearchWindow = {
+  Hour: "hour",
+  Day: "day",
+  Retention: "retention",
+} as const;
+export type SearchWindow = (typeof SearchWindow)[keyof typeof SearchWindow];
+
+export const WINDOW_LABEL: Record<SearchWindow, string> = {
+  [SearchWindow.Hour]: "the last hour",
+  [SearchWindow.Day]: "the last 24 hours",
+  [SearchWindow.Retention]: `the last ${HOP_RETENTION_DAYS} days`,
+};

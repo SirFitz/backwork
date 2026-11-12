@@ -125,4 +125,11 @@ describe("traceIdOfLine and toTraceLogLine", () => {
     expect(toTraceLogLine(entry(JSON.stringify({ level: 40, msg: "bank gateway slow", trace_id: T })))).toMatchObject({ level: "warn", line: "bank gateway slow", service: "commerce-api" });
     expect(toTraceLogLine(entry("plain text", { service: "x", level: "error" }))).toMatchObject({ level: "error", line: "plain text" });
   });
+  test("unwraps a collector envelope whose message is the service's JSON line", () => {
+    const inner = JSON.stringify({ level: 50, msg: "bank gateway returned 502", trace_id: T });
+    expect(toTraceLogLine(entry(JSON.stringify({ message: inner, kind: "log", service: "x" })))).toMatchObject({ level: "error", line: "bank gateway returned 502" });
+  });
+  test("reads hop records inside a collector envelope", () => {
+    expect(parseHopRecord(entry(JSON.stringify({ message: IN, kind: "hop" })))?.hopId).toBe("1f0a6c2e9b7d4405");
+  });
 });
