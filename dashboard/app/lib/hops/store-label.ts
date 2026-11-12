@@ -31,3 +31,37 @@ export function sharedDatabaseHost(hops: ReadonlyArray<Pick<Hop, "via" | "isStor
   }
   return host;
 }
+
+/** Escapes a table name for use inside a regular expression. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * What a database row shows beside its label. The label already names the command and the table,
+ * so a statement that opens with them (`select ... from <table>`, `select <columns> from <table>`,
+ * `insert into <table>`, `update <table>`, `delete from <table>`, with an optional schema and
+ * quotes) is shown from just after the table: `as m0 where (m0.username = ?) limit ?`. Nothing
+ * after the table shows nothing. A head that does not match (a `with` query, a subquery, no table)
+ * shows the whole statement. View only: the stored statement, the hover text and the row detail
+ * keep the full text.
+ */
+export function statementTail(hop: Pick<Hop, "via" | "table" | "stmt">): string | null {
+  const stmt = hop.stmt;
+  if (stmt === null) return null;
+  const table = hop.table;
+  if (!hasStatementFields(hop) || table === null || table === "") return stmt;
+  const bare = table.replace(/^.*\./, "").replace(/^["`]|["`]$/g, "");
+  const name = `(?:["\`]?[A-Za-z_][\\w$]*["\`]?\\.)?["\`]?${escapeRegExp(bare)}["\`]?`;
+  const heads = [
+    `^select\\s(?:(?!\\bfrom\\b)[\\s\\S])*?\\bfrom\\s+${name}`,
+    `^insert\\s+into\\s+${name}`,
+    `^update\\s+${name}`,
+    `^delete\\s+from\\s+${name}`,
+  ];
+  for (const head of heads) {
+    const m = new RegExp(`${head}(?=$|[\\s(),;])`, "i").exec(stmt);
+    if (m) return stmt.slice(m[0].length).trim();
+  }
+  return stmt;
+}

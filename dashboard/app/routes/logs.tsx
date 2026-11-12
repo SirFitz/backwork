@@ -11,7 +11,7 @@ import { cached } from "~/lib/cache.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn, fmtNum, LEVEL_TEXT } from "~/lib/utils";
-import { traceIdOfLine } from "~/lib/hops/parse";
+import { stripAnsi, traceIdOfLine } from "~/lib/hops/parse";
 import { Clock } from "~/components/time";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
@@ -68,7 +68,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     query,
     filters: { service, level, q, range: rangeKey, hops: showHops, raw },
     entries: cached(`${ck}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) =>
-      list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: e.service, message: e.message, traceId: traceIdOfLine(e.line) })),
+      list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: e.service, message: stripAnsi(e.message), traceId: traceIdOfLine(e.line) })),
     ),
     hidden: showHops || raw ? Promise.resolve(0) : cached(`${ck}:h`, 5000, () => loki.scalar(hiddenQuery, 0, t)).catch(() => -1),
     volume: cached(`${ck}:v`, 5000, () => loki.countOverTime(`sum(count_over_time(${query} [1m]))`, { start, end, step: "60s" }, t)).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),

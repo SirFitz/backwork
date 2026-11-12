@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_RECORD_LINE, parseHopRecord, parseLinkLine, toTraceLogLine, traceIdOfLine, type RawLogEntry } from "./parse";
+import { MAX_RECORD_LINE, parseHopRecord, parseLinkLine, stripAnsi, toTraceLogLine, traceIdOfLine, type RawLogEntry } from "./parse";
 
 const T = "6503f5f183b828139d5b143365ad72fa";
 const entry = (line: string, labels: Record<string, string> = { service: "commerce-api" }, ts = 1_700_000_000_000): RawLogEntry => ({ ts, line, labels });
@@ -137,6 +137,12 @@ describe("traceIdOfLine and toTraceLogLine", () => {
   test("reads level and message from JSON; pino numbers map to names", () => {
     expect(toTraceLogLine(entry(JSON.stringify({ level: 40, msg: "bank gateway slow", trace_id: T })))).toMatchObject({ level: "warn", line: "bank gateway slow", service: "commerce-api" });
     expect(toTraceLogLine(entry("plain text", { service: "x", level: "error" }))).toMatchObject({ level: "error", line: "plain text" });
+  });
+  test("removes terminal colour codes, as Nest's built-in logger writes them", () => {
+    const nest = `\u001b[33m[Nest] 1  - \u001b[39m11/12/2026, 1:30:01 PM \u001b[33m   WARN\u001b[39m \u001b[38;5;3m[BankSyncService] \u001b[39m\u001b[33mbank sync: HTTP 404\u001b[39m trace_id=${T}`;
+    expect(toTraceLogLine(entry(JSON.stringify({ message: nest, kind: "log", service: "x" }))).line).toBe(`[Nest] 1  - 11/12/2026, 1:30:01 PM    WARN [BankSyncService] bank sync: HTTP 404 trace_id=${T}`);
+    expect(stripAnsi("no codes here")).toBe("no codes here");
+    expect(stripAnsi("\u001b[0m")).toBe("");
   });
   test("unwraps a collector envelope whose message is the service's JSON line", () => {
     const inner = JSON.stringify({ level: 50, msg: "bank gateway returned 502", trace_id: T });

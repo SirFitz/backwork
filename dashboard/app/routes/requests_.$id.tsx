@@ -3,7 +3,7 @@
 // each stream in on their own, with their own skeleton and error state.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Await, Link, useLoaderData } from "@remix-run/react";
+import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, OctagonX, SearchX, Unplug, Zap,
@@ -15,7 +15,7 @@ import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
-import { sharedDatabaseHost, storeLabel } from "~/lib/hops/store-label";
+import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
@@ -411,6 +411,7 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
   const stores = counts.db + counts.cache;
   const storeWord = counts.db && counts.cache ? ["database and cache call", "database and cache calls"] : counts.cache ? ["cache call", "cache calls"] : ["database call", "database calls"];
   const jobs = tree.hops.filter((h) => h.dir === HopDir.In && h.via === Via.Job).length;
+  const hopCount = tree.hops.filter((h) => !h.isStore).length;
   const faults = faultCount(tree);
   const fact = "whitespace-nowrap";
   return (
@@ -422,7 +423,7 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
           <span className={fact}>Started <Mono className="font-medium text-fg"><Clock ts={head.startMs} /></Mono><span className="hidden md:inline"> <DayWord ts={head.startMs} now={d.now} /></span></span>
           <span className={fact}>Took <Mono className="font-medium text-fg">{tookText(head, d.now)}</Mono></span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
-          <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.hops.filter((h) => !h.isStore).length}</b> hops</span>
+          <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{hopCount}</b> {hopCount === 1 ? "hop" : "hops"}</span>
           {stores ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{stores}</b> {stores === 1 ? storeWord[0] : storeWord[1]}</span> : null}
           {jobs ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{jobs}</b> {jobs === 1 ? "background job" : "background jobs"}</span> : null}
           <span className={cn(fact, faults ? "text-err" : "hidden md:inline")}><b className={cn("font-medium", faults ? "text-err" : "text-fg")}>{faults}</b> {faults === 1 ? "gap" : "gaps"}</span>
@@ -658,18 +659,19 @@ function GapRow({ depth, title, text, note = false, icon }: { depth: number; tit
 function HopText({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
   const method = hop.isStore ? null : hop.method;
   const label = hop.dir === HopDir.In ? hop.op ?? hop.via : hop.isStore ? storeLabel(hop) : outLabel(hop);
+  const inline = statementTail(hop);
   return (
     <>
       <IoTag dir={hop.dir} />
       <Dot colour={ctx.colours.get(hop.service) as string} />
       {hop.dir === HopDir.In ? <b className="shrink-0 font-semibold">{hop.service}</b> : null}
       {hop.isStore ? storeIcon(hop.via, "h-[13px] w-[13px] shrink-0 text-faint") : null}
-      <Mono className={cn("min-w-0 truncate text-[12.5px]", hop.stmt && "shrink-0")}>
+      <Mono className={cn("min-w-0 truncate text-[12.5px]", inline && "shrink-0")}>
         {method ? <span className="font-medium text-faint">{method} </span> : null}
         {label}
       </Mono>
-      {hop.stmt ? (
-        <Mono className="min-w-0 truncate text-[12px] text-faint" title={hop.stmt}>{hop.stmt}</Mono>
+      {inline ? (
+        <Mono className="min-w-0 truncate text-[12px] text-faint" title={hop.stmt ?? undefined}>{inline}</Mono>
       ) : null}
     </>
   );
@@ -713,8 +715,8 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
           </span>
           {status.text === "stopped here" ? <span className="ml-auto shrink-0"><Badge tone="err">stopped here</Badge></span> : null}
         </div>
-        {hop.stmt ? (
-          <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt}>{hop.stmt}</div>
+        {statementTail(hop) ? (
+          <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt ?? undefined}>{statementTail(hop)}</div>
         ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
           {[hop.via, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), tookText(hop, ctx.now)].filter(Boolean).join(" · ")}
@@ -881,12 +883,17 @@ function LogsOnly({ d }: { d: Data }) {
 }
 
 export function ErrorBoundary() {
+  // Only the loader's 404 means the address is not a trace ID; anything else is a failure to load it.
+  const error = useRouteError();
+  const notAnId = isRouteErrorResponse(error) && error.status === 404;
   return (
     <Card>
       <div className="px-4 py-12 text-center">
-        <p className="text-sm font-medium text-fg">Not a trace ID</p>
+        <p className="text-sm font-medium text-fg">{notAnId ? "Not a trace ID" : "This request could not be loaded"}</p>
         <p className="mx-auto mt-1 max-w-[48ch] text-[13px] text-muted">
-          A request address holds 32 hex characters. Paste any ID into the search box at the top to open its request.
+          {notAnId
+            ? "A request address holds 32 hex characters. Paste any ID into the search box at the top to open its request."
+            : "The page failed while loading it. Reload to try again."}
         </p>
       </div>
     </Card>
