@@ -224,11 +224,11 @@ describe("stalled hop (frame 3)", () => {
 });
 
 describe("missing caller", () => {
-  test("an inbound hop whose parent is not among the records is a root with a gap", () => {
+  test("an inbound hop whose parent is not among the records is a root with an outside-caller note, not a gap", () => {
     const tree = buildRequestTree(hop("in", { id: 3, parent: 99, svc: PAY, dur: 5 }), [], NOW);
     expect(tree.roots.map((h) => h.hopId)).toEqual([hid(3)]);
-    expect(tree.gaps.map((g) => g.kind)).toEqual([GapKind.MissingCaller]);
-    expect(faultCount(tree)).toBe(1);
+    expect(tree.gaps.map((g) => g.kind)).toEqual([GapKind.OutsideCaller]);
+    expect(faultCount(tree)).toBe(0);
   });
   test("an inbound hop with no parent is a plain root", () => {
     expect(buildRequestTree(hop("in", { id: 3, svc: PAY, dur: 5 }), [], NOW).gaps).toEqual([]);

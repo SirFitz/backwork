@@ -6,7 +6,7 @@ import { defer } from "@remix-run/node";
 import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, OctagonX, RotateCcw, SearchX, Unplug, Zap,
+  ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, LogIn, OctagonX, RotateCcw, SearchX, Unplug, Zap,
 } from "lucide-react";
 import { Badge, Card, CardHeadText, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
@@ -480,10 +480,9 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
   const byId = new Map(tree.hops.map((h) => [h.hopId, h]));
   const stopped = tree.gaps.filter((g) => g.kind === GapKind.Stopped);
   const missing = tree.gaps.filter((g) => g.kind === GapKind.NoReceiver);
-  const callers = tree.gaps.filter((g) => g.kind === GapKind.MissingCaller);
   // A request can finish with no gap and still have failed underneath (frame 3's lead, BAC-41).
   const problems = requestProblems(tree);
-  if (!stopped.length && !missing.length && !callers.length && !problems.failedCalls.length && !problems.retried) return null;
+  if (!stopped.length && !missing.length && !problems.failedCalls.length && !problems.retried) return null;
   const row = "flex gap-[11px] py-[9px] text-[13px] leading-normal text-fg [&+&]:border-t [&+&]:border-err/20";
   return (
     <div className="mb-4 rounded-[10px] border border-err/40 bg-err/[0.09] px-3.5 py-1" role="alert">
@@ -529,15 +528,6 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
                 </Fragment>
               );
             })}
-          </div>
-        </div>
-      ) : null}
-      {callers.length ? (
-        <div className={cn(row, "hidden md:flex")}>
-          <Unplug className="mt-px h-[17px] w-[17px] shrink-0 text-warn" />
-          <div>
-            <b className="font-semibold">{callers.length === 1 ? "A caller's record is missing." : `${callers.length} callers' records are missing.`}</b>{" "}
-            {[...new Set(callers.map((g) => (byId.get(g.hopId) as Hop).service))].join(", ")} names a caller whose hop records are not here.
           </div>
         </div>
       ) : null}
@@ -622,7 +612,7 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
   const rows: ReactNode[] = [];
   const pushHop = (hop: Hop, depth: number): void => {
     for (const g of hop.gaps) {
-      if (g.kind === GapKind.MissingCaller) rows.push(<GapRow key={`mc-${hop.hopId}`} depth={depth} title="Caller's record missing." text={`${hop.service} names a caller whose hop records are not here.`} />);
+      if (g.kind === GapKind.OutsideCaller) rows.push(<GapRow key={`oc-${hop.hopId}`} depth={depth} note title="Called from outside this organisation." text="The caller's records are not here: it belongs to another organisation, or its records were not collected." icon={<LogIn className="h-3.5 w-3.5 shrink-0 text-faint" />} />);
       if (g.kind === GapKind.TracerBetween) rows.push(<GapRow key={`tb-${hop.hopId}`} depth={depth} title="Passed through a tracer-only service." text="A service that sends spans but no hop records sat between these two hops." note />);
     }
     rows.push(<HopRow key={hop.hopId} hop={hop} depth={depth} ctx={ctx} />);

@@ -59,8 +59,10 @@ export const GapKind = {
   NotInstrumented: "not_instrumented",
   /** Outbound, hop_sent false, not a data-store hop: "Not linked". */
   NotLinked: "not_linked",
-  /** Inbound with a parent_hop not among the records: "Caller's record missing". */
-  MissingCaller: "missing_caller",
+  /** Inbound with a parent_hop not among this organisation's records: the caller is another
+   *  organisation's service, or one whose records were not collected. Told apart only by a
+   *  cross-organisation lookup, which the view never makes, so it is a note, not a gap (BAC-55). */
+  OutsideCaller: "outside_caller",
   /** parent_id differs from the parent's and the parent has no tracer field. */
   TracerBetween: "tracer_between",
   /** Several inbound hops with the same parent and different attempts: "Retry n". */
