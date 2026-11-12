@@ -378,6 +378,14 @@ function messageOf(line: string): { message: string; level: string | null } {
   return { message, level: level === null || level === undefined ? null : String(level) };
 }
 
+/** Terminal colour and cursor codes (ESC [ ... letter), as Nest's built-in logger writes them. */
+const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/** A log message as a person reads it: terminal colour codes removed. */
+export function stripAnsi(text: string): string {
+  return text.includes("\u001b") ? text.replace(ANSI_ESCAPE, "") : text;
+}
+
 /** An ordinary log line for the request view: level and readable message, never the raw JSON. */
 export function toTraceLogLine(entry: RawLogEntry): TraceLogLine {
   const parsed = messageOf(entry.line);
@@ -385,5 +393,5 @@ export function toTraceLogLine(entry: RawLogEntry): TraceLogLine {
   const levelStr = rawLevel === null ? null : rawLevel.toLowerCase();
   const level = levelStr === null ? null : LEVEL_NAMES[levelStr] ?? levelStr.slice(0, 8);
   const service = entry.labels.service && isPrintableValue(entry.labels.service) ? entry.labels.service : "unknown";
-  return { service, level, timeMs: entry.ts, line: parsed.message.slice(0, 2000) };
+  return { service, level, timeMs: entry.ts, line: stripAnsi(parsed.message).slice(0, 2000) };
 }
