@@ -183,3 +183,38 @@ tests:
             source: |
               assert_eq!(.kind, "hop")
               assert!(ends_with(to_string(.message) ?? "", "stmt=select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?"))
+
+  - name: request paths kept by default, removed with Request paths off (kv and json), op unchanged (BAC-52)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/v1/payments/:id path=/v1/payments/pay_8Kx2"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert!(contains(to_string(.message) ?? "", " path=/v1/payments/pay_8Kx2"))
+
+  - name: request paths off for one service removes path (kv and json) (BAC-52)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-paths
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/v1/payments/:id path=/v1/payments/pay_8Kx2"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-paths
+          message: '{"level":30,"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in","hop_id":"2f0a6c2e9b7d4405","parent_id":"b7ad6b7169203331","adapter":"fastify","via":"http","method":"GET","op":"/v1/payments/:id","path":"/v1/payments/pay_8Kx2","msg":"hop"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              m = to_string(.message) ?? ""
+              assert!(!contains(m, "path"))
+              assert!(contains(m, "/v1/payments/:id"))

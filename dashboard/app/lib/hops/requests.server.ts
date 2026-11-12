@@ -14,7 +14,10 @@ export interface RequestListRow {
   traceID: string;
   service: string;
   method: string;
+  /** The route template (`op`): what the route filter and grouping use. */
   route: string;
+  /** The path this request actually called (HOP-24), when recorded. */
+  path: string | null;
   status: number | null;
   durationMs: number;
   startMs: number;
@@ -30,11 +33,11 @@ export function inboundEndQuery(service: string | null, health: HealthChecks = H
   const sel = service ? `{kind="hop",service=${JSON.stringify(service)}}` : `{kind="hop"}`;
   const notHealth = health === HealthChecks.Hidden ? ` ${LOGQL_NOT_HEALTH_CHECK}` : "";
   const failed = onlyFailed ? ` ${LOGQL_FAILED}` : "";
-  return `${sel} |= "in_end" |~ "via\\\\W{1,4}http"${notHealth}${failed}`;
+  return `${sel} |= "in_end" |~ "via\\\\W{1,6}http"${notHealth}${failed}`;
 }
 
 /** Narrows a scan to failed records: outcome error or a 5xx status (`isFailedRow` decides). */
-export const LOGQL_FAILED = `|~ "outcome\\\\W{1,4}error|status\\\\W{1,4}5[0-9][0-9]"`;
+export const LOGQL_FAILED = `|~ "outcome\\\\W{1,6}error|status\\\\W{1,6}5[0-9][0-9]"`;
 
 /** A row the Overview lists as failed: the hop ended in error or answered 5xx. */
 export function isFailedRow(row: RequestListRow): boolean {
@@ -53,6 +56,7 @@ export function rowsFromRecords(records: readonly HopRecord[], health: HealthChe
       service: r.service,
       method: r.method ?? "",
       route: r.op ?? "",
+      path: r.path,
       status: r.status,
       durationMs,
       startMs: r.timeMs - durationMs,

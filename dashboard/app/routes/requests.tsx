@@ -185,7 +185,7 @@ function Feed({
     if (exactRoute !== null) r = r.filter((x) => x.route === exactRoute);
     else if (q.trim()) {
       const t = q.trim().toLowerCase();
-      r = r.filter((x) => x.route.toLowerCase().includes(t) || x.service.toLowerCase().includes(t));
+      r = r.filter((x) => x.route.toLowerCase().includes(t) || (x.path ?? "").toLowerCase().includes(t) || x.service.toLowerCase().includes(t));
     }
     if (sort.key) {
       const m = sort.dir === "asc" ? 1 : -1;
@@ -262,7 +262,7 @@ function Feed({
           <input
             value={q}
             onChange={(e) => { setQ(e.target.value); setExactRoute(null); }}
-            placeholder="Filter by route or service"
+            placeholder="Filter by path, route or service"
             aria-label="Filter by route or service"
             className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-9 text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
           />
@@ -303,7 +303,14 @@ function Feed({
                     <td className="px-4 py-1.5 tabular-nums text-faint"><Clock ts={r.startMs} /></td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
                     <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
-                    <td className="max-w-[360px] truncate px-4 py-1.5 text-fg/90">{r.route || <span className="text-faint">(no route)</span>}</td>
+                    <td className="max-w-[360px] px-4 py-1.5 text-fg/90" title={r.path && r.route ? `route ${r.route}` : undefined}>
+                      {r.path ? (
+                        <>
+                          <span className="block truncate">{r.path}</span>
+                          {r.route && r.route !== r.path ? <span className="block truncate text-2xs text-faint">{r.route}</span> : null}
+                        </>
+                      ) : r.route ? <span className="block truncate">{r.route}</span> : <span className="text-faint">(no route)</span>}
+                    </td>
                     <td className={cn("px-4 py-1.5 text-right font-semibold tabular-nums", statusTone(r.status))}>{r.status ?? "—"}</td>
                     <td className={cn("px-4 py-1.5 text-right tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-muted")}>{fmtMs(r.durationMs)}</td>
                     <td className="px-4 py-1.5 text-right"><Link to={`/requests/${r.traceID}`} onClick={(e) => e.stopPropagation()} className="font-sans text-2xs font-medium text-brand hover:underline">open</Link></td>

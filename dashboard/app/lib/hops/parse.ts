@@ -15,6 +15,7 @@ import {
   type TraceLogLine,
   Via,
 } from "./types";
+import { PATH_FIELD } from "./paths";
 import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
@@ -225,6 +226,12 @@ function namedFieldsOf(bag: FieldBag): NamedField[] {
   return out;
 }
 
+/** `path` (HOP-24): 1 to 200 bytes of 0x21..0x7E, starting with `/`; null otherwise. */
+function pathOf(bag: FieldBag): string | null {
+  const v = bag.get(PATH_FIELD);
+  return typeof v === "string" && v.startsWith("/") && isPrintableValue(v) ? v : null;
+}
+
 /** `table` (STM-5, HOP-12); null when absent or out of bounds. */
 function tableOf(bag: FieldBag): string | null {
   const v = bag.get(StatementField.Table);
@@ -312,6 +319,7 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     via,
     method: str(bag, "method"),
     op: str(bag, "op"),
+    path: via === Via.Http && !isOut ? pathOf(bag) : null,
     peer: isOut ? str(bag, "peer") : null,
     table: via === Via.Db && isOut ? tableOf(bag) : null,
     stmt: via === Via.Db && isOut ? stmtOf(bag) : null,

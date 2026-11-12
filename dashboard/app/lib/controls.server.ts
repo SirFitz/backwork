@@ -42,6 +42,8 @@ export const Feature = {
   NamedFields: "named_fields",
   /** `table` and `stmt` on database hop records (spec 13.2, design 21). */
   Statements: "statements",
+  /** `path` on inbound HTTP hop records (spec HOP-24, BAC-52). */
+  Paths: "paths",
   /** Link lines (linked IDs). */
   LinkedIds: "linked_ids",
   /** The hop metrics (`backwork_hop_*`). */
@@ -64,6 +66,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   stores: "Database and cache calls",
   named_fields: "Named fields",
   statements: "Query text",
+  paths: "Request paths",
   linked_ids: "Linked IDs",
   metrics: "Performance figures",
   filter: "Sensitive-data filter",
@@ -76,6 +79,7 @@ export const FEATURE_EFFECT: Record<Feature, string> = {
   stores: "Database and cache call records and their totals are no longer saved.",
   named_fields: "The named fields (f_ fields) on hop records are removed before saving.",
   statements: "The table and the statement shape (table, stmt) on database hop records are removed before saving.",
+  paths: "The path each request called (path) is removed from hop records before saving; the route template stays.",
   linked_ids: "Link lines are no longer saved.",
   metrics: "Hop metrics are no longer saved.",
   filter: "Sensitive values are no longer replaced with [filtered].",

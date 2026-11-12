@@ -46,4 +46,4 @@ export const PROM_NOT_HEALTH_CHECK = `op!~"(?i)/(?:${ALTERNATION})"`;
  * and key=value (`op=/healthz`) records. The path must be followed by a quote, a space or the
  * end of the line, so `/health/db` is kept. Written for a LogQL double-quoted string.
  */
-export const LOGQL_NOT_HEALTH_CHECK = `!~ "\\\\bop\\\\W{1,4}/(?i:${ALTERNATION})(?:\\"|\\\\s|$)"`;
+export const LOGQL_NOT_HEALTH_CHECK = `!~ "\\\\bop\\\\W{1,6}/(?i:${ALTERNATION})(?:\\\\\\\\?\\"|\\\\s|$)"`;

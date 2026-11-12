@@ -154,7 +154,7 @@ describe("onlyKnownPeers", () => {
 
 describe("record reads", () => {
   test("queries narrow to inbound records without health checks, and outbound non-store calls", () => {
-    expect(INBOUND_RECORDS_QUERY).toContain('{kind="hop"} |~ "\\\\bhop\\\\W{1,4}in(?:_end)?');
+    expect(INBOUND_RECORDS_QUERY).toContain('{kind="hop"} |~ "\\\\bhop\\\\W{1,6}in(?:_end)?');
     expect(INBOUND_RECORDS_QUERY).toContain("healthz");
     expect(OUTBOUND_CALLS_QUERY).toContain("(?:db|cache)");
   });

@@ -14,10 +14,20 @@ function rec(line: string, ts = 1_700_000_000_000, service = "commerce-api"): Ho
 
 describe("inboundEndQuery", () => {
   test("all services", () => {
-    expect(inboundEndQuery(null, HealthChecks.Shown)).toBe('{kind="hop"} |= "in_end" |~ "via\\\\W{1,4}http"');
+    expect(inboundEndQuery(null, HealthChecks.Shown)).toBe('{kind="hop"} |= "in_end" |~ "via\\\\W{1,6}http"');
   });
   test("one service, quoted", () => {
-    expect(inboundEndQuery('a"b', HealthChecks.Shown)).toBe('{kind="hop",service="a\\"b"} |= "in_end" |~ "via\\\\W{1,4}http"');
+    expect(inboundEndQuery('a"b', HealthChecks.Shown)).toBe('{kind="hop",service="a\\"b"} |= "in_end" |~ "via\\\\W{1,6}http"');
+  });
+});
+
+describe("line filters over stored envelopes", () => {
+  test("via=http matches in plain text, JSON and pino JSON inside the stored envelope", () => {
+    const body = inboundEndQuery(null, HealthChecks.Shown).split('|~ "')[1].slice(0, -1);
+    const re = new RegExp(body.replace(/\\(.)/g, "$1"));
+    expect(re.test("hop=in_end via=http")).toBe(true);
+    expect(re.test('{"hop":"in_end","via":"http"}')).toBe(true);
+    expect(re.test(JSON.stringify({ message: JSON.stringify({ hop: "in_end", via: "http" }) }))).toBe(true);
   });
 });
 
@@ -25,14 +35,14 @@ describe("health checks", () => {
   const HC = `trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/healthz outcome=ok status=200 duration_us=900`;
   const ORDER = `trace_id=${T} hop=in_end hop_id=2f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/health/db outcome=ok status=200 duration_us=900`;
   test("left out of the query and the rows by default", () => {
-    expect(inboundEndQuery(null)).toBe(`{kind="hop"} |= "in_end" |~ "via\\\\W{1,4}http" ${LOGQL_NOT_HEALTH_CHECK}`);
+    expect(inboundEndQuery(null)).toBe(`{kind="hop"} |= "in_end" |~ "via\\\\W{1,6}http" ${LOGQL_NOT_HEALTH_CHECK}`);
     expect(rowsFromRecords([rec(HC), rec(ORDER)]).map((r) => r.route)).toEqual(["/health/db"]);
   });
   test("brought back when shown", () => {
     expect(rowsFromRecords([rec(HC), rec(ORDER)], HealthChecks.Shown).map((r) => r.route)).toEqual(["/healthz", "/health/db"]);
   });
   test("failed rows: outcome error or 5xx", () => {
-    const base = { traceID: T, service: "s", method: "GET", route: "/x", durationMs: 1, startMs: 0 };
+    const base = { traceID: T, service: "s", method: "GET", route: "/x", path: null, durationMs: 1, startMs: 0 };
     expect(isFailedRow({ ...base, status: 503, error: false })).toBe(true);
     expect(isFailedRow({ ...base, status: null, error: true })).toBe(true);
     expect(isFailedRow({ ...base, status: 404, error: false })).toBe(false);
@@ -46,8 +56,15 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240`),
     ]);
     expect(rows).toEqual([
-      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
+      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
     ]);
+  });
+  test("the actual path rides along; the route stays the template (BAC-52)", () => {
+    const [row] = rowsFromRecords([
+      rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/v1/payments/:id path=/v1/payments/pay_8Kx2 outcome=ok status=200 duration_us=900`),
+    ]);
+    expect(row.route).toBe("/v1/payments/:id");
+    expect(row.path).toBe("/v1/payments/pay_8Kx2");
   });
   test("start records, outbound, jobs and data-store hops are not rows", () => {
     const rows = rowsFromRecords([

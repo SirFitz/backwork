@@ -52,6 +52,8 @@ export interface HopRecord {
   via: Via;
   method?: string;
   op?: string;
+  /** Inbound HTTP hops: the path that was requested (spec 0.10, HOP-24). */
+  path?: string;
   /** SQL data-store end records: the table (spec 0.9, section 13.2). */
   table?: string;
   peer?: string;
@@ -87,7 +89,7 @@ export type Emission =
 
 const FIELD_ORDER: readonly (keyof HopRecord)[] = [
   "trace_id", "hop", "hop_id", "parent_hop", "hop_sent", "tracer", "parent_id", "service", "adapter", "via",
-  "method", "op", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
+  "method", "op", "path", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
 ];
 
 /** Ordered [key, value] pairs of a record, exactly as HOP-8/HOP-14 list them. */
@@ -175,7 +177,7 @@ export function healthyOrder(id: HealthyIds, opts: { status?: number; orderId?: 
   const orderId = opts.orderId ?? "7731";
   const A = Service.Api, P = Service.Payments, R = Service.Risk, W = Service.Worker;
   const t = id.trace, pid = id.parentId;
-  const apiIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.apiIn, parent_id: pid, service: A, adapter: "plug", via: "http", method: "POST", op: "/orders" };
+  const apiIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.apiIn, parent_id: pid, service: A, adapter: "plug", via: "http", method: "POST", op: "/orders", path: "/orders" };
   const outRisk: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutRisk, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "finch", via: "http", method: "POST", peer: "risk.internal" };
   const riskIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.riskIn, parent_hop: id.apiOutRisk, parent_id: pid, service: R, adapter: "fastify", via: "http", method: "POST", op: "/assess" };
   const riskCache: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.riskCache, parent_hop: id.riskIn, hop_sent: false, parent_id: pid, service: R, adapter: "ioredis", via: "cache", op: "get", peer: "redis.internal", outcome: "ok", duration_us: 400 };
@@ -252,7 +254,7 @@ export const FRAME_STALLED: StalledIds = {
 export function stalledPayout(id: StalledIds): Emission[] {
   const A = Service.Api, P = Service.Payments;
   const t = id.trace, pid = id.parentId;
-  const apiIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.apiIn, parent_id: pid, service: A, adapter: "phoenix", via: "http", method: "POST", op: "/payouts/:id/release" };
+  const apiIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.apiIn, parent_id: pid, service: A, adapter: "phoenix", via: "http", method: "POST", op: "/payouts/:id/release", path: "/payouts/po_8Kx2/release" };
   const outPay: HopRecord = { trace_id: t, hop: "out", hop_id: id.apiOutPay, parent_hop: id.apiIn, hop_sent: true, parent_id: pid, service: A, adapter: "finch", via: "http", method: "POST", peer: "payments.internal" };
   const payIn: HopRecord = { trace_id: t, hop: "in", hop_id: id.payIn, parent_hop: id.apiOutPay, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/transfers" };
   const payDb: HopRecord = { trace_id: t, hop: "out_end", hop_id: id.payDb, parent_hop: id.payIn, hop_sent: false, parent_id: pid, service: P, adapter: "postgres", via: "db", op: "select", table: "transfers", peer: "payments-db", outcome: "ok", duration_us: 2100, stmt: "select t0.id, t0.amount, t0.status from transfers as t0 where (t0.payout_id = ?) for update" };
