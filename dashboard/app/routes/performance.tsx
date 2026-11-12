@@ -3,7 +3,7 @@ import { defer } from "@remix-run/node";
 import { Link, useLoaderData, useNavigate } from "@remix-run/react";
 import type { ReactNode } from "react";
 import { ArrowRight, Check, Gauge } from "lucide-react";
-import { Badge, Card, CardHead, Empty, ErrorNote } from "~/components/ui";
+import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
@@ -102,38 +102,48 @@ export default function Performance() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight">Performance</h1>
-          <p className="mt-1 max-w-[70ch] text-[13.5px] text-muted">Request rate, errors and latency for every service that reports hops, by service, route and connection.</p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">
-        <Link
-          to={perfHref(range, d.requested, otherHealth)}
-          preventScrollReset
-          role="checkbox"
-          aria-checked={health === HealthChecks.Shown}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted hover:text-fg"
-        >
-          <span aria-hidden className={cn("grid h-3.5 w-3.5 place-items-center rounded-[3px] border", health === HealthChecks.Shown ? "border-brand bg-brand text-brand-fg" : "border-border-strong")}>
-            {health === HealthChecks.Shown ? <Check className="h-2.5 w-2.5" /> : null}
-          </span>
-          Show health checks
-        </Link>
-        <nav aria-label="Range" className="inline-flex h-9 shrink-0 items-center gap-0.5 self-start rounded-lg border border-border bg-surface p-[3px] text-xs text-muted">
-          {PERF_RANGES.map((r) => (
+      <PageTitle
+        title="Performance"
+        sub="Request rate, errors and latency for every service that reports hops, by service, route and connection."
+        right={
+          <>
             <Link
-              key={r}
-              to={perfHref(r, d.requested, health)}
-              aria-current={r === range ? "true" : undefined}
-              className={cn("rounded-[5px] px-[9px] py-[5px] font-medium", r === range ? "bg-surface-2 text-fg" : "hover:text-fg")}
+              to={perfHref(range, d.requested, otherHealth)}
+              preventScrollReset
+              role="checkbox"
+              aria-checked={health === HealthChecks.Shown}
+              className="inline-flex h-8 items-center gap-2 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-muted hover:text-fg"
             >
-              {r}
+              <span aria-hidden className={cn("grid h-3.5 w-3.5 place-items-center rounded-[3px] border", health === HealthChecks.Shown ? "border-brand bg-brand text-brand-fg" : "border-border-strong")}>
+                {health === HealthChecks.Shown ? <Check className="h-2.5 w-2.5" /> : null}
+              </span>
+              <span className="hidden sm:inline">Show health checks</span>
+              <span className="sm:hidden">Health checks</span>
             </Link>
-          ))}
-        </nav>
-        </div>
-      </div>
+            {/* phone: the range as a select so title and controls stay one row */}
+            <select
+              aria-label="Range"
+              value={range}
+              onChange={(e) => navigate(perfHref(PERF_RANGES.find((r) => r === e.currentTarget.value) ?? range, d.requested, health), { preventScrollReset: true })}
+              className="h-8 rounded-lg border border-border bg-surface px-2 text-[13px] text-fg outline-none focus:border-brand/40 sm:hidden"
+            >
+              {PERF_RANGES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <nav aria-label="Range" className="hidden h-8 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface p-[3px] text-xs text-muted sm:inline-flex">
+              {PERF_RANGES.map((r) => (
+                <Link
+                  key={r}
+                  to={perfHref(r, d.requested, health)}
+                  aria-current={r === range ? "true" : undefined}
+                  className={cn("rounded-[5px] px-[9px] py-1 font-medium", r === range ? "bg-surface-2 text-fg" : "hover:text-fg")}
+                >
+                  {r}
+                </Link>
+              ))}
+            </nav>
+          </>
+        }
+      />
 
       <Card>
         <Deferred

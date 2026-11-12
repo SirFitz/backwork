@@ -61,7 +61,7 @@ export default function ErrorDetail() {
     <div className="space-y-5 animate-fade-in">
       <Link to="/errors" className="inline-flex items-center gap-1 text-2xs text-muted hover:text-fg"><ArrowLeft className="h-3.5 w-3.5" /> All errors</Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div data-content className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Badge tone={tone}>{g.level}</Badge>

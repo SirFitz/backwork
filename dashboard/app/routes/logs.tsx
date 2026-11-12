@@ -1,8 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
 import { Await, Form, Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Suspense } from "react";
-import { GitBranch, Search } from "lucide-react";
+import { Suspense, useState } from "react";
+import { GitBranch, Search, SlidersHorizontal } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
@@ -23,6 +23,7 @@ function levelName(level: string): string {
   return PINO_LEVELS[level] ?? level;
 }
 const RANGES: Record<string, number> = { "15m": 15, "1h": 60, "6h": 360, "24h": 1440 };
+const DEFAULT_RANGE = "15m";
 
 /** Hop records are log lines too (design 8): hidden unless "Show hop records" is on.
  *  A raw LogQL query is taken as written. */
@@ -58,7 +59,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const service = url.searchParams.get("service") || "all";
   const level = url.searchParams.get("level") || "all";
   const q = url.searchParams.get("q") || "";
-  const rangeKey = url.searchParams.get("range") || "15m";
+  const rangeKey = url.searchParams.get("range") || DEFAULT_RANGE;
   const mins = RANGES[rangeKey] ?? 15;
   const end = Date.now();
   const start = end - mins * 60 * 1000;
@@ -90,7 +91,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
-const SELECT = "h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
+const SELECT = "h-8 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
 export default function Logs() {
   const d = useLoaderData<typeof loader>();
@@ -98,45 +99,61 @@ export default function Logs() {
   const nav = useNavigation();
   const loading = nav.state === "loading";
   const f = d.filters;
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const changed = [f.service !== "all", f.level !== "all", f.range !== DEFAULT_RANGE].filter(Boolean).length;
+  const filterText = `${f.service === "all" ? "all services" : f.service} · ${f.level === "all" ? "all levels" : f.level} · last ${f.range}`;
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <PageTitle title="Logs" sub="Full-text and structured search across every service's log lines. Pick a service and level, or paste raw LogQL." />
-
-      <Form method="get" className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[280px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
-          <input name="q" defaultValue={f.q} placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'} className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40" />
-        </div>
-        <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
-          <option value="all">all services</option>
-          <Suspense fallback={f.service !== "all" ? <option value={f.service}>{f.service}</option> : null}>
-            <Await resolve={d.services}>{(svcs: string[]) => <>{svcs.map((s) => <option key={s} value={s}>{s}</option>)}</>}</Await>
-          </Suspense>
-        </select>
-        <select name="level" defaultValue={f.level} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
-          {LEVELS.map((l) => <option key={l} value={l}>{l === "all" ? "all levels" : l}</option>)}
-        </select>
-        <select name="range" defaultValue={f.range} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
-          {Object.keys(RANGES).map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      </Form>
+      <PageTitle
+        title="Logs"
+        sub="Full-text and structured search across every service's log lines. Pick a service and level, or paste raw LogQL."
+        growRight
+        right={
+          <Form method="get" className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+            <div className="relative min-w-[140px] flex-1 md:min-w-[280px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
+              <input name="q" defaultValue={f.q} placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'} className="h-8 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40" />
+            </div>
+            {/* phone: service, level and range fold behind one button so the header stays one row */}
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label={`Filters: ${filterText}`}
+              title={filterText}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-muted hover:text-fg md:hidden"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              {changed ? <span className="font-medium text-fg">{changed}</span> : null}
+            </button>
+            <div className={cn("w-full flex-wrap items-center gap-2 md:flex md:w-auto", filtersOpen ? "flex" : "hidden")}>
+              <select name="service" defaultValue={f.service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
+                <option value="all">all services</option>
+                <Suspense fallback={f.service !== "all" ? <option value={f.service}>{f.service}</option> : null}>
+                  <Await resolve={d.services}>{(svcs: string[]) => <>{svcs.map((s) => <option key={s} value={s}>{s}</option>)}</>}</Await>
+                </Suspense>
+              </select>
+              <select name="level" defaultValue={f.level} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
+                {LEVELS.map((l) => <option key={l} value={l}>{l === "all" ? "all levels" : l}</option>)}
+              </select>
+              <select name="range" defaultValue={f.range} onChange={(e) => submit(e.currentTarget.form)} className={SELECT}>
+                {Object.keys(RANGES).map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+          </Form>
+        }
+      />
 
       <Card>
-        <CardHead title="Volume" sub={<Suspense fallback={null}><Await resolve={d.query} errorElement={null}>{(query: string) => <span className="font-mono">{query}</span>}</Await></Suspense>} />
+        <CardHead title="Volume" sub={<Suspense fallback={null}><Await resolve={d.query} errorElement={null}>{(query: string) => <span className="font-mono" title={query}>{query}</span>}</Await></Suspense>} />
         <Deferred resolve={d.volume} fallback={<ChartSkeleton height={80} />}>
           {(points) => <div className="p-3"><AreaSeries points={points} color="oklch(0.58 0.13 240)" height={80} fmt={(n) => fmtNum(n, 0)} /></div>}
         </Deferred>
       </Card>
 
       <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold tracking-tight">Lines</h2>
-            <p className="mt-0.5 text-2xs text-faint">newest first · up to 200 shown</p>
-          </div>
-          {f.raw ? null : <HopSwitch on={f.hops} filters={f} hidden={d.hidden} />}
-        </div>
+        <CardHead title="Lines" sub="newest first · up to 200 shown" right={f.raw ? null : <HopSwitch on={f.hops} filters={f} hidden={d.hidden} />} />
         <Deferred resolve={d.entries} fallback={<RowsSkeleton rows={10} />}>
           {(entries) =>
             entries.length === 0 ? (

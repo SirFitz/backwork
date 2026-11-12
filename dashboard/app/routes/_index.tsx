@@ -3,7 +3,7 @@ import { defer, json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { lazy, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, Network } from "lucide-react";
-import { Badge, Card, CardHead, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
+import { Badge, Card, CardHead, CardHeadText, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { Ago, Clock } from "~/components/time";
 import { NUM, ServicesTable, TD, Th, fmtLatency, fmtShare } from "~/components/services-table";
@@ -102,11 +102,8 @@ function AllClear({ children }: { children: ReactNode }) {
 
 function SubHead({ title, sub, count }: { title: string; sub: string; count?: number }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border/60 bg-surface-2/40 px-4 py-2">
-      <div className="min-w-0">
-        <h3 className="text-[13px] font-semibold">{title}</h3>
-        <p className="text-2xs text-faint">{sub}</p>
-      </div>
+    <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border/60 bg-surface-2/40 px-4 py-1.5">
+      <CardHeadText level={3} title={title} sub={sub} />
       {count ? <Badge tone="err">{count}</Badge> : null}
     </div>
   );
@@ -231,6 +228,81 @@ function UnreceivedBody({ panel }: { panel: Panel<RecordScan<UnreceivedCall>> })
   );
 }
 
+/** The three "needs attention" groups, in page order. */
+const AttentionGroup = {
+  Jumps: "jumps",
+  Stalled: "stalled",
+  Unreceived: "unreceived",
+} as const;
+type AttentionGroup = (typeof AttentionGroup)[keyof typeof AttentionGroup];
+
+/** How each group is named when it has nothing in it, and what it checks (hover text). */
+const CLEAR_TEXT: Record<AttentionGroup, { clear: string; checks: string }> = {
+  [AttentionGroup.Jumps]: { clear: "nothing failing or slower than usual", checks: "Slower or failing more than usual, compared with the 3 hours before" },
+  [AttentionGroup.Stalled]: { clear: "no stopped requests", checks: "Requests that started over a minute ago and never finished" },
+  [AttentionGroup.Unreceived]: { clear: "no missing calls", checks: "Calls a service made to another that no service recorded arriving" },
+};
+
+function ClearLine({ groups, all }: { groups: AttentionGroup[]; all: boolean }) {
+  return (
+    <AllClear>
+      {all ? "All clear in the last 15 minutes: " : "Also clear: "}
+      {groups.map((g, i) => (
+        <span key={g} title={CLEAR_TEXT[g].checks}>
+          {CLEAR_TEXT[g].clear}
+          {i < groups.length - 1 ? ", " : "."}
+        </span>
+      ))}
+    </AllClear>
+  );
+}
+
+/**
+ * All clear: one line. Otherwise only the groups with something in them (or that failed to load),
+ * each under a one-row header, then one line naming the groups that are clear (BAC-53).
+ */
+function AttentionBody({
+  jumps,
+  stalled,
+  unreceived,
+}: {
+  jumps: Panel<ServiceJump[]>;
+  stalled: Panel<RecordScan<StalledRequest>>;
+  unreceived: Panel<RecordScan<UnreceivedCall>>;
+}) {
+  const isClear: Record<AttentionGroup, boolean> = {
+    [AttentionGroup.Jumps]: !jumps.error && jumps.data.length === 0,
+    [AttentionGroup.Stalled]: !stalled.error && stalled.data.rows.length === 0,
+    [AttentionGroup.Unreceived]: !unreceived.error && unreceived.data.rows.length === 0,
+  };
+  const order: AttentionGroup[] = [AttentionGroup.Jumps, AttentionGroup.Stalled, AttentionGroup.Unreceived];
+  const clear = order.filter((g) => isClear[g]);
+  if (clear.length === order.length) return <ClearLine groups={clear} all />;
+  return (
+    <>
+      {isClear[AttentionGroup.Jumps] ? null : (
+        <section aria-label="Services slower or failing more than usual" className="border-b border-border last:border-b-0">
+          <SubHead title="Slower or failing more than usual" sub="compared with the 3 hours before" />
+          <JumpsBody panel={jumps} />
+        </section>
+      )}
+      {isClear[AttentionGroup.Stalled] ? null : (
+        <section aria-label="Requests that stopped" className="border-b border-border last:border-b-0">
+          <SubHead title="Requests that stopped" sub="started over a minute ago and never finished" />
+          <StalledBody panel={stalled} />
+        </section>
+      )}
+      {isClear[AttentionGroup.Unreceived] ? null : (
+        <section aria-label="Calls never received" className="border-b border-border last:border-b-0">
+          <SubHead title="Calls never received" sub="a service called another and no service recorded the call arriving" />
+          <UnreceivedBody panel={unreceived} />
+        </section>
+      )}
+      {clear.length ? <ClearLine groups={clear} all={false} /> : null}
+    </>
+  );
+}
+
 function statusTone(s: number | null): string {
   if (s === null) return "text-muted";
   if (s >= 500) return "text-err";
@@ -282,18 +354,9 @@ export default function Index() {
             </Deferred>
           }
         />
-        <section aria-label="Services slower or failing more than usual">
-          <SubHead title="Slower or failing more than usual" sub="compared with the 3 hours before" />
-          <Deferred resolve={d.jumps} fallback={<RowsSkeleton rows={2} />}>{(p) => <JumpsBody panel={p} />}</Deferred>
-        </section>
-        <section aria-label="Requests that stopped" className="border-t border-border">
-          <SubHead title="Requests that stopped" sub="started over a minute ago and never finished" />
-          <Deferred resolve={d.stalled} fallback={<RowsSkeleton rows={2} />}>{(p) => <StalledBody panel={p} />}</Deferred>
-        </section>
-        <section aria-label="Calls never received" className="border-t border-border">
-          <SubHead title="Calls never received" sub="a service called another and no service recorded the call arriving" />
-          <Deferred resolve={d.unreceived} fallback={<RowsSkeleton rows={2} />}>{(p) => <UnreceivedBody panel={p} />}</Deferred>
-        </section>
+        <Deferred resolve={Promise.all([d.jumps, d.stalled, d.unreceived])} fallback={<RowsSkeleton rows={3} />}>
+          {([j, s, u]) => <AttentionBody jumps={j} stalled={s} unreceived={u} />}
+        </Deferred>
       </Card>
 
       <Card>

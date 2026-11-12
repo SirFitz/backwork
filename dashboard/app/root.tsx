@@ -509,7 +509,7 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
             <AuthMenu auth={auth} />
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-6 pb-24 sm:px-6 lg:py-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-3 pb-24 sm:px-6 sm:pt-4 lg:pb-6">{children}</main>
       </div>
 
       <MobileNav />

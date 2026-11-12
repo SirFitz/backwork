@@ -1,35 +1,99 @@
 import type { ReactNode } from "react";
+import { Info } from "lucide-react";
 import { cn } from "~/lib/utils";
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return <section className={cn("rounded-xl border border-border bg-surface", className)}>{children}</section>;
 }
 
+/**
+ * A card's header: one row of title, then its meta inline in small muted text (cut with an ellipsis,
+ * whole text on hover), then actions on the right. At most 48 px tall (BAC-53, UI_ISSUES 4).
+ */
 export function CardHead({
   title,
   sub,
+  subTitle,
   right,
+  className,
 }: {
   title: ReactNode;
   sub?: ReactNode;
+  /** Hover text for `sub` when it is not a plain string. */
+  subTitle?: string;
   right?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-      <div className="min-w-0">
-        <h2 className="truncate text-[15px] font-semibold tracking-tight">{title}</h2>
-        {sub ? <p className="mt-0.5 truncate text-2xs text-faint">{sub}</p> : null}
-      </div>
-      {right ? <div className="shrink-0">{right}</div> : null}
+    <div data-card-head className={cn("flex min-h-11 items-center justify-between gap-3 border-b border-border px-4 py-1.5", className)}>
+      <CardHeadText title={title} sub={sub} subTitle={subTitle} />
+      {right ? <div className="flex shrink-0 items-center">{right}</div> : null}
     </div>
   );
 }
 
-export function PageTitle({ title, sub }: { title: string; sub?: string }) {
+/** The left half of a card header (title + inline meta), for headers that lay out their own right side. */
+export function CardHeadText({
+  title,
+  sub,
+  subTitle,
+  level = 2,
+  className,
+}: {
+  title: ReactNode;
+  sub?: ReactNode;
+  subTitle?: string;
+  level?: 2 | 3;
+  className?: string;
+}) {
+  const Heading = level === 2 ? "h2" : "h3";
   return (
-    <div className="mb-5">
-      <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
-      {sub ? <p className="mt-1 max-w-[70ch] text-[13.5px] text-muted">{sub}</p> : null}
+    <div className={cn("flex min-w-0 flex-1 items-baseline gap-2", className)}>
+      <Heading className={cn("max-w-full shrink-0 truncate font-semibold tracking-tight", level === 2 ? "text-[15px]" : "text-[13px]")}>{title}</Heading>
+      {sub ? (
+        <p className="min-w-0 truncate text-xs text-faint" title={subTitle ?? (typeof sub === "string" ? sub : undefined)}>
+          {sub}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** A small muted info icon whose accessible name and tooltip carry a page's explainer text. */
+export function InfoTip({ text, className }: { text: string; className?: string }) {
+  return (
+    <span data-page-info role="img" aria-label={text} title={text} className={cn("inline-flex shrink-0 cursor-help text-muted hover:text-fg", className)}>
+      <Info className="h-3.5 w-3.5" aria-hidden />
+    </span>
+  );
+}
+
+/**
+ * A page's header: one row with the title (and its explainer behind an info icon) on the left and the
+ * page's own controls on the right. The sidebar already names the page, so nothing goes under it
+ * (BAC-53, UI_ISSUES 4). The first section after it sits 12 px below (see `[data-page-head]` in tailwind.css).
+ */
+export function PageTitle({
+  title,
+  sub,
+  right,
+  growRight = false,
+}: {
+  title: string;
+  /** The page's explainer: shown behind the info icon, never as a paragraph. */
+  sub?: string;
+  /** The page's own controls (range, filters, actions); keep them 32 px tall (h-8) so the row stays one line. */
+  right?: ReactNode;
+  /** Let the controls take the rest of the row (a search field), instead of sitting at the right edge. */
+  growRight?: boolean;
+}) {
+  return (
+    <div data-page-head className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <h1 className="truncate text-[17px] font-semibold leading-6 tracking-tight">{title}</h1>
+        {sub ? <InfoTip text={sub} /> : null}
+      </div>
+      {right ? <div className={cn("flex min-w-0 flex-wrap items-center justify-end gap-2", growRight && "flex-1")}>{right}</div> : null}
     </div>
   );
 }

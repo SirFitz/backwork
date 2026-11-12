@@ -110,3 +110,9 @@
   }
   .scroll-thin::-webkit-scrollbar-track { background: transparent; }
 }
+
+/* BAC-53 (UI_ISSUES 4): whatever a page's card spacing, its first section sits 12px under the one-row page
+   header. !important because the page wrappers' space-y-* utilities set the same margin with a longer selector. */
+[data-page-head] + * {
+  margin-top: 0.75rem !important;
+}
