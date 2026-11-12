@@ -138,6 +138,30 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id);
 CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uniq ON api_keys (key_hash);
+
+CREATE TABLE IF NOT EXISTS data_controls (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id text REFERENCES projects(id) ON DELETE CASCADE,
+  service text,
+  feature text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  updated_by text REFERENCES users(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS data_controls_scope_uniq
+  ON data_controls (org_id, (coalesce(project_id, '')), (coalesce(service, '')), feature);
+CREATE INDEX IF NOT EXISTS data_controls_org_idx ON data_controls (org_id);
+
+CREATE TABLE IF NOT EXISTS filter_patterns (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  pattern text NOT NULL DEFAULT '',
+  enabled boolean NOT NULL DEFAULT true,
+  built_in boolean NOT NULL DEFAULT false,
+  updated_by text REFERENCES users(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS filter_patterns_org_name_uniq ON filter_patterns (org_id, name);
 `;
 
 declare global {

@@ -1,12 +1,13 @@
-# backwork.dev — self-hosted log aggregation + APM, monitoring the REAL Docker host.
-#   loki            log storage (LogQL)
-#   victoriametrics metrics TSDB (PromQL)  scrapes cAdvisor + Vector
-#   cadvisor        REAL per-container CPU / memory / network / disk metrics
-#   jaeger          trace store (OTLP in) for any instrumented app
-#   vector          collector: tails EVERY container's logs -> Loki
-#   backwork        the dashboard — queries all backends
-# Deployed on the host it watches (Vector + cAdvisor read the host docker.sock /
-# cgroups), so every number is real container telemetry, never synthetic.
+# backwork.dev — log search, request tracing and performance figures from
+# Correlator hop records. Five containers:
+#   loki            log storage (LogQL); hop records 30 days, other lines 7
+#   victoriametrics metrics TSDB (PromQL); scrapes Vector's hop metrics
+#   postgres        users, orgs, projects, switches, filter patterns
+#   vector          collector: tails EVERY container's logs on this host -> Loki,
+#                   detects hop records, filters sensitive data, hop metrics
+#   backwork        the dashboard — queries Loki and VictoriaMetrics
+# Other hosts ship to it with the agent (/install.sh). Jaeger and cAdvisor were
+# removed on 2026-11-12 (stack slimmed to tracing, performance and log search).
 services:
   loki:
     build: ./infra/loki
@@ -31,44 +32,6 @@ services:
       - vm-data:/vmdata
     expose:
       - "8428"
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
-    restart: unless-stopped
-    privileged: true
-    mem_limit: 384m
-    environment:
-      # bserve runs Docker 28 (min API 1.44); pin the client so cAdvisor's
-      # docker factory (which provides container names + labels) negotiates ok.
-      DOCKER_API_VERSION: "1.44"
-    command:
-      - -housekeeping_interval=10s
-      - -docker_only=true
-      - -store_container_labels=false
-      - -whitelisted_container_labels=coolify.resourceName,coolify.projectName,com.docker.compose.service
-    devices:
-      - /dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    expose:
-      - "8080"
-
-  jaeger:
-    image: jaegertracing/all-in-one:1.62.0
-    restart: unless-stopped
-    mem_limit: 320m
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-      SPAN_STORAGE_TYPE: memory
-      MEMORY_MAX_TRACES: "20000"
-    expose:
-      - "16686"  # query UI + API
-      - "4317"   # OTLP gRPC
-      - "4318"   # OTLP HTTP
 
   postgres:
     image: postgres:16-alpine
@@ -105,10 +68,9 @@ services:
       PORT: "3000"
       LOKI_URL: http://loki:3100
       VM_URL: http://victoriametrics:8428
-      JAEGER_URL: http://jaeger:16686
       DATA_DIR: /data
-      OTLP_ENDPOINT: http://jaeger:4318
-      DOCKER_SOCKET: /var/run/docker.sock
+      # The stack no longer runs Jaeger: the dashboard does not trace itself.
+      OTEL_SDK_DISABLED: "true"
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       PUBLIC_URL: ${PUBLIC_URL:-https://backwork.dev}
       DATABASE_URL: postgresql://backwork:${PG_PASSWORD:-backwork_dev_pw}@postgres:5432/backwork
@@ -116,13 +78,11 @@ services:
       AUTH_PEPPER: ${AUTH_PEPPER:-backwork-dev-pepper-change-me}
     volumes:
       - backwork-data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     expose:
       - "3000"
     depends_on:
       - loki
       - victoriametrics
-      - cadvisor
       - postgres
 
 volumes:

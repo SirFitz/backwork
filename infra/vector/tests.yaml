@@ -1,0 +1,243 @@
+# Vector unit tests for the detection, filter and metric transforms
+# (design 5, 14 "Collector", 19.2). Run: infra/vector/test.sh
+# Metric values are not visible to VRL test conditions; they are checked
+# against VictoriaMetrics in the local-stack verification (DONE.md).
+tests:
+  - name: kv hop record with timestamp and level in front is a hop, line unchanged
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments
+          message: "10:01:03.134 [info] trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_hop=83c2d1907ae45b16 parent_id=b7ad6b7169203331 service=commerce-payments adapter=hono via=http method=POST op=/charges"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "commerce-payments")
+              assert_eq!(.message, "10:01:03.134 [info] trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_hop=83c2d1907ae45b16 parent_id=b7ad6b7169203331 service=commerce-payments adapter=hono via=http method=POST op=/charges")
+
+  - name: json hop record at the top level is a hop
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: '{"level":30,"time":1,"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in_end","hop_id":"1f0a6c2e9b7d4405","parent_id":"b7ad6b7169203331","adapter":"plug","via":"http","method":"POST","op":"/orders","outcome":"ok","status":201,"duration_us":61200,"db_n":1,"db_us":3800,"msg":"hop"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.level, "info")
+              assert_eq!(.display, "hop")
+
+  - name: json hop record nested one level down (metadata, attributes) is a hop
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-risk
+          message: '{"time":"x","severity":"info","message":"hop","metadata":{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"out_end","hop_id":"e19c4d72b05a3f68","parent_hop":"a7d03b5e9c2f4816","hop_sent":false,"parent_id":"b7ad6b7169203331","adapter":"ioredis","via":"cache","op":"get","peer":"redis.internal","outcome":"ok","duration_us":400}}'
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-risk
+          message: '{"msg":"hop","attributes":{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in","hop_id":"a7d03b5e9c2f4816","parent_id":"b7ad6b7169203331","adapter":"fastify","via":"http"}}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "hop")
+
+  - name: link line (kv and json) is kind hop
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa link_name=order_id link_value=7731 hop_id=1f0a6c2e9b7d4405"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","link_name":"order_id","link_value":"7731","msg":"linked"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "hop")
+
+  - name: ordinary and malformed lines are kind log and untouched
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "GET /healthz 200 0.4ms"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "charge requested amount=4500 trace_id=6503f5f183b828139d5b143365ad72fa"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "trace_id=6503F5F183B828139D5B143365AD72FA hop=in hop_id=5d9e0b3347c1a2f8"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=start hop_id=5d9e0b3347c1a2f8"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","link_name":"order_id"}'
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: '{"deep":{"inner":{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in","hop_id":"5d9e0b3347c1a2f8"}}}'
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: '["trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8"]'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "log")
+              assert!(!contains(string!(.message), "[filtered]"))
+
+  - name: filter replaces card, email, phone, password and token but never the ids
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "customer updated card=4111 1111 1111 1111 email=jane.doe@example.com phone=+18765551234 password=hunter2 api_key=abcd1234efgh trace_id=41111111111111114111111111111111 hop_id=4111111111111111"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "customer updated card=[filtered] email=[filtered] phone=[filtered] password=[filtered] api_key=[filtered] trace_id=41111111111111114111111111111111 hop_id=4111111111111111")
+              assert_eq!(.display, .message)
+
+  - name: filter applies inside json hop records and keeps id fields
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in_end","hop_id":"5500000000000004","parent_hop":"4111111111111111","parent_id":"b7ad6b7169203331","via":"http","outcome":"ok","duration_us":10,"f_email":"a@b.co","msg":"hop"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.message, "{\"trace_id\":\"6503f5f183b828139d5b143365ad72fa\",\"hop\":\"in_end\",\"hop_id\":\"5500000000000004\",\"parent_hop\":\"4111111111111111\",\"parent_id\":\"b7ad6b7169203331\",\"via\":\"http\",\"outcome\":\"ok\",\"duration_us\":10,\"f_email\":\"[filtered]\",\"msg\":\"hop\"}")
+
+  - name: end record becomes a duration histogram sample with the design labels
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_hop=83c2d1907ae45b16 parent_id=b7ad6b7169203331 adapter=hono via=http method=POST op=/charges outcome=ok status=201 duration_us=14800 db_n=2 db_us=3500"
+    outputs:
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.name, "backwork_hop_duration_seconds")
+              assert_eq!(.kind, "incremental")
+              assert_eq!(.tags.service, "commerce-payments")
+              assert_eq!(.tags.dir, "in")
+              assert_eq!(.tags.via, "http")
+              assert_eq!(.tags.method, "POST")
+              assert_eq!(.tags.op, "/charges")
+              assert_eq!(.tags.peer, "")
+              assert_eq!(.tags.outcome, "ok")
+              assert_eq!(.tags.status_class, "2xx")
+      - extract_from: bw_hop_store
+        conditions:
+          - type: vrl
+            source: |
+              assert!(.name == "backwork_hop_store_seconds_total" || .name == "backwork_hop_store_calls_total")
+              assert!(.tags.store == "db" || .tags.store == "cache")
+              assert_eq!(.tags.op, "/charges")
+              true
+
+  - name: start record counts as started; data-store hop feeds the histogram; label limits
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"out","hop_id":"83c2d1907ae45b16","parent_hop":"1f0a6c2e9b7d4405","hop_sent":true,"parent_id":"b7ad6b7169203331","adapter":"finch","via":"http","method":"POST","peer":"payments.internal","msg":"hop"}'
+    outputs:
+      - extract_from: bw_hop_started
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.name, "backwork_hop_started_total")
+              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http"})
+
+  - name: data-store hop and an oversized op label
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=out_end hop_id=7b4e92c0a1d5f836 parent_hop=1f0a6c2e9b7d4405 hop_sent=false parent_id=b7ad6b7169203331 adapter=ecto via=db op=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx peer=orders-db outcome=ok duration_us=3800"
+    outputs:
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.via, "db")
+              assert_eq!(.tags.dir, "out")
+              assert_eq!(.tags.peer, "orders-db")
+              assert_eq!(.tags.op, "")
+              assert_eq!(.tags.status_class, "")
+
+  - name: ordinary lines and link lines make no metrics
+    no_outputs_from: [bw_hop_duration, bw_hop_started, bw_hop_store]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "GET / 200 trace_id=6503f5f183b828139d5b143365ad72fa"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa link_name=order_id link_value=7731"
+
+  - name: pm2 log file gives the process name as service
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          file: /pm2-logs/audit-shop-out-0.log
+          message: "hello"
+    outputs:
+      - extract_from: bw_normalize
+        conditions:
+          - type: vrl
+            source: assert_eq!(.service, "audit-shop")

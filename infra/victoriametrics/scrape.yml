@@ -1,16 +1,16 @@
-# VictoriaMetrics scrape config. Real metrics from cAdvisor (per-container CPU /
-# memory / network / disk for every container on the host) plus Vector + self.
+# VictoriaMetrics scrape config: Vector (hop metrics and its own) + self.
+# Agents on other hosts remote-write their hop metrics through /ingest/metrics.
 global:
   scrape_interval: 15s
   external_labels:
     monitor: backwork
 
 scrape_configs:
-  - job_name: cadvisor
-    static_configs:
-      - targets: ["cadvisor:8080"]
-
   - job_name: vector
+    # Hop metrics carry their own `service` label (the monitored service);
+    # keep it instead of renaming it exported_service. Vector's own metrics
+    # have no service label and still get service="vector".
+    honor_labels: true
     static_configs:
       - targets: ["vector:9598"]
         labels:

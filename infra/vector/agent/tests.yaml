@@ -1,0 +1,102 @@
+# Agent config + generated controls: project has named fields off;
+# svc-no-hops has hop records off; svc-no-logs has ordinary logs and stores off.
+tests:
+  - name: org pattern and built-ins filtered before leaving the host; ids kept
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "member MBR-123456 card 4111111111111111 trace_id=6503f5f183b828139d5b143365ad72fa ends secret-tail"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "member [filtered] card [filtered] trace_id=6503f5f183b828139d5b143365ad72fa ends [filtered]")
+              assert_eq!(.host, "test-host")
+              assert_eq!(.kind, "log")
+
+  - name: named fields stripped at project level (kv and json), rest unchanged
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 via=http outcome=ok duration_us=14800 db_n=2 db_us=3500 f_order_id=7731 f_currency=JMD"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 via=http outcome=ok duration_us=14800 db_n=2 db_us=3500")
+
+  - name: json named fields stripped one level down
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-risk
+          message: '{"message":"hop","metadata":{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in_end","hop_id":"a7d03b5e9c2f4816","parent_id":"b7ad6b7169203331","via":"http","outcome":"ok","duration_us":7900,"f_score":"12"}}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              m = parse_json!(.message)
+              assert!(!exists(m.metadata.f_score))
+              assert_eq!(m.metadata.hop_id, "a7d03b5e9c2f4816")
+
+  - name: hop records off for one service drops them (and their metrics)
+    no_outputs_from: [bw_controls, bw_hop_duration, bw_hop_started]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-hops
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 via=http"
+
+  - name: same service still ships ordinary lines
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-hops
+          message: "GET / 200"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "log")
+
+  - name: logs off drops ordinary lines; stores off drops data-store hops and strips totals
+    no_outputs_from: [bw_controls]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-logs
+          message: "GET / 200"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-logs
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=out_end hop_id=b6f20e9d41c7a385 parent_hop=5d9e0b3347c1a2f8 hop_sent=false parent_id=b7ad6b7169203331 via=db op=select outcome=ok duration_us=1200"
+
+  - name: stores off strips totals and makes no store metrics
+    no_outputs_from: [bw_hop_store]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: svc-no-logs
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 via=http outcome=ok duration_us=14800 db_n=2 db_us=3500"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.message, "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 via=http outcome=ok duration_us=14800")
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: assert_eq!(.tags.service, "svc-no-logs")
