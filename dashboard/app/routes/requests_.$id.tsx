@@ -648,9 +648,10 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
   const dbHost = sharedDatabaseHost(ctx.tree.hops);
   return (
     <Card className="relative">
-      <div data-card-head className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-border px-4 py-1.5">
-        <CardHeadText title="Path" sub="Every hop this request made, parent to child" className="hidden md:flex" />
-        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-2xs text-muted">
+      <div data-card-head className="flex min-h-11 items-center justify-between gap-x-3 border-b border-border px-4 py-1.5">
+        <CardHeadText title="Path" sub="Every hop this request made, parent to child" className="hidden md:flex md:min-w-[8rem]" />
+        {/* the legend stays one row (scrolls sideways when it holds many services) so the header stays one row */}
+        <div className="scroll-thin flex min-w-0 max-w-full items-center gap-x-3.5 overflow-x-auto whitespace-nowrap text-2xs text-muted">
           {ctx.tree.services.map((s) => (
             <span key={s} className="inline-flex items-center gap-1.5"><Dot colour={ctx.colours.get(s) as string} />{s}</span>
           ))}
