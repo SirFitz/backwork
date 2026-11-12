@@ -17,6 +17,7 @@ import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
+import { requestPath, routeHint } from "~/lib/hops/paths";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
@@ -394,15 +395,20 @@ function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: Trac
 
 function Title({ head, size = "lg" }: { head: Hop; size?: "lg" | "sm" }) {
   const status = statusOf(head);
-  const label = head.op ?? (head.dir === HopDir.In ? head.service : outLabel(head));
+  // The path this request called (HOP-24) is the title; its route template goes under it.
+  const label = requestPath(head) ?? (head.dir === HopDir.In ? head.service : outLabel(head));
+  const route = routeHint(head);
   return (
-    <h1 className={cn("m-0 flex flex-wrap items-center gap-2.5 font-mono font-semibold tracking-tight", size === "lg" ? "text-[21px]" : "text-base leading-snug")}>
-      <span className="min-w-0 [overflow-wrap:anywhere]">
-        {head.method ? <span className="font-medium text-faint">{head.method} </span> : null}
-        {label}
-      </span>
-      <Badge tone={status.tone}>{status.text}</Badge>
-    </h1>
+    <>
+      <h1 className={cn("m-0 flex flex-wrap items-center gap-2.5 font-mono font-semibold tracking-tight", size === "lg" ? "text-[21px]" : "text-base leading-snug")}>
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          {head.method ? <span className="font-medium text-faint">{head.method} </span> : null}
+          {label}
+        </span>
+        <Badge tone={status.tone}>{status.text}</Badge>
+      </h1>
+      {route ? <div className="mt-0.5 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">route {route}</div> : null}
+    </>
   );
 }
 

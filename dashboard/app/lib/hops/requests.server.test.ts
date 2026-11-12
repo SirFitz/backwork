@@ -32,7 +32,7 @@ describe("health checks", () => {
     expect(rowsFromRecords([rec(HC), rec(ORDER)], HealthChecks.Shown).map((r) => r.route)).toEqual(["/healthz", "/health/db"]);
   });
   test("failed rows: outcome error or 5xx", () => {
-    const base = { traceID: T, service: "s", method: "GET", route: "/x", durationMs: 1, startMs: 0 };
+    const base = { traceID: T, service: "s", method: "GET", route: "/x", path: null, durationMs: 1, startMs: 0 };
     expect(isFailedRow({ ...base, status: 503, error: false })).toBe(true);
     expect(isFailedRow({ ...base, status: null, error: true })).toBe(true);
     expect(isFailedRow({ ...base, status: 404, error: false })).toBe(false);
@@ -46,8 +46,15 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240`),
     ]);
     expect(rows).toEqual([
-      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
+      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
     ]);
+  });
+  test("the actual path rides along; the route stays the template (BAC-52)", () => {
+    const [row] = rowsFromRecords([
+      rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/v1/payments/:id path=/v1/payments/pay_8Kx2 outcome=ok status=200 duration_us=900`),
+    ]);
+    expect(row.route).toBe("/v1/payments/:id");
+    expect(row.path).toBe("/v1/payments/pay_8Kx2");
   });
   test("start records, outbound, jobs and data-store hops are not rows", () => {
     const rows = rowsFromRecords([

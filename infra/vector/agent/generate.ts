@@ -21,7 +21,9 @@ const muted = Object.fromEntries(FEATURES.map((f) => [f, f !== "hops" && f !== "
 const noLogs = Object.fromEntries(FEATURES.map((f) => [f, f !== "logs" && f !== "named_fields" && f !== "stores"])) as Record<Feature, boolean>;
 // Query text off for one service (BAC-51); everything else as the project.
 const noQuery = { ...snap.project, statements: false } as Record<Feature, boolean>;
-snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs, "svc-no-query": noQuery };
+// Request paths off for one service (BAC-52).
+const noPaths = { ...snap.project, paths: false } as Record<Feature, boolean>;
+snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs, "svc-no-query": noQuery, "svc-no-paths": noPaths };
 snap.patterns = [...snap.patterns, { name: "member", pattern: "MBR-\\d{6}", replacement: "[filtered]" }, { name: "end", pattern: "secret-tail$", replacement: "[filtered]" }];
 writeFileSync(join(out, "controls.yaml"), controlsTransformYaml(snap));
 console.log(`wrote ${out}`);

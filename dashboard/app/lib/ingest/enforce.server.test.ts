@@ -44,13 +44,13 @@ describe("classifyLine", () => {
 describe("stripHopFields", () => {
   test("kv named fields and totals", () => {
     const c = classifyLine(KV_END);
-    expect(stripHopFields(KV_END, c, { named: true, stores: false, statements: false })).not.toContain("f_order_id");
-    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false })).not.toContain("db_n=");
-    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false })).toContain("f_order_id=7731");
+    expect(stripHopFields(KV_END, c, { named: true, stores: false, statements: false, paths: false })).not.toContain("f_order_id");
+    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false, paths: false })).not.toContain("db_n=");
+    expect(stripHopFields(KV_END, c, { named: false, stores: true, statements: false, paths: false })).toContain("f_order_id=7731");
   });
   test("nested json", () => {
     const c = classifyLine(JSON_NESTED_END);
-    const out = JSON.parse(stripHopFields(JSON_NESTED_END, c, { named: true, stores: true, statements: false })) as { metadata: Record<string, unknown> };
+    const out = JSON.parse(stripHopFields(JSON_NESTED_END, c, { named: true, stores: true, statements: false, paths: false })) as { metadata: Record<string, unknown> };
     expect(out.metadata.f_currency).toBeUndefined();
     expect(out.metadata.cache_n).toBeUndefined();
     expect(out.metadata.hop_id).toBe("a7d03b5e9c2f4816");
@@ -73,13 +73,13 @@ describe("statement fields (BAC-51)", () => {
     expect(c.fields.op).toBe("select");
   });
   test("named fields off never edits inside stmt", () => {
-    const out = stripHopFields(KV_DB, classifyLine(KV_DB), { named: true, stores: true, statements: false });
+    const out = stripHopFields(KV_DB, classifyLine(KV_DB), { named: true, stores: true, statements: false, paths: false });
     expect(out).toBe(KV_DB);
   });
   test("query text off removes table and stmt, kv and json, the rest unchanged", () => {
-    const kv = stripHopFields(KV_DB, classifyLine(KV_DB), { named: false, stores: false, statements: true });
+    const kv = stripHopFields(KV_DB, classifyLine(KV_DB), { named: false, stores: false, statements: true, paths: false });
     expect(kv).toBe(KV_DB.replace(" table=merchants", "").replace(/ stmt=.*$/, ""));
-    const js = JSON.parse(stripHopFields(JSON_DB, classifyLine(JSON_DB), { named: false, stores: false, statements: true })) as Record<string, unknown>;
+    const js = JSON.parse(stripHopFields(JSON_DB, classifyLine(JSON_DB), { named: false, stores: false, statements: true, paths: false })) as Record<string, unknown>;
     expect(js.table).toBeUndefined();
     expect(js.stmt).toBeUndefined();
     expect(js.op).toBe("insert");
@@ -100,6 +100,31 @@ describe("statement fields (BAC-51)", () => {
     const rows = [off(Feature.Statements)];
     const r = enforceStreams(push([env(KV_DB)]), { projectId: "p", rows, filter });
     expect(lines(r)[0].message).not.toContain("stmt=");
+  });
+});
+
+const KV_PATH = `trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=fastify via=http method=GET op=/api/v1/public/m/:merchant_username/products path=/api/v1/public/m/island-coffee/products outcome=ok status=200 duration_us=41200`;
+const JSON_PATH = JSON.stringify({ level: 30, trace_id: T, hop: "in", hop_id: "2f0a6c2e9b7d4405", parent_id: "b7ad6b7169203331", service: "commerce-payments", adapter: "fastify", via: "http", method: "GET", op: "/v1/payments/:id", path: "/v1/payments/pay_8Kx2", msg: "hop" });
+
+describe("request paths (BAC-52)", () => {
+  test("path is a field of an inbound HTTP record", () => {
+    expect(classifyLine(KV_PATH).fields.path).toBe("/api/v1/public/m/island-coffee/products");
+  });
+  test("Request paths off removes path, kv and json; op stays", () => {
+    const kv = stripHopFields(KV_PATH, classifyLine(KV_PATH), { named: false, stores: false, statements: false, paths: true });
+    expect(kv).toBe(KV_PATH.replace(" path=/api/v1/public/m/island-coffee/products", ""));
+    const js = JSON.parse(stripHopFields(JSON_PATH, classifyLine(JSON_PATH), { named: false, stores: false, statements: false, paths: true })) as Record<string, unknown>;
+    expect(js.path).toBeUndefined();
+    expect(js.op).toBe("/v1/payments/:id");
+  });
+  test("enforceStreams: off for one service only; the filter runs over path", () => {
+    const rows = [off(Feature.Paths, { projectId: "p", service: "svc-quiet" })];
+    const quiet = enforceStreams(push([env(KV_PATH)], { service: "svc-quiet" }), { projectId: "p", rows, filter });
+    expect(lines(quiet)[0].message).not.toContain("path=");
+    const withEmail = KV_PATH.replace("island-coffee", "jane@example.com");
+    const loud = enforceStreams(push([env(withEmail)]), { projectId: "p", rows, filter });
+    expect(lines(loud)[0].message).toContain("path=/api/v1/public/m/");
+    expect(lines(loud)[0].message).not.toContain("jane@example.com");
   });
 });
 

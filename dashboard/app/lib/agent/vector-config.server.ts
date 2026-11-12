@@ -287,13 +287,14 @@ if bw_type == "hop" && (bw_via == "db" || bw_via == "cache") && !${sw("stores")}
 bw_drop_f = !${sw("named_fields")}
 bw_drop_s = !${sw("stores")}
 bw_drop_q = !${sw("statements")}
-if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q) {
+bw_drop_p = !${sw("paths")}
+if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q || bw_drop_p) {
   if (to_string(%bw_fmt) ?? "") == "json" {
     bw_o = object(parse_json(to_string(.message) ?? "") ?? {}) ?? {}
     bw_box = to_string(%bw_box) ?? ""
     bw_c = bw_o
     if bw_box != "" { bw_c = object(get(bw_o, [bw_box]) ?? {}) ?? {} }
-    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k)) || (bw_drop_q && includes(["table", "stmt"], k))) }
+    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
     if bw_box == "" { bw_o = bw_c } else { bw_o = set(bw_o, [bw_box], bw_c) ?? bw_o }
     .message = encode_json(bw_o)
   } else {
@@ -304,6 +305,7 @@ if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q) {
     bw_tail = to_string(get(bw_lp, ["tail"]) ?? "") ?? ""
     if bw_drop_f { bw_head = replace(bw_head, r' f_[a-z0-9_]+=\\S*', "") }
     if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us)=\\S*', "") }
+    if bw_drop_p { bw_head = replace(bw_head, r' path=\\S*', "") }
     if bw_drop_q {
       bw_head = replace(bw_head, r' table=\\S*', "")
       bw_tail = ""

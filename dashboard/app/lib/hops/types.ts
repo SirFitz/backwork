@@ -116,6 +116,9 @@ export interface HopRecord {
   via: Via;
   method: string | null;
   op: string | null;
+  /** Inbound HTTP hops: the path that was requested, long segments masked (spec HOP-24). `op`
+   *  stays the route template: group by `op`, show `path` for one request. */
+  path: string | null;
   peer: string | null;
   /** SQL data-store hops: the table the statement acts on (spec 13.2, STM-5), when recorded. */
   table: string | null;
@@ -175,6 +178,8 @@ export interface Hop {
   adapter: string | null;
   method: string | null;
   op: string | null;
+  /** Inbound HTTP hops: the path that was requested (HOP-24), when recorded. */
+  path: string | null;
   peer: string | null;
   /** SQL data-store hops (spec 13.2): table and statement shape, when recorded. */
   table: string | null;

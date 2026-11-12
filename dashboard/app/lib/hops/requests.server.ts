@@ -14,7 +14,10 @@ export interface RequestListRow {
   traceID: string;
   service: string;
   method: string;
+  /** The route template (`op`): what the route filter and grouping use. */
   route: string;
+  /** The path this request actually called (HOP-24), when recorded. */
+  path: string | null;
   status: number | null;
   durationMs: number;
   startMs: number;
@@ -53,6 +56,7 @@ export function rowsFromRecords(records: readonly HopRecord[], health: HealthChe
       service: r.service,
       method: r.method ?? "",
       route: r.op ?? "",
+      path: r.path,
       status: r.status,
       durationMs,
       startMs: r.timeMs - durationMs,

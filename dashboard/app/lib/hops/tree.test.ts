@@ -20,7 +20,7 @@ function base(kind: HopKind, s: Spec, timeMs: number): HopRecord {
   return {
     traceId: TRACE, hop: kind, hopId: hid(s.id), parentHop: s.parent ? hid(s.parent) : null,
     hopSent: out ? s.sent ?? true : null, tracer: out ? s.tracer ?? false : false, parentId: s.pid ?? "b7ad6b7169203331",
-    service: s.svc, source: s.svc, adapter: "test", via: s.via ?? "http", method: s.method ?? null, op: s.op ?? null, peer: out ? s.peer ?? null : null, table: null, stmt: null,
+    service: s.svc, source: s.svc, adapter: "test", via: s.via ?? "http", method: s.method ?? null, op: s.op ?? null, peer: out ? s.peer ?? null : null, table: null, stmt: null, path: null,
     attempt: out ? null : s.attempt ?? null, outcome: end ? s.outcome ?? "ok" : null, status: end ? s.status ?? null : null,
     error: end ? s.error ?? null : null, durationUs: end && s.dur !== undefined ? Math.round(s.dur * 1000) : null,
     totals: kind === "in_end" && s.totals ? { dbCalls: 0, dbUs: 0, cacheCalls: 0, cacheUs: 0, ...s.totals } : null,

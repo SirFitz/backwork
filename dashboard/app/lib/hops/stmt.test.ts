@@ -101,3 +101,22 @@ describe("repeated keys: the record's own pairs win", () => {
     expect(r?.stmt).toBe("select h0.id from hops as h0 where (h0.trace_id = ?) and hop=in and trace_id=?");
   });
 });
+
+describe("path (HOP-24, BAC-52)", () => {
+  const IN = `trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=fastify via=http method=GET op=/api/v1/public/m/:merchant_username/products path=/api/v1/public/m/island-coffee/products`;
+  test("inbound HTTP records carry it, op stays the template", () => {
+    const r = parseHopRecord(entry(IN));
+    expect(r?.op).toBe("/api/v1/public/m/:merchant_username/products");
+    expect(r?.path).toBe("/api/v1/public/m/island-coffee/products");
+  });
+  test("pino JSON", () => {
+    const r = parseHopRecord(entry(JSON.stringify({ trace_id: T, hop: "in", hop_id: "1f0a6c2e9b7d4405", parent_id: "b7ad6b7169203331", adapter: "fastify", via: "http", method: "GET", op: "/v1/payments/:id", path: "/v1/payments/*", msg: "hop" })));
+    expect(r?.path).toBe("/v1/payments/*");
+  });
+  test("absent on old records; not read on outbound or non-HTTP hops; out of bounds left out", () => {
+    expect(parseHopRecord(entry(IN.replace(/ path=\S+/, "")))?.path).toBeNull();
+    expect(parseHopRecord(entry(IN.replace("via=http", "via=job")))?.path).toBeNull();
+    expect(parseHopRecord(entry(IN.replace(/path=\S+/, `path=/${"x".repeat(200)}`)))?.path).toBeNull();
+    expect(parseHopRecord(entry(IN.replace(/path=\S+/, "path=no-slash")))?.path).toBeNull();
+  });
+});

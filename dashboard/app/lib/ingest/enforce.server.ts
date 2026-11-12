@@ -16,6 +16,7 @@ import {
   type CompiledFilter,
   type ControlRow,
 } from "~/lib/controls.server";
+import { PATH_FIELD } from "~/lib/hops/paths";
 import { STATEMENT_FIELDS, StatementField, recordPairs, splitStatement } from "~/lib/hops/stmt";
 
 export const LineKind = { Log: "log", Hop: "hop", Link: "link" } as const;
@@ -107,16 +108,18 @@ export interface HopStrip {
   stores: boolean;
   /** `table` and `stmt` (Query text off, design 21). */
   statements: boolean;
+  /** `path` (Request paths off, BAC-52). */
+  paths: boolean;
 }
 
 const STATEMENT_KEYS: ReadonlySet<string> = new Set(STATEMENT_FIELDS);
 
 /** Remove named fields, store totals and/or the statement fields from a hop record's raw line. */
 export function stripHopFields(raw: string, c: Classified, strip: HopStrip): string {
-  const { named: dropNamed, stores: dropStores, statements: dropStatements } = strip;
-  if (!dropNamed && !dropStores && !dropStatements) return raw;
+  const { named: dropNamed, stores: dropStores, statements: dropStatements, paths: dropPaths } = strip;
+  if (!dropNamed && !dropStores && !dropStatements && !dropPaths) return raw;
   const drop = (k: string): boolean =>
-    (dropNamed && k.startsWith("f_")) || (dropStores && STORE_TOTALS.has(k)) || (dropStatements && STATEMENT_KEYS.has(k));
+    (dropNamed && k.startsWith("f_")) || (dropStores && STORE_TOTALS.has(k)) || (dropStatements && STATEMENT_KEYS.has(k)) || (dropPaths && k === PATH_FIELD);
   if (c.format === "json") {
     try {
       const obj = JSON.parse(raw) as Fields;
@@ -133,6 +136,7 @@ export function stripHopFields(raw: string, c: Classified, strip: HopStrip): str
   if (dropNamed) out = out.replace(/ f_[a-z0-9_]+=\S*/g, "");
   if (dropStores) out = out.replace(/ (?:db|cache)_(?:n|us)=\S*/g, "");
   if (dropStatements) out = out.replace(/ table=\S*/g, "");
+  if (dropPaths) out = out.replace(/ path=\S*/g, "");
   return stmt === null || dropStatements ? out : `${out} stmt=${stmt}`;
 }
 
@@ -195,7 +199,7 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
         continue;
       }
       if (c.kind === LineKind.Hop) {
-        raw = stripHopFields(raw, c, { named: !on[Feature.NamedFields], stores: !on[Feature.Stores], statements: !on[Feature.Statements] });
+        raw = stripHopFields(raw, c, { named: !on[Feature.NamedFields], stores: !on[Feature.Stores], statements: !on[Feature.Statements], paths: !on[Feature.Paths] });
       }
       let out: string;
       if (envelope) {
