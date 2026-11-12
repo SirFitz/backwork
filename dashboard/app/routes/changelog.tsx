@@ -3,7 +3,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { ArrowRight } from "lucide-react";
 import { getUser } from "~/lib/auth/context.server";
-import { MarketingShell, seo, REPO } from "~/components/marketing";
+import { MarketingShell, NavKey, seo } from "~/components/marketing";
 import { cn } from "~/lib/utils";
 
 export const meta: MetaFunction = () =>
@@ -23,6 +23,14 @@ const TAG: Record<Tag, string> = {
 };
 
 const RELEASES: { date: string; version: string; title: string; items: [Tag, string][] }[] = [
+  {
+    date: "November 12, 2026", version: "v0.6", title: "backwork as a service, with usage pricing",
+    items: [
+      ["Added", "A new public site for request tracing and performance: follow any request from one ID, see every step it took and where it stopped."],
+      ["Added", "Usage pricing: a free plan with no card, Team and Business plans with requests and log lines included each month, and an estimator on the pricing page."],
+      ["Improved", "backwork is now offered as a hosted service only. The docs start from adding a service with Correlator: one package and one start line."],
+    ],
+  },
   {
     date: "November 12, 2026", version: "v0.5", title: "Requests first, five containers",
     items: [
@@ -71,19 +79,19 @@ const RELEASES: { date: string; version: string; title: string; items: [Tag, str
 export default function Changelog() {
   const { authed } = useLoaderData<typeof loader>();
   return (
-    <MarketingShell authed={authed}>
+    <MarketingShell authed={authed} active={NavKey.Changelog}>
       <section className="mx-auto max-w-3xl px-5 pt-16 pb-10 sm:px-6 lg:pt-24">
-        <div data-reveal>
+        <div>
           <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><span className="h-1.5 w-1.5 rounded-full bg-brand" />Changelog</div>
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">What's new.</h1>
-          <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">Every notable feature, improvement, fix and security update. For the full commit history, see <a href={REPO + "/commits/main"} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">GitHub</a>.</p>
+          <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">Every notable feature, improvement, fix and security update, newest first.</p>
         </div>
       </section>
 
       <section className="mx-auto max-w-3xl px-5 pb-20 sm:px-6">
         <div className="ml-1 border-l border-border pl-7 sm:pl-9">
           {RELEASES.map((r) => (
-            <div key={r.version} data-reveal className="relative pb-12 last:pb-0">
+            <div key={r.version} className="relative pb-12 last:pb-0">
               <span className="absolute -left-[35px] top-1 h-3.5 w-3.5 rounded-full border-2 border-brand bg-bg sm:-left-[43px]" aria-hidden />
               <div className="flex items-center gap-2.5">
                 <time className="font-mono text-2xs text-faint">{r.date}</time>

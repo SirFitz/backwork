@@ -20,10 +20,11 @@ import { hopRequestPage, type RequestListRow } from "~/lib/hops/requests.server"
 import { serviceJumps, stalledRequests, unreceivedCalls } from "~/lib/hops/attention.server";
 import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type StalledRequest, type UnreceivedCall } from "~/lib/hops/attention";
 import { cn, fmtMs, fmtNum } from "~/lib/utils";
-import { MarketingLanding, seo, TAGLINE } from "~/components/marketing";
+import { seo, TAGLINE } from "~/components/marketing";
+import { MarketingLanding } from "~/components/site/landing";
 
 export const meta: MetaFunction = () =>
-  seo({ title: "backwork: find any request across your services", description: TAGLINE, path: "/" });
+  seo({ title: "backwork — follow any request, from one ID", description: TAGLINE, path: "/" });
 
 interface Panel<T> {
   data: T;

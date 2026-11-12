@@ -5,7 +5,7 @@ import { getUser } from "~/lib/auth/context.server";
 import { MarketingShell, seo, LegalArticle } from "~/components/marketing";
 
 export const meta: MetaFunction = () =>
-  seo({ title: "Terms of Service — backwork", description: "The terms governing use of the backwork managed service and the open-source project.", path: "/terms" });
+  seo({ title: "Terms of Service — backwork", description: "The terms governing use of backwork, the hosted service at backwork.dev.", path: "/terms" });
 
 export async function loader({ request }: LoaderFunctionArgs) {
   return json({ authed: !!(await getUser(request)) });
@@ -16,7 +16,7 @@ const SECTIONS: [string, string[]][] = [
     "By accessing or using the backwork managed service at backwork.dev (the “Service”), you agree to these Terms. If you're using the Service on behalf of an organization, you agree on its behalf.",
   ]],
   ["The service", [
-    "backwork is offered both as open-source software you may self-host and as a managed cloud Service. The self-hosted software is governed by the license in its source repository; these Terms govern the managed Service.",
+    "backwork is a hosted service (the Service) at backwork.dev. These Terms govern your use of it.",
   ]],
   ["Accounts", [
     "You're responsible for your account, for keeping your credentials and ingest tokens secret, and for the activity that occurs under them. Provide accurate information and keep it current.",
@@ -28,7 +28,7 @@ const SECTIONS: [string, string[]][] = [
     "You retain all rights to the telemetry and content you send. You grant us only the limited rights needed to operate the Service for you. You're responsible for ensuring you have the right to send us that data.",
   ]],
   ["Plans, trials & changes", [
-    "Paid plans, where applicable, are billed as described at sign-up. We may change features or pricing with reasonable notice. Free and trial tiers are provided as-is and may change or end.",
+    "Plans include a monthly allowance of traced requests and log lines, as described on the pricing page. The Free plan is never billed: collection pauses when its allowance is used. On paid plans, usage beyond the allowance is charged only after you agree to it. We may change features or pricing with reasonable notice. Free and trial plans are provided as-is and may change or end.",
   ]],
   ["Availability", [
     "We work to keep the Service reliable but, except where a written SLA applies (Enterprise), it is provided without an availability guarantee.",
@@ -54,7 +54,7 @@ export default function Terms() {
   const { authed } = useLoaderData<typeof loader>();
   return (
     <MarketingShell authed={authed}>
-      <LegalArticle title="Terms of Service" effective="June 10, 2026" sections={SECTIONS} />
+      <LegalArticle title="Terms of Service" effective="November 12, 2026" sections={SECTIONS} />
     </MarketingShell>
   );
 }
