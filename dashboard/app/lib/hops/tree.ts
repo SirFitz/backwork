@@ -74,6 +74,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     parentId: base.parentId,
     hopSent: base.hopSent,
     tracer: base.tracer,
+    handoff: base.handoff || (end?.handoff ?? false),
     attempt: base.attempt,
     state,
     outcome: end?.outcome ?? null,
@@ -89,6 +90,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     gaps: [],
     unrecorded: [],
     isStore: isStoreVia(base.via),
+    afterResponse: false,
     children: [],
   };
 }
@@ -122,6 +124,10 @@ function elapsedUs(hop: Hop, now: number): number {
 }
 
 type IntervalMs = [number, number];
+
+/** Log timestamps are whole milliseconds: a call that ends within this of its request's end
+ *  record ended with it, not after it. */
+const AFTER_RESPONSE_SLACK_MS = 1;
 
 /** Overlapping or touching intervals joined, in start order. */
 function mergeIntervals(intervals: readonly IntervalMs[]): IntervalMs[] {
@@ -169,7 +175,9 @@ export function timeSplit(hop: Hop, now: number): TimeSplit {
   const end = start + totalUs / 1000;
   const intervalsOf = (kids: readonly Hop[]): IntervalMs[] =>
     mergeIntervals(kids.map((c): IntervalMs => [Math.max(c.startMs, start), Math.min(c.endMs ?? windowEnd(c, now), end)]));
-  const storeKids = hop.children.filter((c) => c.isStore);
+  // A call that ran on after the response is not part of the request's time.
+  const inside = hop.children.filter((c) => !c.afterResponse && !c.handoff);
+  const storeKids = inside.filter((c) => c.isStore);
   const dbKids = storeKids.filter((c) => c.via === Via.Db);
   const cacheKids = storeKids.filter((c) => c.via === Via.Cache);
   const recordedSum = (kids: readonly Hop[]): number => kids.reduce((a, c) => a + (c.durationUs ?? 0), 0);
@@ -181,7 +189,7 @@ export function timeSplit(hop: Hop, now: number): TimeSplit {
   const db = intervalsOf(dbKids);
   const cacheOnly = subtractIntervals(intervalsOf(cacheKids), db);
   const waits = subtractIntervals(
-    subtractIntervals(intervalsOf(hop.children.filter((c) => c.dir === HopDir.Out && !c.isStore)), db),
+    subtractIntervals(intervalsOf(inside.filter((c) => c.dir === HopDir.Out && !c.isStore)), db),
     cacheOnly
   );
   let left = totalUs;
@@ -194,7 +202,9 @@ export function timeSplit(hop: Hop, now: number): TimeSplit {
   const cacheUs = take(lengthUs(cacheOnly) + Math.max(0, cacheSumUs - recordedSum(cacheKids)));
   const waitingUs = take(lengthUs(waits));
   const ownUs = left;
-  return { totalUs, dbUs, cacheUs, waitingUs, ownUs, dbCalls, dbSumUs, cacheCalls, cacheSumUs };
+  const background = hop.children.filter((c) => c.handoff);
+  const backgroundUs = background.reduce((a, c) => a + (c.durationUs ?? 0), 0);
+  return { totalUs, dbUs, cacheUs, waitingUs, ownUs, dbCalls, dbSumUs, cacheCalls, cacheSumUs, backgroundCalls: background.length, backgroundUs };
 }
 
 function storeShortfall(hop: Hop): UnrecordedStoreCalls[] {
@@ -282,6 +292,14 @@ export function buildRequestTree(
     if (!parent || parent.dir !== HopDir.In) continue;
     const end = windowEnd(h, now);
     h.logs = parent.logs.filter((l) => l.timeMs >= h.startMs && l.timeMs <= end);
+  }
+
+  // Calls still running when the response went: drawn where they ran, out of the time split.
+  for (const h of inbound) {
+    if (h.endMs === null) continue;
+    for (const c of h.children) {
+      if (c.dir === HopDir.Out && !c.handoff && c.endMs !== null && c.endMs > h.endMs + AFTER_RESPONSE_SLACK_MS) c.afterResponse = true;
+    }
   }
 
   // Step 8: calls past the record limit.

@@ -304,6 +304,7 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     parentHop: parentRaw === undefined ? null : (parentRaw as HopId),
     hopSent: isOut ? bool(bag, "hop_sent") ?? false : null,
     tracer: isOut ? bool(bag, "tracer") === true : false,
+    handoff: isOut ? bool(bag, "handoff") === true : false,
     parentId: isHopId(parentId) ? parentId : null,
     service: serviceOf(entry, bag),
     source: sourceOf(entry.labels, entry.line),

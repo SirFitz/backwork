@@ -180,6 +180,8 @@ function noteOf(hop: Hop): string {
   if (hop.gaps.some((g) => g.kind === GapKind.NotLinked)) parts.push("outside");
   if (hop.gaps.some((g) => g.kind === GapKind.NotInstrumented)) parts.push("not instrumented yet");
   for (const g of hop.gaps) if (g.kind === GapKind.Retry) parts.push(g.label.toLowerCase());
+  if (hop.handoff) parts.push("background");
+  else if (hop.afterResponse) parts.push("after the response");
   return parts.join(" · ");
 }
 
@@ -249,7 +251,12 @@ function Bar({ hop, colour, geom, thin = false }: { hop: Hop; colour: string; ge
   const failed = isFailed(hop) || hop.gaps.some((g) => g.kind === GapKind.Stopped);
   const style: CSSProperties = { left: `${geom.left}%`, width: `${geom.width}%` };
   if (geom.open) Object.assign(style, HATCH(colour));
-  else if (hop.isStore) style.background = "oklch(var(--muted))";
+  else if (hop.handoff || hop.afterResponse) {
+    // Beside the request, not part of it: outlined only, so it reads as running alongside.
+    style.background = "transparent";
+    style.boxShadow = `inset 0 0 0 1.5px ${hop.isStore ? "oklch(var(--muted))" : colour}`;
+    style.opacity = 0.7;
+  } else if (hop.isStore) style.background = "oklch(var(--muted))";
   else if (hop.dir === HopDir.In) style.background = colour;
   else {
     style.background = `color-mix(in oklch, ${colour} 22%, transparent)`;
@@ -548,6 +555,9 @@ function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; co
           </span>
         ))}
       </div>
+      {s.backgroundCalls ? (
+        <div className="text-faint md:col-start-2">In the background: {s.backgroundCalls} {s.backgroundCalls === 1 ? "call" : "calls"}, {fmtUs(s.backgroundUs)}</div>
+      ) : null}
     </div>
   );
 }
@@ -746,6 +756,8 @@ function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
   }
+  if (hop.handoff) facts.push(["Made", "in the background (handoff)"]);
+  else if (hop.afterResponse) facts.push(["Note", "ended after the response"]);
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
   const storeChip = hop.totals && (hop.totals.dbCalls || hop.totals.cacheCalls)
