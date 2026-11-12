@@ -48,8 +48,9 @@ import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
 import { ensureEvaluator } from "~/lib/evaluator.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
-import { cn, fmtClock } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import type { LookupPreview } from "~/routes/lookup";
+import { Clock } from "~/components/time";
 
 type AuthData = {
   user: { name: string; email: string };
@@ -66,7 +67,7 @@ export const meta: MetaFunction = () => [
 ];
 
 // Public routes render bare (no app shell) and don't require a session. The
-// machine endpoints (/ingest, /otlp, /install.sh, /healthz) are resource routes
+// machine endpoints (/ingest, /install.sh, /healthz) are resource routes
 // that never invoke this root loader, so agents are unaffected.
 const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 // Public marketing pages: render bare (own chrome), never require a session.
@@ -377,7 +378,7 @@ function FindRequest() {
                   <div className="mt-[3px] text-xs text-muted">
                     {data.summary.service} · {data.summary.services} {data.summary.services === 1 ? "service" : "services"}
                     {data.summary.durationUs !== null ? <> · <span className="font-mono">{fmtTook(data.summary.durationUs)}</span></> : <> · still open</>}
-                    {phone ? null : <> · <span className="font-mono">{fmtClock(data.summary.startMs).slice(0, 8)}</span></>}
+                    {phone ? null : <> · <Clock ts={data.summary.startMs} seconds className="font-mono" /></>}
                   </div>
                 </div>
                 <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-brand">

@@ -120,7 +120,7 @@ export default function Settings() {
           {(h) => (
             <ul className="divide-y divide-border">
               <HealthRow name="Loki" up={h.loki} note="log storage · LogQL" />
-              <HealthRow name="VictoriaMetrics" up={h.victoriametrics} note="metrics · PromQL" />
+              <HealthRow name="VictoriaMetrics" up={h.victoriametrics} note="request figures · PromQL" />
               <HealthRow name="Vector" up={h.vector} note="log collector (scrape target)" />
             </ul>
           )}
@@ -133,7 +133,7 @@ export default function Settings() {
             <CardHead title="Ship logs from another server" sub="one command installs a Vector agent" />
             <div className="space-y-2 p-4">
               <CodeBlock>{agentCmd}</CodeBlock>
-              <p className="text-2xs text-faint">Runs a Vector container that forwards the host's container logs to backwork, tagged with the host name. View them under Logs.</p>
+              <p className="text-2xs text-faint">Runs a Vector container that forwards the host's container logs and Correlator hop records to backwork, tagged with the host name. View them under Logs and Requests.</p>
             </div>
           </Card>
           <Card>
@@ -172,7 +172,7 @@ export default function Settings() {
         <CardHead title="Retention" sub="how long data is kept" />
         <ul className="divide-y divide-border text-[13px]">
           <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Logs</span><span className="font-mono">{d.retention.logs}</span></li>
-          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Metrics</span><span className="font-mono">{d.retention.metrics}</span></li>
+          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Request figures</span><span className="font-mono">{d.retention.metrics}</span></li>
           <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Hop records</span><span className="font-mono">{d.retention.hops}</span></li>
         </ul>
       </Card>

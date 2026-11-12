@@ -3,14 +3,18 @@
 #   loki            log storage (LogQL); hop records 30 days, other lines 7
 #   victoriametrics metrics TSDB (PromQL); scrapes Vector's hop metrics
 #   postgres        users, orgs, projects, switches, filter patterns
-#   vector          collector: tails EVERY container's logs on this host -> Loki,
-#                   detects hop records, filters sensitive data, hop metrics
-#   backwork        the dashboard — queries Loki and VictoriaMetrics
-# Other hosts ship to it with the agent (/install.sh). Jaeger and cAdvisor were
-# removed on 2026-11-12 (stack slimmed to tracing, performance and log search).
+#   vector          collector: tails backwork's OWN containers (the ones labelled
+#                   dev.backwork.collect=true) -> Loki, detects hop records,
+#                   filters sensitive data, hop metrics. It mounts the Docker
+#                   socket read-only because that is how Vector reads container logs.
+#   backwork        the dashboard: queries Loki and VictoriaMetrics
+# Every other service, on this host or another, ships with the agent
+# (/install.sh) under its own organisation.
 services:
   loki:
     build: ./infra/loki
+    labels:
+      dev.backwork.collect: "true"
     command: -config.file=/etc/loki/loki-config.yaml
     restart: unless-stopped
     mem_limit: 640m
@@ -21,6 +25,8 @@ services:
 
   victoriametrics:
     build: ./infra/victoriametrics
+    labels:
+      dev.backwork.collect: "true"
     command:
       - -storageDataPath=/vmdata
       - -retentionPeriod=14d
@@ -35,6 +41,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    labels:
+      dev.backwork.collect: "true"
     restart: unless-stopped
     mem_limit: 320m
     environment:
@@ -61,6 +69,8 @@ services:
 
   backwork:
     build: ./dashboard
+    labels:
+      dev.backwork.collect: "true"
     restart: unless-stopped
     mem_limit: 512m
     environment:
@@ -69,8 +79,6 @@ services:
       LOKI_URL: http://loki:3100
       VM_URL: http://victoriametrics:8428
       DATA_DIR: /data
-      # The stack no longer runs Jaeger: the dashboard does not trace itself.
-      OTEL_SDK_DISABLED: "true"
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       PUBLIC_URL: ${PUBLIC_URL:-https://backwork.dev}
       DATABASE_URL: postgresql://backwork:${PG_PASSWORD:-backwork_dev_pw}@postgres:5432/backwork

@@ -1,6 +1,6 @@
 // Hop records (Correlator spec draft 0.8, section 13.1) as the dashboard sees them.
 // Fixed sets are `as const` maps with a matching union type, so call sites never repeat
-// magic strings. Pure types: no runtime dependency on Loki, Jaeger or Remix.
+// magic strings. Pure types: no runtime dependency on Loki or Remix.
 
 /** The `hop` field of a record. */
 export const HopKind = {
@@ -103,7 +103,12 @@ export interface HopRecord {
   tracer: boolean;
   parentId: string | null;
   /** The collector's service label, falling back to the record's own `service`. */
+  /** The service the record names (its own `service` field, spec HOP-8); what every page shows. */
   service: string;
+  /** Where the line came from: the collector's container or process name (Loki label `source`,
+   *  or `service` on records stored before BAC-49). Ordinary log lines carry only this name, so
+   *  it joins them to the hop's service. Null when the label is missing. */
+  source: string | null;
   adapter: string | null;
   via: Via;
   method: string | null;

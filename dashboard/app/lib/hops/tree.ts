@@ -1,4 +1,4 @@
-// Request tree from hop records (design 7.3 and 7.4). Pure: no Loki, Jaeger or Remix,
+// Request tree from hop records (design 7.3 and 7.4). Pure: no Loki or Remix,
 // so the same function runs on the server and, as log lines arrive, in the browser.
 import {
   GapKind,

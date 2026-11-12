@@ -1,50 +1,9 @@
-# Publishing the backwork SDKs
+# Publishing
 
-Both names are available and reserved by intent:
-- **npm:** `@sirfitz/backwork` (Node + Bun)
-- **Hex:** `backwork` (Elixir)
-
-> These steps need credentials this repo doesn't carry. Run them from a machine
-> logged in as **sirfitz** on each registry.
-
-## npm — `@sirfitz/backwork`
-
-```bash
-cd packages/node
-npm whoami                      # should print: sirfitz  (else: npm login)
-npm publish --access public     # publishConfig.access=public is already set
-npm view @sirfitz/backwork version   # verify
-```
-
-If `npm whoami` 401s, the `~/.npmrc` token is stale — `npm login` to refresh.
-
-## Hex — `backwork`
-
-Requires the Elixir toolchain (`elixir`, `mix`) — not present on the build Mac, so
-run this where Elixir is installed:
-
-```bash
-cd packages/elixir
-mix deps.get
-mix hex.user auth               # or set HEX_API_KEY
-mix hex.publish                 # builds docs + publishes; confirm the prompts
-```
-Verify at https://hex.pm/packages/backwork.
-
-## After both are live
-
-The dashboard `/docs` page should switch its primary instructions to the one-liner:
-
-```
-npm i @sirfitz/backwork
-node --import @sirfitz/backwork/register server.js     # Node
-bun  --preload @sirfitz/backwork/start  run server.ts  # Bun
-
-{:backwork, "~> 0.1"}                                   # Elixir
-```
-
-(Ping Claude to flip the docs once published — held until then to avoid a broken
-`npm i` window.)
+The span SDKs `@sirfitz/backwork` (Node and Bun) and `backwork` (Elixir) are
+retired (BAC-49): backwork no longer stores spans, and services reach it through
+Correlator hop records and the agent. Their READMEs in `packages/node` and
+`packages/elixir` say so. Only the CLI below is publishable.
 
 ## npm — `@sirfitz/backwork-cli` (the `bw` read-API CLI)
 
@@ -57,5 +16,5 @@ npx @sirfitz/backwork-cli version    # smoke
 ```
 
 Zero runtime deps; nothing to build. Wraps the public read API
-(`GET /api/v1/me|errors|incidents|services`, bearer `bwk_` key). If `npm whoami`
+(`GET /api/v1/me|errors|services`, bearer `bwk_` key). If `npm whoami`
 401s, the `~/.npmrc` token is stale — `npm login` to refresh, then publish.

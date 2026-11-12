@@ -7,7 +7,7 @@ import { renderToPipeableStream } from "react-dom/server";
 
 const ABORT_DELAY = 5_000;
 
-// Applied to every document response (resource routes — /ingest, /otlp — return
+// Applied to every document response (resource routes such as /ingest return
 // their own Response and are unaffected). CSP allows inline scripts/styles because
 // the app uses them (remix-themes flash guard, JSON-LD, the .js class flag, recharts
 // inline styles); everything else is locked to 'self' with anti-clickjacking +

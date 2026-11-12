@@ -59,12 +59,34 @@ describe("progressiveLookup", () => {
 });
 
 describe("log lines", () => {
-  test("services found, ordinary lines only, 5 s either side, 1,000 at a time", async () => {
+  test("every service of the organisation, ordinary lines only, 5 s either side, 1,000 at a time", async () => {
     const { fn: f1 } = fake(() => [rec(NOW - 2000, "in"), rec(NOW - 1000, "in_end")]);
     const found = await searchWindow(T, SearchWindow.Hour, tenant, NOW, f1);
     const { fn, calls } = fake(() => []);
     await logLinesFor(T, found, tenant, NOW, fn);
-    expect(calls[0]).toEqual({ query: `{service=~"commerce-api", kind!="hop"} |= "${T}"`, start: NOW - 7000, end: NOW + 4000, limit: 1000, tenant });
+    expect(calls[0]).toEqual({ query: `{service=~".+", kind!="hop"} |= "${T}"`, start: NOW - 7000, end: NOW + 4000, limit: 1000, tenant });
+  });
+  test("a container's lines are named after the hop service of the same source", async () => {
+    const hop = `trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=fs-hono adapter=hono via=http method=GET op=/`;
+    const { fn: f1 } = fake(() => [{ ts: NOW - 2000, line: hop, labels: { service: "fs-hono", source: "fs-web-hono-bserve", kind: "hop" }, level: "info", service: "fs-hono", message: hop }]);
+    const found = await searchWindow(T, SearchWindow.Hour, tenant, NOW, f1);
+    expect(found.records[0].service).toBe("fs-hono");
+    const line = `rendered page trace_id=${T}`;
+    const { fn } = fake(() => [
+      { ts: NOW - 1500, line, labels: { service: "fs-web-hono-bserve", source: "fs-web-hono-bserve", kind: "log" }, level: "info", service: "fs-web-hono-bserve", message: line },
+      { ts: NOW - 1400, line, labels: { service: "other-box", kind: "log" }, level: "info", service: "other-box", message: line },
+    ]);
+    const lines = await logLinesFor(T, found, tenant, NOW, fn);
+    expect(lines.map((l) => l.service)).toEqual(["fs-hono", "other-box"]);
+  });
+  test("records stored before BAC-49 (container name as the service label) still join", async () => {
+    const hop = `trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-payments adapter=hono via=http method=POST op=/charges`;
+    const { fn: f1 } = fake(() => [{ ts: NOW - 2000, line: hop, labels: { service: "commerce-payments-staging", kind: "hop" }, level: "info", service: "commerce-payments-staging", message: hop }]);
+    const found = await searchWindow(T, SearchWindow.Hour, tenant, NOW, f1);
+    const line = `charge created trace_id=${T}`;
+    const { fn } = fake(() => [{ ts: NOW - 1500, line, labels: { service: "commerce-payments-staging", kind: "log" }, level: "info", service: "commerce-payments-staging", message: line }]);
+    const lines = await logLinesFor(T, found, tenant, NOW, fn);
+    expect(lines.map((l) => l.service)).toEqual(["commerce-payments"]);
   });
   test("a hop still open reads lines up to now", async () => {
     const { fn: f1 } = fake(() => [rec(NOW - 600_000, "in")]);

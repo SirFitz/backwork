@@ -39,14 +39,15 @@ ${bold("USAGE")}
 ${bold("COMMANDS")}
   me                     Verify your API key and show its organization
   errors                 List error groups
-  incidents              List current incidents
-  services               Per-service health
+  services               Request figures per service (rate, errors, latency)
   help | version
 
 ${bold("OPTIONS")}
   --status <s>           errors: open|resolved|ignored|all   (default: open)
   --service <name>       errors: filter to one service
   --limit <n>            errors: max groups                   (default: 100)
+  --range <r>            services: 1h|6h|24h|7d               (default: 1h)
+  --health               services: include health-check requests
   --json                 Raw JSON output (for piping to jq)
   --key <bwk_…>          API key (or set BACKWORK_API_KEY)
   --url <url>            API base URL (or BACKWORK_API_URL; default backwork.dev)
@@ -57,7 +58,7 @@ ${bold("EXAMPLES")}
   bw me
   bw errors --status open --limit 20
   bw errors --json | jq '.errors[].type'
-  bw incidents
+  bw services --range 24h
 
 Create a key in the dashboard: org dropdown → ${cyan("API keys")}.`;
 
@@ -132,27 +133,23 @@ async function main() {
     return;
   }
 
-  if (cmd === "incidents") {
-    const r = await api("/api/v1/incidents");
-    if (asJson) return console.log(JSON.stringify(r, null, 2));
-    const rows = (r.incidents || []).map((i) => [sev(i.severity), trunc(i.type, 12), trunc(i.service || "—", 18), trunc(i.title, 50), ago(i.ts)]);
-    console.log(table(["SEVERITY", "TYPE", "SERVICE", "TITLE", "AGE"], rows));
-    console.log(dim(`\n  ${r.count} incident${r.count === 1 ? "" : "s"}`));
-    return;
-  }
-
   if (cmd === "services") {
-    const r = await api("/api/v1/services");
+    const q = new URLSearchParams({ range: String(opts.range || "1h") });
+    if (opts.health) q.set("health", "1");
+    const r = await api(`/api/v1/services?${q.toString()}`);
     if (asJson) return console.log(JSON.stringify(r, null, 2));
+    const ms = (s) => (s === null || s === undefined ? "—" : `${Math.round(s * 1000)}ms`);
+    const pct = (x) => `${((x ?? 0) * 100).toFixed(1)}%`;
     const rows = (r.services || []).map((s) => [
-      (statusColor[s.status] || ((x) => x))(s.status),
-      trunc(s.service, 24),
-      `${s.running}/${s.containers}`,
-      (s.errorRate ?? 0).toFixed(2),
-      s.restarts ?? 0,
+      trunc(s.service, 28),
+      (s.rate ?? 0).toFixed(2),
+      (s.error_share ?? 0) >= 0.05 ? red(pct(s.error_share)) : pct(s.error_share),
+      ms(s.p50),
+      ms(s.p95),
+      ms(s.p99),
     ]);
-    console.log(table(["STATUS", "SERVICE", "RUNNING", "ERR/s", "RESTARTS"], rows));
-    console.log(dim(`\n  ${r.count} service${r.count === 1 ? "" : "s"}`));
+    console.log(table(["SERVICE", "REQ/s", "ERRORS", "P50", "P95", "P99"], rows));
+    console.log(dim(`\n  ${r.count} service${r.count === 1 ? "" : "s"} (last ${r.range})`));
     return;
   }
 

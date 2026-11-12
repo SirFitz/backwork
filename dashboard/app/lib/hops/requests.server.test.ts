@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { inboundEndQuery, rowsFromRecords } from "./requests.server";
+import { inboundEndQuery, isFailedRow, rowsFromRecords } from "./requests.server";
+import { HealthChecks, LOGQL_NOT_HEALTH_CHECK } from "./health";
 import { parseHopRecord } from "./parse";
 import type { HopRecord } from "./types";
 
@@ -13,10 +14,29 @@ function rec(line: string, ts = 1_700_000_000_000, service = "commerce-api"): Ho
 
 describe("inboundEndQuery", () => {
   test("all services", () => {
-    expect(inboundEndQuery(null)).toBe('{kind="hop"} |= "in_end" |~ "via\\\\W{1,4}http"');
+    expect(inboundEndQuery(null, HealthChecks.Shown)).toBe('{kind="hop"} |= "in_end" |~ "via\\\\W{1,4}http"');
   });
   test("one service, quoted", () => {
-    expect(inboundEndQuery('a"b')).toBe('{kind="hop",service="a\\"b"} |= "in_end" |~ "via\\\\W{1,4}http"');
+    expect(inboundEndQuery('a"b', HealthChecks.Shown)).toBe('{kind="hop",service="a\\"b"} |= "in_end" |~ "via\\\\W{1,4}http"');
+  });
+});
+
+describe("health checks", () => {
+  const HC = `trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/healthz outcome=ok status=200 duration_us=900`;
+  const ORDER = `trace_id=${T} hop=in_end hop_id=2f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/health/db outcome=ok status=200 duration_us=900`;
+  test("left out of the query and the rows by default", () => {
+    expect(inboundEndQuery(null)).toBe(`{kind="hop"} |= "in_end" |~ "via\\\\W{1,4}http" ${LOGQL_NOT_HEALTH_CHECK}`);
+    expect(rowsFromRecords([rec(HC), rec(ORDER)]).map((r) => r.route)).toEqual(["/health/db"]);
+  });
+  test("brought back when shown", () => {
+    expect(rowsFromRecords([rec(HC), rec(ORDER)], HealthChecks.Shown).map((r) => r.route)).toEqual(["/healthz", "/health/db"]);
+  });
+  test("failed rows: outcome error or 5xx", () => {
+    const base = { traceID: T, service: "s", method: "GET", route: "/x", durationMs: 1, startMs: 0 };
+    expect(isFailedRow({ ...base, status: 503, error: false })).toBe(true);
+    expect(isFailedRow({ ...base, status: null, error: true })).toBe(true);
+    expect(isFailedRow({ ...base, status: 404, error: false })).toBe(false);
+    expect(inboundEndQuery(null, HealthChecks.Hidden, true)).toContain('|~ "outcome');
   });
 });
 

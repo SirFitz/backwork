@@ -10,7 +10,9 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/hops/metrics.server";
 import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
-import { cn, fmtClock, fmtMs, fmtPct } from "~/lib/utils";
+import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
+import { cn, fmtMs, fmtPct } from "~/lib/utils";
+import { Clock } from "~/components/time";
 
 const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
 
@@ -29,6 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const hrs = RANGES[rangeKey];
   const sinceMs = Date.now() - hrs * 3600_000;
   const beforeRaw = Number(url.searchParams.get("before"));
+  const health = healthChecksFrom(url.searchParams.get(HEALTH_PARAM));
 
   const services = await safe(() => inboundServices(t), [] as string[]);
   const list = services.data;
@@ -37,21 +40,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // "Load older requests": the next 100 hop rows before the cursor (design 13).
   if (Number.isFinite(beforeRaw) && beforeRaw > 0) {
-    const page = await safe(() => hopRequestPage(t, { service: hopService, sinceMs, before: beforeRaw }), { rows: [], next: null } as HopPage);
+    const page = await safe(() => hopRequestPage(t, { service: hopService, sinceMs, before: beforeRaw, health }), { rows: [], next: null } as HopPage);
     return json({ kind: "older" as const, page: page.data, error: page.error });
   }
 
   const feed: Promise<FeedData> = safe(
-    () => hopRequestPage(t, { service: hopService, sinceMs, before: Date.now() }),
+    () => hopRequestPage(t, { service: hopService, sinceMs, before: Date.now(), health }),
     { rows: [], next: null } as HopPage
   ).then((hops) => ({ rows: hops.data.rows, next: hops.data.next, error: hops.error }));
-  const totals: Promise<{ data: InboundTotals | null; error: string | null }> = safe(() => inboundHttpTotals(rangeKey, hopService, t), null);
+  const totals: Promise<{ data: InboundTotals | null; error: string | null }> = safe(() => inboundHttpTotals(rangeKey, hopService, t, undefined, health), null);
 
   return defer({
     kind: "page" as const,
     services: list,
     service: chosen,
     range: rangeKey,
+    health,
     feed,
     totals,
   });
@@ -107,7 +111,7 @@ export default function Requests() {
             </>
           }
         >
-          {(feed) => <Feed key={`${d.service}|${d.range}`} feed={feed} totals={d.totals} services={d.services} service={d.service} range={d.range} />}
+          {(feed) => <Feed key={`${d.service}|${d.range}|${d.health}`} feed={feed} totals={d.totals} services={d.services} service={d.service} range={d.range} health={d.health} />}
         </Deferred>
       )}
     </div>
@@ -120,12 +124,14 @@ function Feed({
   services,
   service,
   range,
+  health,
 }: {
   feed: FeedData;
   totals: Promise<{ data: InboundTotals | null; error: string | null }>;
   services: string[];
   service: string;
   range: string;
+  health: HealthChecks;
 }) {
   const submit = useSubmit();
   const navigate = useNavigate();
@@ -223,6 +229,17 @@ function Feed({
           <select name="range" defaultValue={range} onChange={(e) => submit(e.currentTarget.form)} className={SELECT} aria-label="Range">
             {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
           </select>
+          <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted">
+            <input
+              type="checkbox"
+              name={HEALTH_PARAM}
+              value="1"
+              defaultChecked={health === HealthChecks.Shown}
+              onChange={(e) => submit(e.currentTarget.form)}
+              className="accent-brand"
+            />
+            Show health checks
+          </label>
         </Form>
         <Deferred resolve={totals} fallback={<StatusSeg counts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />}>
           {(t) => {
@@ -283,7 +300,7 @@ function Feed({
               <tbody className="font-mono">
                 {rows.map((r) => (
                   <tr key={`${r.traceID}|${r.service}|${r.startMs}`} onClick={() => navigate(`/requests/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
-                    <td className="px-4 py-1.5 tabular-nums text-faint">{fmtClock(r.startMs)}</td>
+                    <td className="px-4 py-1.5 tabular-nums text-faint"><Clock ts={r.startMs} /></td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
                     <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
                     <td className="max-w-[360px] truncate px-4 py-1.5 text-fg/90">{r.route || <span className="text-faint">(no route)</span>}</td>
@@ -303,6 +320,7 @@ function Feed({
               disabled={older.state !== "idle"}
               onClick={() => {
                 const p = new URLSearchParams({ service, range, before: String(next) });
+                if (health === HealthChecks.Shown) p.set(HEALTH_PARAM, "1");
                 older.load(`/requests?${p.toString()}`);
               }}
               className="inline-flex h-8 items-center rounded-lg border border-border bg-surface px-3 text-[12.5px] font-medium hover:border-border-strong disabled:opacity-60"

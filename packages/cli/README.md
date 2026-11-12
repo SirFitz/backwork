@@ -1,7 +1,7 @@
 # @sirfitz/backwork-cli
 
 Command-line client for the [backwork.dev](https://backwork.dev) observability read
-API — pull your org's **errors**, **incidents**, and **service health** straight into
+API: pull your org's **errors** and **request figures per service** straight into
 your terminal or scripts.
 
 ```bash
@@ -26,8 +26,7 @@ Keys are org-scoped: the CLI only ever sees your own organization's data.
 ```
 bw me                      Verify the key and show its organization
 bw errors                  List error groups          (--status, --service, --limit)
-bw incidents               List current incidents
-bw services                Per-service health
+bw services                Request rate, errors and latency per service (--range, --health)
 bw help | bw version
 ```
 
@@ -38,6 +37,8 @@ bw help | bw version
 | `--status <s>` | `errors`: `open` (default) · `resolved` · `ignored` · `all` |
 | `--service <name>` | `errors`: filter to one service |
 | `--limit <n>` | `errors`: max groups (default 100) |
+| `--range <r>` | `services`: `1h` (default) · `6h` · `24h` · `7d` |
+| `--health` | `services`: include health-check requests (left out by default) |
 | `--json` | Raw JSON output — pipe to `jq` |
 | `--key <bwk_…>` | API key (overrides `BACKWORK_API_KEY`) |
 | `--url <url>` | API base URL (overrides `BACKWORK_API_URL`; default `https://backwork.dev`) |
@@ -49,8 +50,7 @@ bw help | bw version
 bw errors --status open --limit 20
 bw errors --service checkout-api
 bw errors --json | jq '.errors[] | {type, count, message}'
-bw incidents
-bw services
+bw services --range 24h
 ```
 
 Self-hosting backwork on your own domain? Point the CLI at it:
@@ -66,8 +66,7 @@ The CLI is a thin wrapper over the public read API (bearer-authed, JSON, org-sco
 ```
 GET /api/v1/me
 GET /api/v1/errors?status=&service=&limit=
-GET /api/v1/incidents
-GET /api/v1/services
+GET /api/v1/services?range=&health=
 ```
 
 MIT © SirFitz

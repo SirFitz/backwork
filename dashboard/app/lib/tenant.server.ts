@@ -3,10 +3,10 @@ import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { projects } from "~/db/schema";
 
-// The platform org (Inkress) owns the host's own infrastructure telemetry
-// (cAdvisor/Docker/Vector on bserve). It is UNFILTERED — it sees everything,
-// so the existing live dashboard is unchanged. Every other org is scoped to its
-// own org_id label/attribute, tagged at ingest and filtered at query time.
+// The platform org owns backwork's own telemetry (the stack collector reads only
+// backwork's containers, which carry no org_id). It is UNFILTERED: it sees every
+// series and stream. Every other org is scoped to its own org_id label, stamped
+// at ingest and filtered at query time.
 export type Tenant = { orgId: string; platform: boolean };
 
 export function platformOrgId(): string {

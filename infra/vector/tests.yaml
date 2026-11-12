@@ -134,7 +134,7 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.message, "customer updated card=[filtered] email=[filtered] phone=[filtered] password=[filtered] api_key=[filtered] trace_id=41111111111111114111111111111111 hop_id=4111111111111111")
-              assert_eq!(.display, .message)
+              assert!(!exists(.display))  # equal to the line, so not stored twice (BAC-49)
 
   - name: filter applies inside json hop records and keeps id fields
     inputs:
@@ -195,7 +195,7 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.name, "backwork_hop_started_total")
-              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http"})
+              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http", "op": ""})
 
   - name: data-store hop and an oversized op label
     inputs:
@@ -241,3 +241,96 @@ tests:
         conditions:
           - type: vrl
             source: assert_eq!(.service, "audit-shop")
+
+  - name: a stored line keeps only what the pages read (BAC-49)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          container_id: 3f1c2a9e51d74b0a9c1e0d7a44be2f183f1c2a9e51d74b0a9c1e0d7a44be2f18
+          container_created_at: "2026-11-12T07:00:00Z"
+          image: ghcr.io/example/commerce-api:latest
+          stream: stdout
+          source_type: docker_logs
+          label.traefik: "true"
+          label.caddy: "commerce-api.example.org"
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 adapter=hono via=http method=POST op=/charges"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "commerce-api")
+              assert_eq!(.message, "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 adapter=hono via=http method=POST op=/charges")
+              assert!(!exists(.label))
+              assert!(!exists(.container_id))
+              assert!(!exists(.container_name))
+              assert!(!exists(.container_created_at))
+              assert!(!exists(.image))
+              assert!(!exists(.stream))
+              assert!(!exists(.source_type))
+              assert!(!exists(.display))
+              assert!(!exists(.role))
+              assert_eq!(keys(.), ["kind", "level", "message", "service", "source", "timestamp"])
+
+  - name: a JSON line keeps its display text when it differs from the line
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          image: ghcr.io/example/commerce-api:latest
+          message: '{"level":30,"msg":"order created"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.display, "order created")
+              assert!(!exists(.image))
+
+  - name: a hop record is named by its own service field; the container stays as source (BAC-49)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments-staging
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 service=commerce-payments adapter=hono via=http method=POST op=/charges outcome=ok status=201 duration_us=15000"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments-staging
+          message: "charge created trace_id=6503f5f183b828139d5b143365ad72fa"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.source, "commerce-payments-staging")
+              if .kind == "hop" {
+                assert_eq!(.service, "commerce-payments")
+              } else {
+                assert_eq!(.service, "commerce-payments-staging")
+              }
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: assert_eq!(.tags.service, "commerce-payments")
+
+  - name: a hop record without a valid service field keeps the container name
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: web-box
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 adapter=hono via=http method=GET op=/"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "web-box")
+              assert_eq!(.source, "web-box")

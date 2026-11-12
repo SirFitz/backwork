@@ -5,45 +5,70 @@ import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
 import { alertRules, alertChannels, migrations } from "~/db/schema";
 import { config } from "./config.server";
-import * as vm from "./vm.server";
 import * as loki from "./loki.server";
 import { tenantOf, platformOrgId, type Tenant } from "./tenant.server";
 
-export type AlertMetric = "cpu" | "memory_mb" | "restarts" | "error_rate" | "log_rate";
+import { AlertMetric, isAlertMetric } from "./alert-kinds";
+export { AlertMetric, isAlertMetric };
+
+/** Kinds that read container metrics, removed in BAC-49. Stored rules of these
+ *  kinds are turned off with RETIRED_NOTE and never evaluated. */
+export const RETIRED_METRICS: readonly string[] = ["cpu", "memory_mb", "restarts"];
+export const RETIRED_NOTE = "Container metrics are no longer collected, so this rule was turned off. Delete it, or add a rule on error or log rate.";
 
 export type AlertRule = {
   id: string;
   name: string;
-  metric: AlertMetric;
+  /** A stored rule may hold a retired kind; `retired` is then set. */
+  metric: AlertMetric | string;
   service: string; // "*" = any service
   comparator: ">" | "<";
   threshold: number;
   channelIds: string[]; // notification channels to fire
   enabled: boolean;
+  /** Why the rule can no longer run; such a rule stays disabled. */
+  retired?: string;
 };
 
 export type AlertState = AlertRule & { firing: boolean; value: number; noData: boolean };
 
-export const METRIC_META: Record<AlertMetric, { label: string; hint: string; unit: string; source: "vm" | "loki" }> = {
-  cpu: { label: "CPU usage (cores)", hint: "container CPU, in cores", unit: " cores", source: "vm" },
-  memory_mb: { label: "Memory, busiest container (MB)", hint: "peak container working set", unit: " MB", source: "vm" },
-  restarts: { label: "Restarts in last hour (count)", hint: "container restarts over 1h", unit: "", source: "vm" },
-  error_rate: { label: "Error log rate (lines/sec)", hint: "error-level log lines per second", unit: "/s", source: "loki" },
-  log_rate: { label: "Log volume (lines/sec)", hint: "all log lines per second", unit: "/s", source: "loki" },
+export const METRIC_META: Record<AlertMetric, { label: string; hint: string; unit: string }> = {
+  [AlertMetric.ErrorRate]: { label: "Error log rate (lines/sec)", hint: "error-level log lines per second", unit: "/s" },
+  [AlertMetric.LogRate]: { label: "Log volume (lines/sec)", hint: "all log lines per second", unit: "/s" },
 };
 
-const KEY = "container_label_coolify_resourceName";
-
 export const DEFAULT_RULES: Omit<AlertRule, "id">[] = [
-  { name: "High error rate (any service)", metric: "error_rate", service: "*", comparator: ">", threshold: 2, channelIds: [], enabled: true },
-  { name: "Restart loop (any service)", metric: "restarts", service: "*", comparator: ">", threshold: 3, channelIds: [], enabled: true },
-  { name: "High memory (any container)", metric: "memory_mb", service: "*", comparator: ">", threshold: 1024, channelIds: [], enabled: true },
+  { name: "High error rate (any service)", metric: AlertMetric.ErrorRate, service: "*", comparator: ">", threshold: 2, channelIds: [], enabled: true },
 ];
+
+/** A stored rule as the app may use it: a kind that can no longer run comes back disabled with a note. */
+export function normalizeRule(rule: AlertRule): AlertRule {
+  if (isAlertMetric(rule.metric)) return rule;
+  return { ...rule, enabled: false, retired: RETIRED_NOTE };
+}
 
 export async function loadRules(orgId: string): Promise<AlertRule[]> {
   await ensureSchema();
   const rows = await db.select({ data: alertRules.data }).from(alertRules).where(eq(alertRules.orgId, orgId));
-  return rows.map((r) => r.data as unknown as AlertRule);
+  return rows.map((r) => normalizeRule(r.data as unknown as AlertRule));
+}
+
+/** One-time: store retired rules as disabled, with the note, so every reader agrees. */
+export async function retireContainerRules(): Promise<number> {
+  await ensureSchema();
+  const done = await db.select({ name: migrations.name }).from(migrations).where(eq(migrations.name, "alerts_retire_container_v1")).limit(1);
+  if (done.length) return 0;
+  const rows = await db.select({ id: alertRules.id, orgId: alertRules.orgId, data: alertRules.data }).from(alertRules);
+  let changed = 0;
+  for (const row of rows) {
+    const rule = row.data as unknown as AlertRule;
+    if (isAlertMetric(rule.metric)) continue;
+    const next = normalizeRule(rule);
+    await db.update(alertRules).set({ data: next as unknown as Record<string, unknown>, updatedAt: new Date() }).where(and(eq(alertRules.id, row.id), eq(alertRules.orgId, row.orgId)));
+    changed += 1;
+  }
+  await db.insert(migrations).values({ name: "alerts_retire_container_v1" }).onConflictDoNothing();
+  return changed;
 }
 
 export async function saveRules(orgId: string, rules: AlertRule[]): Promise<void> {
@@ -56,31 +81,25 @@ export async function saveRules(orgId: string, rules: AlertRule[]): Promise<void
   });
 }
 
-function svcSel(service: string, extra = ""): string {
-  if (service === "*") return extra ? `{${extra}}` : "";
-  const e = extra ? `${extra},` : "";
-  // JSON.stringify escapes quotes/backslashes so a service value can't break out
-  // of the matcher; org_id scoping is still enforced by vm.applyScope / loki.scoped.
-  return `{${e}${KEY}=${JSON.stringify(service)}}`;
-}
+// JSON.stringify escapes quotes/backslashes so a service value can't break out of the
+// matcher; org_id scoping is still enforced by loki.scoped.
 function lokiSel(service: string, extra = ""): string {
   const parts = [extra, service === "*" ? `service=~".+"` : `service=${JSON.stringify(service)}`].filter(Boolean);
   return `{${parts.join(",")}}`;
 }
 
-async function evalRule(rule: AlertRule, tenant: Tenant): Promise<number> {
-  switch (rule.metric) {
-    case "cpu":
-      return vm.scalar(`sum(rate(container_cpu_usage_seconds_total${svcSel(rule.service, 'name!=""')}[5m]))`, 0, tenant);
-    case "memory_mb":
-      return vm.scalar(`max(container_memory_working_set_bytes${svcSel(rule.service, 'name!=""')})/1024/1024`, 0, tenant);
-    case "restarts":
-      return vm.scalar(`max(changes(container_start_time_seconds${svcSel(rule.service, 'name!=""')}[1h]))`, 0, tenant);
-    case "error_rate":
-      return loki.scalar(`sum(rate(${lokiSel(rule.service, 'level="error"')}[5m]))`, 0, tenant);
-    case "log_rate":
-      return loki.scalar(`sum(rate(${lokiSel(rule.service)}[5m]))`, 0, tenant);
+/** The LogQL a rule evaluates. Hop records are not log lines, so they never count. */
+export function ruleQuery(metric: AlertMetric, service: string): string {
+  switch (metric) {
+    case AlertMetric.ErrorRate:
+      return `sum(rate(${lokiSel(service, 'kind!="hop",level="error"')}[5m]))`;
+    case AlertMetric.LogRate:
+      return `sum(rate(${lokiSel(service, 'kind!="hop"')}[5m]))`;
   }
+}
+
+async function evalRule(metric: AlertMetric, rule: AlertRule, tenant: Tenant): Promise<number> {
+  return loki.scalar(ruleQuery(metric, rule.service), 0, tenant);
 }
 
 export async function evaluate(tenant: Tenant): Promise<AlertState[]> {
@@ -92,8 +111,10 @@ export async function evaluate(tenant: Tenant): Promise<AlertState[]> {
       // suppressing `>` rules (H7).
       let value = 0;
       let noData = false;
+      // A retired kind is never evaluated: disabled, no data, never firing.
+      if (!isAlertMetric(rule.metric)) return { ...rule, value, firing: false, noData: true };
       try {
-        const v = await evalRule(rule, tenant);
+        const v = await evalRule(rule.metric, rule, tenant);
         if (v === undefined || !Number.isFinite(v)) noData = true;
         else value = v;
       } catch {
@@ -116,7 +137,8 @@ export async function toggleRule(orgId: string, id: string): Promise<void> {
   await ensureSchema();
   const rows = await db.select({ data: alertRules.data }).from(alertRules).where(and(eq(alertRules.id, id), eq(alertRules.orgId, orgId))).limit(1);
   if (!rows.length) return;
-  const r = rows[0].data as unknown as AlertRule;
+  const r = normalizeRule(rows[0].data as unknown as AlertRule);
+  if (r.retired) return; // a retired rule cannot be turned back on
   r.enabled = !r.enabled;
   await db.update(alertRules).set({ data: r as unknown as Record<string, unknown>, updatedAt: new Date() }).where(and(eq(alertRules.id, id), eq(alertRules.orgId, orgId)));
 }

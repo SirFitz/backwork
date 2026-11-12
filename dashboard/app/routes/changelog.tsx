@@ -13,15 +13,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ authed: !!(await getUser(request)) });
 }
 
-type Tag = "Added" | "Improved" | "Fixed" | "Security";
+type Tag = "Added" | "Improved" | "Fixed" | "Security" | "Removed";
 const TAG: Record<Tag, string> = {
   Added: "bg-ok/10 text-ok ring-ok/25",
   Improved: "bg-info/10 text-info ring-info/25",
   Fixed: "bg-warn/10 text-warn ring-warn/25",
   Security: "bg-brand/10 text-brand ring-brand/25",
+  Removed: "bg-surface-2 text-muted ring-border",
 };
 
 const RELEASES: { date: string; version: string; title: string; items: [Tag, string][] }[] = [
+  {
+    date: "November 12, 2026", version: "v0.5", title: "Requests first, five containers",
+    items: [
+      ["Added", "Find any request from the header search by trace ID, request ID, UUID or traceparent, and see its path through every service, its database and cache time, where it stopped and its log lines."],
+      ["Added", "Requests and Performance from Correlator hop records: rate, errors and p50/p95/p99 per service, route and connection, with time in databases and caches."],
+      ["Added", "A new Overview: services failing or slower than usual, requests that stopped, calls never received, the latest failed requests and log volume."],
+      ["Added", "Switches for every kind of data and a sensitive-data filter that runs on your host before anything leaves it."],
+      ["Improved", "Health checks are left out of the Overview, Requests and Performance unless shown; stored lines keep only what the pages read."],
+      ["Removed", "Jaeger, cAdvisor and OpenTelemetry span ingest, with the Containers, Metrics, Incidents and Traces pages, container alert rules and the span SDKs. The stack is now five containers: Vector, Loki, VictoriaMetrics, Postgres and the dashboard."],
+    ],
+  },
   {
     date: "June 10, 2026", version: "v0.4", title: "Marketing site & design polish",
     items: [

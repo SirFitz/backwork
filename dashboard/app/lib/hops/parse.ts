@@ -1,5 +1,5 @@
 // Strict parsing of hop records (spec 13.1) and linked-ID lines (spec LOG-5) out of log entries.
-// This is the only module that reads untyped log content. Pure: no Loki, Jaeger or Remix.
+// This is the only module that reads untyped log content. Pure: no Loki or Remix.
 import {
   HOP_KINDS,
   OUTCOMES,
@@ -220,10 +220,37 @@ function namedFieldsOf(bag: FieldBag): NamedField[] {
 }
 
 function serviceOf(entry: RawLogEntry, bag: FieldBag): string {
-  // The collector's name for the container wins (design 5.2); the record's own field is the fallback.
+  // The record's own service field wins: it is the name the developer set and the one that
+  // travels between hops (BAC-49, live data 2026-11-12). The collector's label is the fallback.
+  const own = str(bag, "service");
+  if (own && isServiceName(own)) return own;
   const label = entry.labels.service;
   if (label && isPrintableValue(label)) return label;
-  return str(bag, "service") ?? "unknown";
+  return "unknown";
+}
+
+/** A service name as a label value (spec HOP-12): 1 to 200 bytes of printable ASCII, no space. */
+function isServiceName(value: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(value);
+}
+
+/**
+ * The collector's name for where a line came from: the `source` label; else the `source` field
+ * of the stored JSON line (agents installed before BAC-49 get the field through the controls
+ * poller but not the label until reinstalled); else, for lines stored before BAC-49, `service`.
+ */
+export function sourceOf(labels: Readonly<Record<string, string>>, line = ""): string | null {
+  const ok = (v: unknown): v is string => typeof v === "string" && v !== "" && isPrintableValue(v);
+  if (ok(labels.source)) return labels.source;
+  if (line.startsWith("{") && line.includes('"source"')) {
+    try {
+      const body: unknown = JSON.parse(line);
+      if (body && typeof body === "object" && ok((body as Record<string, unknown>).source)) return (body as Record<string, string>).source;
+    } catch {
+      /* not JSON: fall through */
+    }
+  }
+  return ok(labels.service) ? labels.service : null;
 }
 
 const END_KINDS: readonly HopKind[] = ["in_end", "out_end"];
@@ -261,6 +288,7 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     tracer: isOut ? bool(bag, "tracer") === true : false,
     parentId: isHopId(parentId) ? parentId : null,
     service: serviceOf(entry, bag),
+    source: sourceOf(entry.labels, entry.line),
     adapter: str(bag, "adapter"),
     via,
     method: str(bag, "method"),

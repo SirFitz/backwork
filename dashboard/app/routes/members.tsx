@@ -13,6 +13,7 @@ import { sendMail } from "~/lib/mailer.server";
 import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
 import { cn } from "~/lib/utils";
+import { LocalDate } from "~/components/time";
 
 const ROLES: Role[] = ["owner", "admin", "member", "viewer"];
 
@@ -162,7 +163,7 @@ export default function Members() {
               <li key={iv.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
                 <span className="font-mono text-muted">{iv.email}</span>
                 <Badge tone="neutral">{iv.role}</Badge>
-                <span className="ml-auto text-2xs text-faint">expires {new Date(iv.expiresAt).toLocaleDateString()}</span>
+                <span className="ml-auto text-2xs text-faint">expires <LocalDate ts={new Date(iv.expiresAt).getTime()} /></span>
                 {canManage ? <Form method="post" onSubmit={(e) => { if (!confirm(`Revoke the invite for ${iv.email}?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="revoke-invite" /><input type="hidden" name="id" value={iv.id} /><button className="text-faint hover:text-err" aria-label="revoke"><Trash2 className="h-3.5 w-3.5" /></button></Form> : null}
               </li>
             ))}

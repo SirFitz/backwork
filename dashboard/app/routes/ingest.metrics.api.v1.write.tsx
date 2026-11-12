@@ -4,8 +4,8 @@ import { getControls } from "~/lib/controls.server";
 import { hopMetricsAllowed } from "~/lib/ingest/enforce.server";
 import { resolveIngestToken } from "~/lib/tenant.server";
 
-// Authenticated Prometheus remote-write proxy for external agents (Vector
-// host_metrics or a vmagent scraping cAdvisor). The bearer token resolves to an
+// Authenticated Prometheus remote-write proxy for the backwork agent's hop
+// metrics. The bearer token resolves to an
 // org + project; we forward the (snappy-protobuf) body untouched to VM and let
 // VM stamp org_id + project via extra_label, so a tenant's metrics are isolated
 // without decoding the payload. (Legacy INGEST_TOKEN -> platform.)

@@ -98,14 +98,6 @@ export const alertChannels = pgTable("alert_channels", {
   ...ts(),
 }, (t) => ({ orgIdx: index("alert_channels_org_idx").on(t.orgId) }));
 
-// Which service names each org's traces carry (Jaeger has no per-tenant
-// /api/services); upserted at OTLP ingest, read for the customer trace dropdown.
-export const traceServices = pgTable("trace_services", {
-  orgId: text("org_id").notNull(),
-  service: text("service").notNull(),
-  lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.service] }) }));
-
 export const migrations = pgTable("migrations", {
   name: text("name").primaryKey(),
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),

@@ -5,7 +5,8 @@ import { Bug } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { requireOrg } from "~/lib/auth/context.server";
 import { listErrorGroups, errorStatusCounts, errorServices } from "~/lib/errors.server";
-import { cn, timeAgo } from "~/lib/utils";
+import { cn } from "~/lib/utils";
+import { Ago } from "~/components/time";
 
 export const meta: MetaFunction = () => [{ title: "Errors · backwork" }];
 
@@ -92,7 +93,7 @@ export default function Errors() {
                     </td>
                     <td className="px-4 py-2.5 text-2xs text-accent">{g.service || "—"}</td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{g.count}</td>
-                    <td className="px-4 py-2.5 text-right text-2xs text-faint">{timeAgo(new Date(g.lastSeen).getTime())}</td>
+                    <td className="px-4 py-2.5 text-right text-2xs text-faint"><Ago ts={new Date(g.lastSeen).getTime()} /></td>
                   </tr>
                 ))}
               </tbody>

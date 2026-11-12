@@ -33,6 +33,9 @@ import {
   type ServiceRow,
 } from "./metrics.server";
 import type { Tenant } from "~/lib/tenant.server";
+import { HealthChecks } from "./health";
+
+const SHOWN = HealthChecks.Shown;
 
 let orgSeq = 0;
 /** A fresh org per test, so the 10-second cache never serves one test's answer to another. */
@@ -96,12 +99,12 @@ describe("promString", () => {
 
 describe("query builders (design 8.1)", () => {
   test("service request rate", () => {
-    expect(rateQuery("in", servicesScope(), PerfRange.H6)).toBe(
+    expect(rateQuery("in", servicesScope(SHOWN), PerfRange.H6)).toBe(
       'sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in"}[6h]))'
     );
   });
   test("route request rate is filtered to the service", () => {
-    expect(rateQuery("in", routesScope("commerce-payments"), PerfRange.H1)).toBe(
+    expect(rateQuery("in", routesScope("commerce-payments", SHOWN), PerfRange.H1)).toBe(
       'sum by (service, method, op) (rate(backwork_hop_duration_seconds_count{dir="in",service="commerce-payments"}[1h]))'
     );
   });
@@ -111,14 +114,14 @@ describe("query builders (design 8.1)", () => {
     );
   });
   test("error rate is two disjoint selectors", () => {
-    const [a, b] = errorRateQueries("in", servicesScope(), PerfRange.H24);
+    const [a, b] = errorRateQueries("in", servicesScope(SHOWN), PerfRange.H24);
     expect(a).toBe('sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",outcome="error"}[24h]))');
     expect(b).toBe(
       'sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",outcome!="error",status_class="5xx"}[24h]))'
     );
   });
   test("quantiles group by le", () => {
-    expect(quantileQuery(Quantile.P99, "in", servicesScope(), PerfRange.H6)).toBe(
+    expect(quantileQuery(Quantile.P99, "in", servicesScope(SHOWN), PerfRange.H6)).toBe(
       'histogram_quantile(0.99, sum by (service, le) (rate(backwork_hop_duration_seconds_bucket{dir="in"}[6h])))'
     );
     expect(quantileQuery(Quantile.P50, "out", connectionsScope(), PerfRange.H1)).toBe(
@@ -126,20 +129,20 @@ describe("query builders (design 8.1)", () => {
     );
   });
   test("time in data stores is store seconds over inbound seconds", () => {
-    expect(storeShareQuery(servicesScope(), PerfRange.H6)).toBe(
+    expect(storeShareQuery(servicesScope(SHOWN), PerfRange.H6)).toBe(
       'sum by (service) (rate(backwork_hop_store_seconds_total[6h])) / sum by (service) (rate(backwork_hop_duration_seconds_sum{dir="in"}[6h]))'
     );
-    expect(storeShareQuery(routesScope("svc"), PerfRange.H6)).toBe(
+    expect(storeShareQuery(routesScope("svc", SHOWN), PerfRange.H6)).toBe(
       'sum by (service, method, op) (rate(backwork_hop_store_seconds_total{service="svc"}[6h])) / sum by (service, method, op) (rate(backwork_hop_duration_seconds_sum{dir="in",service="svc"}[6h]))'
     );
   });
   test("data-store calls per request", () => {
-    expect(storeCallsPerRequestQuery(servicesScope(), PerfRange.H1)).toBe(
+    expect(storeCallsPerRequestQuery(servicesScope(SHOWN), PerfRange.H1)).toBe(
       'sum by (service) (rate(backwork_hop_store_calls_total[1h])) / sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in"}[1h]))'
     );
   });
   test("in progress is started minus finished over 15 minutes, clamped", () => {
-    expect(inProgressQuery()).toBe(
+    expect(inProgressQuery(SHOWN)).toBe(
       'clamp_min(sum by (service) (increase(backwork_hop_started_total{dir="in"}[15m])) - sum by (service) (increase(backwork_hop_duration_seconds_count{dir="in"}[15m])), 0) or sum by (service) (increase(backwork_hop_started_total{dir="in"}[15m]))'
     );
   });
@@ -150,16 +153,39 @@ describe("query builders (design 8.1)", () => {
     expect(trendQuery(PerfRange.H1)).toContain("[300s]");
   });
   test("a hostile service name stays inside its string", () => {
-    const q = rateQuery("in", routesScope('x"}) or vector(1) #'), PerfRange.H1);
+    const q = rateQuery("in", routesScope('x"}) or vector(1) #', SHOWN), PerfRange.H1);
     expect(q).toContain('service="x\\"}) or vector(1) #"');
   });
   test("Requests totals by status class, optionally for one service", () => {
-    expect(httpTotalsQuery("1h", null)).toBe(
+    expect(httpTotalsQuery("1h", null, SHOWN)).toBe(
       'sum by (status_class, outcome) (increase(backwork_hop_duration_seconds_count{dir="in",via="http"}[1h]))'
     );
-    expect(httpP95Query("24h", "commerce-api")).toBe(
+    expect(httpP95Query("24h", "commerce-api", SHOWN)).toBe(
       'histogram_quantile(0.95, sum by (le) (rate(backwork_hop_duration_seconds_bucket{dir="in",via="http",service="commerce-api"}[24h])))'
     );
+  });
+  test("health checks are left out of inbound figures by default", () => {
+    const not = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"';
+    expect(rateQuery("in", servicesScope(), PerfRange.H6)).toBe(
+      `sum by (service) (rate(backwork_hop_duration_seconds_count{dir="in",${not}}[6h]))`
+    );
+    const [a, b] = errorRateQueries("in", servicesScope(), PerfRange.H1);
+    expect(a).toContain(`outcome="error",${not}}`);
+    expect(b).toContain(`status_class="5xx",${not}}`);
+    expect(quantileQuery(Quantile.P95, "in", routesScope("svc"), PerfRange.H1)).toContain(`{dir="in",service="svc",${not}}`);
+    expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(
+      `sum by (service) (rate(backwork_hop_store_seconds_total{${not}}[1h])) / sum by (service) (rate(backwork_hop_duration_seconds_sum{dir="in",${not}}[1h]))`
+    );
+    expect(inProgressQuery()).toContain(`backwork_hop_started_total{dir="in",${not}}`);
+    expect(httpTotalsQuery("1h", null)).toContain(`via="http",${not}}`);
+    expect(trendQuery(PerfRange.H1)).toContain(not);
+  });
+  test("outbound connections never filter health checks", () => {
+    expect(rateQuery("out", connectionsScope(), PerfRange.H1)).not.toContain("op!~");
+    expect(rateQuery("out", servicesScope(), PerfRange.H1)).not.toContain("op!~");
+  });
+  test("shown health checks give the plain query", () => {
+    expect(rateQuery("in", servicesScope(SHOWN), PerfRange.H1)).not.toContain("op!~");
   });
 });
 

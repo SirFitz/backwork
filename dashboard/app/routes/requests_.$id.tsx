@@ -15,11 +15,12 @@ import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
-import { cn, fmtClock } from "~/lib/utils";
+import { cn } from "~/lib/utils";
+import { Clock, useHydrated } from "~/components/time";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: `Request ${data?.traceId.slice(0, 8) ?? ""} · backwork.dev` }];
 
-/** A trace ID in the path: up to 32 hex (Jaeger may trim leading zeros), padded to 32. */
+/** A trace ID in the path: up to 32 hex (older links may have trimmed leading zeros), padded to 32. */
 function traceIdFromPath(raw: string | undefined): TraceId | null {
   if (!raw || raw.length > 32) return null;
   const lower = raw.toLowerCase();
@@ -64,7 +65,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const onlyLogs = lookup.retention.then((r) => (r.found ? null : logsOnly(traceId, tenant, now)));
   return defer({
     traceId,
-    jaegerId: params.id as string,
     // The original input when it was not the trace ID itself (a request ID, a UUID, a traceparent).
     input: q && q.toLowerCase() !== traceId ? q.slice(0, 200) : null,
     now,
@@ -100,11 +100,18 @@ function tookText(hop: Hop, now: number): string {
   return hop.state === HopState.Finished ? (hop.durationUs !== null ? fmtUs(hop.durationUs) : "") : `${fmtUs(elapsedUs(hop, now))} +`;
 }
 
-function dayWord(ts: number, now: number): string {
+function dayWord(ts: number, now: number, local: boolean): string {
   const a = new Date(ts);
   const b = new Date(now);
-  if (a.toDateString() === b.toDateString()) return "today";
-  return a.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const day = (d: Date): string => (local ? d.toDateString() : d.toISOString().slice(0, 10));
+  if (day(a) === day(b)) return "today";
+  return a.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(local ? {} : { timeZone: "UTC" }) });
+}
+
+/** "today" or "12 Nov", in the viewer's zone once hydrated (components/time.tsx). */
+function DayWord({ ts, now }: { ts: number; now: number }) {
+  const local = useHydrated();
+  return <span suppressHydrationWarning>{dayWord(ts, now, local)}</span>;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -398,7 +405,7 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
         <div className="hidden md:block"><Title head={head} /></div>
         <div className="md:hidden"><Title head={head} size="sm" /></div>
         <div className="mt-2 flex flex-wrap gap-x-[18px] gap-y-1 text-[12.5px] text-muted">
-          <span className={fact}>Started <Mono className="font-medium text-fg">{fmtClock(head.startMs)}</Mono><span className="hidden md:inline"> {dayWord(head.startMs, d.now)}</span></span>
+          <span className={fact}>Started <Mono className="font-medium text-fg"><Clock ts={head.startMs} /></Mono><span className="hidden md:inline"> <DayWord ts={head.startMs} now={d.now} /></span></span>
           <span className={fact}>Took <Mono className="font-medium text-fg">{tookText(head, d.now)}</Mono></span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.hops.filter((h) => !h.isStore).length}</b> hops</span>
@@ -456,9 +463,9 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
             <div>
               <b className="font-semibold">Stopped in {h.service}.</b>{" "}
               {h.dir === HopDir.Out ? <>The call to <Mono className="text-xs">{outLabel(h)}</Mono></> : <Mono className="text-xs">{h.op ?? h.via}</Mono>}
-              <span className="hidden md:inline"> started at <Mono className="text-xs">{fmtClock(h.startMs)}</Mono> and</span> never finished.
+              <span className="hidden md:inline"> started at <Mono className="text-xs"><Clock ts={h.startMs} /></Mono> and</span> never finished.
               {lastLog !== null && logsState === LogsState.Ready ? (
-                <span className="hidden md:inline"> Last log line for this request: <Mono className="text-xs">{fmtClock(lastLog)}</Mono>.</span>
+                <span className="hidden md:inline"> Last log line for this request: <Mono className="text-xs"><Clock ts={lastLog} /></Mono>.</span>
               ) : null}
             </div>
           </div>
@@ -695,12 +702,12 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
 }
 
 function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
-  const facts: Array<[string, string]> = [
+  const facts: Array<[string, ReactNode]> = [
     ["Hop", hop.hopId],
     ["Parent", hop.parentHop ?? "none"],
     ["Adapter", hop.adapter ?? "not reported"],
-    ["Started", fmtClock(hop.startMs)],
-    ["Ended", hop.endMs !== null ? fmtClock(hop.endMs) : "no end record"],
+    ["Started", <Clock key="s" ts={hop.startMs} />],
+    ["Ended", hop.endMs !== null ? <Clock key="e" ts={hop.endMs} /> : "no end record"],
   ];
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
@@ -770,7 +777,7 @@ function DetailLines({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
     <div className={box}>
       {shown.map((l, i) => (
         <div key={i} className="grid grid-cols-[96px_40px_minmax(0,1fr)] gap-2.5 max-md:grid-cols-[auto_minmax(0,1fr)] max-md:gap-x-2.5">
-          <span className="text-faint">{fmtClock(l.timeMs)}</span>
+          <span className="text-faint"><Clock ts={l.timeMs} /></span>
           <span className={cn("text-[11px] font-medium text-muted", LEVEL_CLASS[l.level ?? ""])}>{l.level ?? ""}</span>
           <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] max-md:col-span-2">{l.line}</span>
         </div>
@@ -823,7 +830,7 @@ function LogsOnly({ d }: { d: Data }) {
                   <div className="font-mono text-xs leading-[1.75]">
                     {ls.map((l, i) => (
                       <div key={i} className="grid grid-cols-[96px_40px_minmax(0,1fr)] gap-2.5 max-md:grid-cols-[auto_minmax(0,1fr)] max-md:gap-x-2.5">
-                        <span className="text-faint">{fmtClock(l.timeMs)}</span>
+                        <span className="text-faint"><Clock ts={l.timeMs} /></span>
                         <span className={cn("text-[11px] text-muted", LEVEL_CLASS[l.level ?? ""])}>{l.level ?? ""}</span>
                         <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] max-md:col-span-2">{l.line}</span>
                       </div>

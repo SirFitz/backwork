@@ -28,9 +28,22 @@ describe("parseHopRecord: key=value form", () => {
   test("a timestamp and level in front are skipped", () => {
     expect(parseHopRecord(entry(`10:01:03.120 [info] ${IN}`))?.hopId).toBe("1f0a6c2e9b7d4405");
   });
-  test("the collector's service label wins over the record's field", () => {
-    expect(parseHopRecord(entry(IN, { service: "api-container" }))?.service).toBe("api-container");
+  test("the record's own service field wins over the collector's label; the label is the source", () => {
+    const r = parseHopRecord(entry(IN, { service: "commerce-api-staging" }));
+    expect(r?.service).toBe("commerce-api");
+    expect(r?.source).toBe("commerce-api-staging");
+    expect(parseHopRecord(entry(IN, { service: "commerce-api", source: "commerce-api-staging" }))?.source).toBe("commerce-api-staging");
     expect(parseHopRecord(entry(IN, {}))?.service).toBe("commerce-api");
+    expect(parseHopRecord(entry(IN, {}))?.source).toBeNull();
+  });
+  test("source from the stored JSON line when the label is missing (agents installed earlier)", () => {
+    const stored = JSON.stringify({ message: IN, service: "commerce-api", source: "commerce-api-staging", kind: "hop" });
+    expect(parseHopRecord(entry(stored, { service: "commerce-api" }))?.source).toBe("commerce-api-staging");
+  });
+  test("without a valid service field the collector's label names the service", () => {
+    const noField = IN.replace(" service=commerce-api", "");
+    expect(parseHopRecord(entry(noField, { service: "api-container" }))?.service).toBe("api-container");
+    expect(parseHopRecord(entry(noField, {}))?.service).toBe("unknown");
   });
 });
 

@@ -6,6 +6,7 @@ import { Check, Plus, Send, Trash2, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import * as alerts from "~/lib/alerts.server";
+import { isAlertMetric } from "~/lib/alert-kinds";
 import * as channels from "~/lib/channels.server";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
@@ -64,13 +65,13 @@ export async function action({ request }: ActionFunctionArgs) {
     const metric = String(fd.get("metric") || "");
     const comparator = String(fd.get("comparator") || "");
     const threshold = Number(fd.get("threshold"));
-    if (!(metric in alerts.METRIC_META)) return json({ formError: "Pick a valid metric." }, { status: 400 });
+    if (!alerts.isAlertMetric(metric)) return json({ formError: "Pick a valid metric." }, { status: 400 });
     if (comparator !== ">" && comparator !== "<") return json({ formError: "Pick a valid comparator." }, { status: 400 });
     if (!Number.isFinite(threshold)) return json({ formError: "Threshold must be a number." }, { status: 400 });
     await alerts.insertRule(orgId, {
       id: "r" + Date.now().toString(36),
       name: String(fd.get("name") || "Untitled alert").trim().slice(0, 80) || "Untitled alert",
-      metric: metric as alerts.AlertMetric,
+      metric,
       service: String(fd.get("service") || "*").trim().slice(0, 120) || "*",
       comparator: comparator as ">" | "<",
       threshold,
@@ -143,7 +144,7 @@ export default function Alerts() {
   const d = useLoaderData<typeof loader>();
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Alerts" sub="Thresholds on real metrics and log rates, evaluated live and delivered to your channels (webhook, Slack, Discord, email, SMS)." />
+      <PageTitle title="Alerts" sub="Thresholds on error and log rates, checked every minute and delivered to your channels (webhook, Slack, Discord, email, SMS)." />
 
       <Deferred resolve={d.data} fallback={<Card><RowsSkeleton rows={8} /></Card>}>
         {(dd) => {
@@ -192,21 +193,24 @@ export default function Alerts() {
               </thead>
               <tbody>
                 {states.map((s) => {
-                  const meta = d.meta[s.metric];
+                  const meta = isAlertMetric(s.metric) ? d.meta[s.metric] : undefined;
                   const unit = meta?.unit ?? "";
                   return (
                     <tr key={s.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
-                      <td className="px-4 py-2.5 font-medium">{s.name}</td>
+                      <td className="px-4 py-2.5 font-medium">
+                        {s.name}
+                        {s.retired ? <p className="mt-0.5 max-w-[48ch] whitespace-normal text-2xs font-normal text-muted">{s.retired}</p> : null}
+                      </td>
                       <td className="px-4 py-2.5 font-mono text-2xs text-muted">{s.service === "*" ? "any" : s.service} · {meta?.label ?? s.metric} {s.comparator} {s.threshold}{unit}</td>
                       <td className="px-4 py-2.5 text-2xs">
                         {(s.channelIds || []).length === 0 ? <span className="text-faint">none</span> :
                           <span className="flex flex-wrap gap-1">{(s.channelIds || []).map((id) => <Badge key={id} tone="info">{chanName(id)}</Badge>)}</span>}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono tabular-nums">{s.noData ? <span className="text-faint">—</span> : <>{fmtNum(s.value, 2)}{unit}</>}</td>
-                      <td className="px-4 py-2.5">{!s.enabled ? <Badge>disabled</Badge> : s.noData ? <Badge tone="warn">no data</Badge> : s.firing ? <Badge tone="err">firing</Badge> : <Badge tone="ok">ok</Badge>}</td>
+                      <td className="px-4 py-2.5">{s.retired ? <Badge>retired</Badge> : !s.enabled ? <Badge>disabled</Badge> : s.noData ? <Badge tone="warn">no data</Badge> : s.firing ? <Badge tone="err">firing</Badge> : <Badge tone="ok">ok</Badge>}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center justify-end gap-3">
-                          <Form method="post"><input type="hidden" name="intent" value="toggle" /><input type="hidden" name="id" value={s.id} /><button className="text-2xs text-muted hover:text-fg">{s.enabled ? "disable" : "enable"}</button></Form>
+                          {s.retired ? null : <Form method="post"><input type="hidden" name="intent" value="toggle" /><input type="hidden" name="id" value={s.id} /><button className="text-2xs text-muted hover:text-fg">{s.enabled ? "disable" : "enable"}</button></Form>}
                           <Form method="post" onSubmit={(e) => { if (!confirm(`Delete alert rule "${s.name}"?`)) e.preventDefault(); }}><input type="hidden" name="intent" value="delete" /><input type="hidden" name="id" value={s.id} /><button className="text-faint hover:text-err" aria-label="delete rule"><Trash2 className="h-3.5 w-3.5" /></button></Form>
                         </div>
                       </td>

@@ -1,93 +1,249 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { lazy } from "react";
-import { Activity, ArrowRight, Boxes, CheckCircle2, Gauge, TriangleAlert, Zap } from "lucide-react";
-import { Badge, Card, CardHead, Empty, PageTitle, Skeleton, StatusDot, StatusPill } from "~/components/ui";
+import { lazy, type ReactNode } from "react";
+import { ArrowRight, CheckCircle2, CircleAlert, Network } from "lucide-react";
+import { Badge, Card, CardHead, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
-// Lazy so recharts (~108 KB gz) isn't bundled into the dual `/` route chunk and
-// shipped to logged-out marketing visitors; only loaded when the dashboard renders
-// a chart (always inside a <Deferred> Suspense boundary). (PERF-1)
+import { Ago, Clock } from "~/components/time";
+import { NUM, ServicesTable, TD, Th, fmtLatency, fmtShare } from "~/components/services-table";
+// Lazy so recharts isn't bundled into the dual `/` route chunk shipped to logged-out visitors.
 const AreaSeries = lazy(() => import("~/components/charts").then((m) => ({ default: m.AreaSeries })));
-import * as analysis from "~/lib/analysis.server";
-import * as apm from "~/lib/apm.server";
-import * as vm from "~/lib/vm.server";
+import { safe } from "~/lib/config.server";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
-import { cn, fmtBytes, fmtBytesRate, fmtCores, fmtMs, fmtNum, fmtPct, fmtRate } from "~/lib/utils";
+import { inboundServices, servicesTable, type ServiceRow } from "~/lib/hops/metrics.server";
+import { PerfRange } from "~/lib/hops/figures";
+import { hopRequestPage, type RequestListRow } from "~/lib/hops/requests.server";
+import {
+  JumpKind,
+  LIST_LIMIT,
+  serviceJumps,
+  stalledRequests,
+  unreceivedCalls,
+  type RecordScan,
+  type ServiceJump,
+  type StalledRequest,
+  type UnreceivedCall,
+} from "~/lib/hops/attention.server";
+import { cn, fmtMs, fmtNum } from "~/lib/utils";
 import { MarketingLanding, seo, TAGLINE } from "~/components/marketing";
 
 export const meta: MetaFunction = () =>
-  seo({ title: "backwork — self-hosted logs, metrics & traces in one honest pane", description: TAGLINE, path: "/" });
+  seo({ title: "backwork: find any request across your services", description: TAGLINE, path: "/" });
+
+interface Panel<T> {
+  data: T;
+  error: string | null;
+}
+
+/** How far back "latest failed requests" looks. */
+const FAILED_WINDOW_MS = 24 * 3600_000;
+const SERVICES_RANGE = PerfRange.H1;
+
+const emptyScan = <T,>(): RecordScan<T> => ({ rows: [], total: 0, truncated: false });
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  // logged-out visitors see the marketing landing; signed-in users get the dashboard
+  // Logged-out visitors see the marketing landing; signed-in users get the Overview.
   if (!(await getUser(request))) return json({ marketing: true as const });
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
-  const end = Date.now();
-  const start = end - 60 * 60 * 1000;
-  const healthP = analysis.serviceHealth(t);
-  const apmP = apm.getAPM(1, t);
-  const incidentsP = analysis.getIncidents(t);
-  const logVolP = cached(`ov:logvol:${t.orgId}`, 12000, () => loki.countOverTime('sum(count_over_time({service=~".+"}[1m]))', { start, end, step: "120s" }, t))
-    .then((d) => d.map((p) => ({ t: p.t, v: p.v })))
-    .catch(() => [] as { t: number; v: number }[]);
-  // platform host CPU comes from cAdvisor; customer host CPU from node-exporter
-  const cpuQuery = t.platform
-    ? 'sum(rate(container_cpu_usage_seconds_total{name!=""}[5m]))'
-    : 'sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))';
-  const cpuTrendP = cached(`ov:cputrend:${t.orgId}`, 12000, () => vm.range(cpuQuery, { start, end, step: "120s" }, t))
-    .then((s) => (s[0]?.points ?? []).map((p) => ({ t: p.t, v: p.v })))
-    .catch(() => [] as { t: number; v: number }[]);
+  const now = Date.now();
 
-  return defer({
-    cards: Promise.all([healthP, apmP, incidentsP]).then(([h, a, inc]) => {
-      const host = analysis.hostSummary(h);
-      return {
-        up: host.servicesActive - host.servicesDown - host.servicesDegraded,
-        host,
-        apm: a.totals,
-        incidents: inc.length,
-        critical: inc.filter((i) => i.severity === "critical").length,
-      };
-    }),
-    vitals: healthP.then((h) => analysis.hostSummary(h)),
-    attention: healthP.then((h) => h.filter((s) => s.status === "down" || s.status === "degraded").slice(0, 8)),
-    incidentsCount: incidentsP.then((i) => i.length),
-    health: healthP.then((h) => h.slice(0, 14)),
-    hostLoad: Promise.all([cpuTrendP, healthP]).then(([cpu, h]) => ({ cpuTrend: cpu, memBytes: analysis.hostSummary(h).memBytes })),
-    logVol: logVolP,
-  });
-}
-
-function SummaryCard({ icon: Icon, label, value, sub, tone, to }: { icon: any; label: string; value: string; sub?: string; tone?: string; to?: string }) {
-  const inner = (
-    <div className="flex h-full min-w-[160px] flex-1 items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/40">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-muted"><Icon className="h-4 w-4" /></span>
-      <div className="min-w-0">
-        <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
-        <div className={cn("font-mono text-xl font-semibold leading-tight tabular-nums", tone)}>{value}</div>
-        {sub ? <div className="truncate text-2xs text-faint">{sub}</div> : null}
-      </div>
-    </div>
+  // Every part is its own promise that always settles to { data, error }, so each section
+  // shows its own skeleton, then its data or its own error, and never the others'.
+  const reporting: Promise<Panel<number>> = safe(async () => (await inboundServices(t)).length, 0);
+  const jumps: Promise<Panel<ServiceJump[]>> = safe(() => serviceJumps(t), []);
+  const stalled: Promise<Panel<RecordScan<StalledRequest>>> = safe(() => stalledRequests(t, now), emptyScan<StalledRequest>());
+  const unreceived: Promise<Panel<RecordScan<UnreceivedCall>>> = safe(() => unreceivedCalls(t, now), emptyScan<UnreceivedCall>());
+  const services: Promise<Panel<ServiceRow[]>> = safe(() => servicesTable(SERVICES_RANGE, t), []);
+  const failed: Promise<Panel<RequestListRow[]>> = safe(
+    async () => (await hopRequestPage(t, { service: null, sinceMs: now - FAILED_WINDOW_MS, before: now, onlyFailed: true, limit: 200 })).rows.slice(0, LIST_LIMIT),
+    []
   );
-  return to ? <Link to={to} className="block min-w-[160px] flex-1">{inner}</Link> : inner;
+  const start = now - 3600_000;
+  const logVolume: Promise<Panel<Array<{ t: number; v: number }>>> = safe(
+    () =>
+      cached(`ov:logvol:${t.platform ? "platform" : t.orgId}`, 12_000, () =>
+        loki.countOverTime('sum(count_over_time({service=~".+", kind!="hop"}[1m]))', { start, end: now, step: "120s" }, t)
+      ).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
+    []
+  );
+
+  return defer({ reporting, jumps, stalled, unreceived, services, failed, logVolume });
 }
 
-function CardSkeleton() {
-  return <div className="flex h-full min-w-[160px] flex-1 items-center gap-3 px-4 py-3.5"><Skeleton className="h-9 w-9 rounded-lg" /><div className="flex-1 space-y-1.5"><Skeleton className="h-2.5 w-16" /><Skeleton className="h-5 w-12" /></div></div>;
+// ---------------------------------------------------------------- wording
+
+function jumpText(j: ServiceJump): { what: string; was: string } {
+  if (j.kind === JumpKind.Errors) {
+    return { what: `${fmtShare(j.now)} of requests failing`, was: j.before === null ? "no requests before" : `${fmtShare(j.before)} before` };
+  }
+  return { what: `slowest 1 in 20 take ${fmtLatency(j.now)}`, was: j.before === null ? "no requests before" : `${fmtLatency(j.before)} before` };
 }
-function Vital({ label, value, tone }: { label: string; value: string; tone?: string }) {
+
+function routeOf(method: string | null, op: string | null): ReactNode {
+  if (!method && !op) return <span className="text-faint">(no route)</span>;
   return (
-    <div className="px-4 py-3 first:pl-4">
-      <div className="text-2xs uppercase tracking-wide text-faint">{label}</div>
-      <div className={cn("mt-1 font-mono text-lg font-semibold tabular-nums", tone)}>{value}</div>
+    <>
+      {method ? <span className="font-medium text-faint">{method} </span> : null}
+      {op ?? ""}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- parts
+
+function AllClear({ children }: { children: ReactNode }) {
+  return (
+    <p className="flex items-start gap-2 px-4 py-3 text-[13px] text-muted">
+      <CheckCircle2 className="mt-px h-4 w-4 shrink-0 text-ok" aria-hidden />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+function SubHead({ title, sub, count }: { title: string; sub: string; count?: number }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-border/60 bg-surface-2/40 px-4 py-2">
+      <div className="min-w-0">
+        <h3 className="text-[13px] font-semibold">{title}</h3>
+        <p className="text-2xs text-faint">{sub}</p>
+      </div>
+      {count ? <Badge tone="err">{count}</Badge> : null}
     </div>
   );
 }
+
+function TruncatedNote({ scan }: { scan: RecordScan<unknown> }) {
+  if (!scan.truncated && scan.total <= scan.rows.length) return null;
+  return (
+    <p className="border-t border-border/60 px-4 py-2 text-2xs text-faint">
+      {scan.total > scan.rows.length ? `Showing the newest ${scan.rows.length} of ${scan.total}. ` : ""}
+      {scan.truncated ? "Busy period: only the newest records of the last 15 minutes were checked." : ""}
+    </p>
+  );
+}
+
+const OPEN = "font-sans text-2xs font-medium text-brand hover:underline";
+
+function JumpsBody({ panel }: { panel: Panel<ServiceJump[]> }) {
+  if (panel.error) return <ErrorNote error={panel.error} />;
+  if (!panel.data.length) return <AllClear>No service is failing or slower than usual.</AllClear>;
+  return (
+    <div className="overflow-x-auto scroll-thin">
+      <table className="w-full border-collapse text-[13px]">
+        <thead>
+          <tr>
+            <Th>Service</Th>
+            <Th>What changed</Th>
+            <Th className="hidden sm:table-cell">Usually</Th>
+            <Th num className="hidden sm:table-cell">Requests</Th>
+            <Th />
+          </tr>
+        </thead>
+        <tbody>
+          {panel.data.map((j) => {
+            const t = jumpText(j);
+            return (
+              <tr key={`${j.service}|${j.kind}`} className="[&:last-child>td]:border-b-0">
+                <td className={cn(TD, "font-semibold")}>{j.service}</td>
+                <td className={cn(TD, "whitespace-normal", j.kind === JumpKind.Errors ? "text-err" : "text-warn")}>{t.what}</td>
+                <td className={cn(TD, "hidden text-muted sm:table-cell")}>{t.was}</td>
+                <td className={cn(TD, NUM, "hidden sm:table-cell")}>{fmtNum(j.requests, 0)}</td>
+                <td className={cn(TD, "text-right")}>
+                  <Link to={`/performance?range=1h&service=${encodeURIComponent(j.service)}`} className={OPEN}>routes</Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StalledBody({ panel }: { panel: Panel<RecordScan<StalledRequest>> }) {
+  if (panel.error) return <ErrorNote error={panel.error} />;
+  if (!panel.data.rows.length) return <AllClear>Every request and job that started finished.</AllClear>;
+  return (
+    <>
+      <div className="overflow-x-auto scroll-thin">
+        <table className="w-full border-collapse text-[13px]">
+          <thead>
+            <tr>
+              <Th>Service</Th>
+              <Th>Request</Th>
+              <Th num>Started</Th>
+              <Th />
+            </tr>
+          </thead>
+          <tbody>
+            {panel.data.rows.map((s) => (
+              <tr key={`${s.traceId}|${s.startMs}|${s.service}`} className="[&:last-child>td]:border-b-0">
+                <td className={cn(TD, "font-semibold")}>{s.service}</td>
+                <td className={cn(TD, "max-w-[280px] truncate font-mono text-[12.5px]")}>{routeOf(s.method, s.op)}</td>
+                <td className={cn(TD, NUM, "text-muted")}><Ago ts={s.startMs} /></td>
+                <td className={cn(TD, "text-right")}><Link to={`/requests/${s.traceId}`} className={OPEN}>open</Link></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TruncatedNote scan={panel.data} />
+    </>
+  );
+}
+
+function UnreceivedBody({ panel }: { panel: Panel<RecordScan<UnreceivedCall>> }) {
+  if (panel.error) return <ErrorNote error={panel.error} />;
+  if (!panel.data.rows.length) return <AllClear>Every call between services was received.</AllClear>;
+  return (
+    <>
+      <div className="overflow-x-auto scroll-thin">
+        <table className="w-full border-collapse text-[13px]">
+          <thead>
+            <tr>
+              <Th>From, to</Th>
+              <Th className="hidden sm:table-cell">Call</Th>
+              <Th num>When</Th>
+              <Th />
+            </tr>
+          </thead>
+          <tbody>
+            {panel.data.rows.map((c) => (
+              <tr key={`${c.traceId}|${c.endMs}|${c.service}`} className="[&:last-child>td]:border-b-0">
+                <td className={cn(TD, "whitespace-normal")}>
+                  <b className="font-semibold">{c.service}</b>
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center text-[12.5px] text-muted">
+                    <ArrowRight className="mr-[5px] h-[13px] w-[13px] shrink-0 text-faint" aria-label="to" />
+                    <span className="break-all font-mono">{c.peer ?? "(no destination)"}</span>
+                    {c.failed ? <span className="ml-1.5 text-2xs text-err">failed</span> : null}
+                  </div>
+                </td>
+                <td className={cn(TD, "hidden max-w-[240px] truncate font-mono text-[12.5px] sm:table-cell")}>{routeOf(c.method, c.op)}</td>
+                <td className={cn(TD, NUM, "text-muted")}><Ago ts={c.endMs} /></td>
+                <td className={cn(TD, "text-right")}><Link to={`/requests/${c.traceId}`} className={OPEN}>open</Link></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TruncatedNote scan={panel.data} />
+    </>
+  );
+}
+
+function statusTone(s: number | null): string {
+  if (s === null) return "text-muted";
+  if (s >= 500) return "text-err";
+  if (s >= 400) return "text-warn";
+  return "text-muted";
+}
+
+// ---------------------------------------------------------------- page
 
 export default function Index() {
   const data = useLoaderData<typeof loader>();
@@ -95,140 +251,110 @@ export default function Index() {
   const d = data;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageTitle title="Overview" sub="What's healthy and what needs attention across every container on this host, in one place." />
+    <div className="space-y-4 animate-fade-in">
+      <PageTitle title="Overview" sub="Is anything slow or failing right now, and where. From the requests your services report." />
 
-      {/* summary strip */}
-      <Deferred resolve={d.cards} fallback={<Card className="flex flex-wrap divide-x divide-border">{Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)}</Card>}>
-        {(c) => {
-          const a = c.apm;
-          const noServices = c.host.servicesActive === 0;
-          return (
-            <>
-            <Card className="flex flex-wrap divide-x divide-y divide-border xl:divide-y-0">
-              <SummaryCard icon={Boxes} label="Services up" value={noServices ? "—" : `${c.up}/${c.host.servicesActive}`} sub={noServices ? "no services reporting yet" : `${c.host.servicesDown} down · ${c.host.servicesDegraded} degraded · ${c.host.servicesStopped} stopped`} tone={noServices ? undefined : c.host.servicesDown > 0 ? "text-err" : c.host.servicesDegraded > 0 ? "text-warn" : "text-ok"} />
-              <SummaryCard icon={Gauge} label="Request rate" value={a.services ? fmtRate(a.reqRate) : "—"} sub={a.services ? `${a.services} instrumented service${a.services > 1 ? "s" : ""}` : "instrument an app"} />
-              <SummaryCard icon={TriangleAlert} label="Error rate" value={a.services ? fmtPct(a.errorRatePct) : "—"} sub="of traced requests" tone={a.errorRatePct >= 5 ? "text-err" : a.errorRatePct >= 1 ? "text-warn" : undefined} />
-              <SummaryCard icon={Zap} label="Worst p95" value={a.services ? fmtMs(a.worstP95) : "—"} sub="tail latency" tone={a.worstP95 >= 1000 ? "text-err" : a.worstP95 >= 500 ? "text-warn" : undefined} />
-              <SummaryCard icon={Activity} label="Active incidents" value={String(c.incidents)} sub={`${c.critical} critical`} tone={c.critical > 0 ? "text-err" : undefined} to="/incidents" />
-            </Card>
-            {noServices && !a.services ? (
-              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand/5 px-5 py-4 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold">No telemetry yet</div>
-                  <p className="text-2xs text-muted">Create a project to get an ingest token, then ship logs &amp; traces from your app or server.</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Link to="/projects" className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90">Create a project</Link>
-                  <Link to="/settings" className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-[13px] font-medium hover:bg-surface-2">Install guide</Link>
-                </div>
+      <Deferred resolve={d.reporting} fallback={null}>
+        {(p) =>
+          !p.error && p.data === 0 ? (
+            <div className="flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand/5 px-5 py-4 sm:flex-row sm:items-center">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface text-muted"><Network className="h-4 w-4" /></span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">No service reports requests yet</div>
+                <p className="text-2xs text-muted">Add Correlator to a service and run the backwork agent on its host. Its requests then appear here within a minute.</p>
               </div>
-            ) : null}
-            </>
-          );
-        }}
+              <Link to="/projects" className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90">Set up a project</Link>
+            </div>
+          ) : null
+        }
       </Deferred>
 
-      {/* container vitals strip */}
       <Card>
-        <Deferred resolve={d.vitals} fallback={<div className="px-4 py-5"><Skeleton className="h-6 w-full" /></div>}>
-          {(s) => (
-            <div className="flex flex-wrap items-center divide-x divide-border">
-              <Vital label="Active services" value={String(s.servicesActive)} />
-              <Vital label="Down" value={String(s.servicesDown)} tone={s.servicesDown > 0 ? "text-err" : "text-muted"} />
-              <Vital label="Degraded" value={String(s.servicesDegraded)} tone={s.servicesDegraded > 0 ? "text-warn" : "text-muted"} />
-              <Vital label="Stopped" value={String(s.servicesStopped)} tone="text-faint" />
-              <Vital label="CPU" value={`${fmtCores(s.cpuCores)} cores`} />
-              <Vital label="Memory" value={fmtBytes(s.memBytes)} />
-              <Vital label="Logs" value={`${fmtNum(s.logRate, 1)}/s`} />
-              <Vital label="Errors" value={`${fmtNum(s.errorRate, 2)}/s`} tone={s.errorRate >= 0.2 ? "text-err" : "text-muted"} />
-            </div>
+        <CardHead
+          title="Needs attention"
+          sub="the last 15 minutes, health checks left out"
+          right={
+            <Deferred resolve={Promise.all([d.jumps, d.stalled, d.unreceived])} fallback={<Skeleton className="h-5 w-24" />}>
+              {([j, s, u]) => {
+                if (j.error || s.error || u.error) return <span className="text-2xs text-faint">partly unknown</span>;
+                const n = j.data.length + s.data.total + u.data.total;
+                return n === 0 ? (
+                  <span className="inline-flex items-center gap-1 text-2xs font-medium text-ok"><CheckCircle2 className="h-3.5 w-3.5" />all clear</span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-2xs font-medium text-err"><CircleAlert className="h-3.5 w-3.5" />{n} to look at</span>
+                );
+              }}
+            </Deferred>
+          }
+        />
+        <section aria-label="Services slower or failing more than usual">
+          <SubHead title="Slower or failing more than usual" sub="compared with the 3 hours before" />
+          <Deferred resolve={d.jumps} fallback={<RowsSkeleton rows={2} />}>{(p) => <JumpsBody panel={p} />}</Deferred>
+        </section>
+        <section aria-label="Requests that stopped" className="border-t border-border">
+          <SubHead title="Requests that stopped" sub="started over a minute ago and never finished" />
+          <Deferred resolve={d.stalled} fallback={<RowsSkeleton rows={2} />}>{(p) => <StalledBody panel={p} />}</Deferred>
+        </section>
+        <section aria-label="Calls never received" className="border-t border-border">
+          <SubHead title="Calls never received" sub="a service called another and no service recorded the call arriving" />
+          <Deferred resolve={d.unreceived} fallback={<RowsSkeleton rows={2} />}>{(p) => <UnreceivedBody panel={p} />}</Deferred>
+        </section>
+      </Card>
+
+      <Card>
+        <Deferred resolve={d.services} fallback={<><CardHead title="Services" sub="requests and jobs, last hour" /><RowsSkeleton rows={4} /></>}>
+          {(p) => (
+            <>
+              <CardHead
+                title="Services"
+                sub="requests and jobs, last hour"
+                right={<Link to="/performance?range=1h" className="inline-flex items-center gap-1 text-2xs font-medium text-brand hover:underline">Performance <ArrowRight className="h-3 w-3" /></Link>}
+              />
+              <ErrorNote error={p.error} />
+              {p.error ? null : p.data.length === 0 ? (
+                <p className="px-4 py-6 text-center text-[13px] text-muted">No requests in the last hour.</p>
+              ) : (
+                <ServicesTable rows={p.data} compact hrefFor={(s) => `/performance?range=1h&service=${encodeURIComponent(s)}`} />
+              )}
+            </>
           )}
         </Deferred>
       </Card>
 
-      {/* needs attention + host load */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHead title="Needs attention" sub="services not fully operational, worst first" right={<Link to="/incidents" className="text-2xs font-medium text-brand hover:underline">Incidents</Link>} />
-          <Deferred resolve={d.attention} fallback={<RowsSkeleton rows={4} />}>
-            {(list) =>
-              list.length === 0 ? (
-                <div className="flex items-center gap-3 px-4 py-8">
-                  <CheckCircle2 className="h-5 w-5 text-ok" />
-                  <div>
-                    <p className="text-sm font-medium">All systems operational</p>
-                    <p className="text-[13px] text-muted">No down or degraded services.</p>
-                  </div>
-                </div>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {list.map((h) => (
-                    <li key={h.service} className="flex items-center gap-3 px-4 py-2.5">
-                      <StatusDot status={h.status} pulse />
-                      <Link to={`/logs?service=${encodeURIComponent(h.service)}`} className="font-medium hover:text-brand">{h.service}</Link>
-                      {h.project ? <Badge>{h.project}</Badge> : null}
-                      <span className="ml-auto truncate text-[13px] text-muted">{h.reasons[0] ?? "degraded"}</span>
-                      <span className="font-mono text-2xs tabular-nums text-faint">{h.running}/{h.containers} up</span>
-                    </li>
-                  ))}
-                </ul>
-              )
-            }
-          </Deferred>
-        </Card>
-
-        <Card>
-          <CardHead title="Host load" sub="CPU cores in use, 1h" />
-          <Deferred resolve={d.hostLoad} fallback={<ChartSkeleton height={92} />}>
-            {(hl) => (
-              <>
-                <div className="px-3 pb-2 pt-3"><AreaSeries points={hl.cpuTrend} color="oklch(0.55 0.17 290)" height={92} fmt={(n) => fmtCores(n)} /></div>
-                <div className="border-t border-border px-4 py-3">
-                  <div className="flex items-center justify-between text-[13px]">
-                    <span className="text-muted">Memory in use</span>
-                    <span className="font-mono font-medium tabular-nums">{fmtBytes(hl.memBytes)}</span>
-                  </div>
-                </div>
-              </>
-            )}
-          </Deferred>
-        </Card>
-      </div>
-
-      {/* services table */}
       <Card>
-        <CardHead title="Services" sub="status, resources, throughput" right={<Link to="/containers" className="inline-flex items-center gap-1 text-2xs font-medium text-brand hover:underline">All containers <ArrowRight className="h-3 w-3" /></Link>} />
-        <Deferred resolve={d.health} fallback={<RowsSkeleton rows={8} />}>
-          {(health) =>
-            health.length === 0 ? (
-              <Empty title="No containers reporting">Telemetry appears within ~30s of the first scrape.</Empty>
+        <CardHead
+          title="Latest failed requests"
+          sub="failed or answered with a server error, last 24 hours"
+          right={<Link to="/requests?range=24h" className="inline-flex items-center gap-1 text-2xs font-medium text-brand hover:underline">All requests <ArrowRight className="h-3 w-3" /></Link>}
+        />
+        <Deferred resolve={d.failed} fallback={<RowsSkeleton rows={4} />}>
+          {(p) =>
+            p.error ? (
+              <ErrorNote error={p.error} />
+            ) : p.data.length === 0 ? (
+              <AllClear>No request failed in the last 24 hours.</AllClear>
             ) : (
               <div className="overflow-x-auto scroll-thin">
-                <table className="w-full text-[13px]">
+                <table className="w-full border-collapse text-[13px]">
                   <thead>
-                    <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
-                      <th className="px-4 py-2 font-medium">Service</th>
-                      <th className="px-4 py-2 font-medium">Status</th>
-                      <th className="px-4 py-2 text-right font-medium">CPU</th>
-                      <th className="px-4 py-2 text-right font-medium">Memory</th>
-                      <th className="px-4 py-2 text-right font-medium">Net I/O</th>
-                      <th className="px-4 py-2 text-right font-medium">Restarts</th>
-                      <th className="px-4 py-2 text-right font-medium">Logs/s</th>
-                      <th className="px-4 py-2 text-right font-medium">Err/s</th>
+                    <tr>
+                      <Th>Time</Th>
+                      <Th>Service</Th>
+                      <Th className="hidden sm:table-cell">Request</Th>
+                      <Th num>Status</Th>
+                      <Th num className="hidden sm:table-cell">Took</Th>
+                      <Th />
                     </tr>
                   </thead>
                   <tbody>
-                    {health.map((h) => (
-                      <tr key={h.service} className="border-b border-border/60 last:border-0 hover:bg-surface-2/50">
-                        <td className="max-w-[260px] px-4 py-2.5"><Link to={`/logs?service=${encodeURIComponent(h.service)}`} className="truncate font-medium hover:text-brand">{h.service}</Link>{h.containers > 1 ? <span className="ml-2 text-2xs text-faint">×{h.containers}</span> : null}</td>
-                        <td className="px-4 py-2.5"><StatusPill status={h.status} /></td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtCores(h.cpuCores)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtBytes(h.memBytes)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-2xs tabular-nums text-faint">{fmtBytesRate(h.netRxRate)} ↓ {fmtBytesRate(h.netTxRate)} ↑</td>
-                        <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", h.restarts > 0 ? "text-warn" : "text-faint")}>{h.restarts || "—"}</td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{fmtNum(h.logRate, 1)}</td>
-                        <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums", h.errorRate > 0 ? "text-err" : "text-faint")}>{h.errorRate > 0 ? fmtNum(h.errorRate, 2) : "—"}</td>
+                    {p.data.map((r) => (
+                      <tr key={`${r.traceID}|${r.service}|${r.startMs}`} className="[&:last-child>td]:border-b-0 hover:bg-surface-2/50">
+                        <td className={cn(TD, NUM, "text-faint")}><Clock ts={r.startMs} seconds /></td>
+                        <td className={cn(TD, "font-semibold")}>{r.service}</td>
+                        <td className={cn(TD, "hidden max-w-[320px] truncate font-mono text-[12.5px] sm:table-cell")}>{routeOf(r.method, r.route)}</td>
+                        <td className={cn(TD, NUM, "font-semibold", statusTone(r.status))}>{r.status ?? "failed"}</td>
+                        <td className={cn(TD, NUM, "hidden text-muted sm:table-cell")}>{fmtMs(r.durationMs)}</td>
+                        <td className={cn(TD, "text-right")}><Link to={`/requests/${r.traceID}`} className={OPEN}>open</Link></td>
                       </tr>
                     ))}
                   </tbody>
@@ -239,11 +365,15 @@ export default function Index() {
         </Deferred>
       </Card>
 
-      {/* log volume */}
       <Card>
-        <CardHead title="Log volume" sub="lines/min across all sources, 1h" right={<Link to="/logs" className="text-2xs font-medium text-brand hover:underline">Search logs</Link>} />
-        <Deferred resolve={d.logVol} fallback={<ChartSkeleton height={150} />}>
-          {(points) => <div className="p-3"><AreaSeries points={points} color="oklch(0.58 0.13 240)" height={150} fmt={(n) => fmtNum(n, 0)} /></div>}
+        <CardHead title="Log volume" sub="log lines per minute, last hour" right={<Link to="/logs" className="text-2xs font-medium text-brand hover:underline">Search logs</Link>} />
+        <Deferred resolve={d.logVolume} fallback={<ChartSkeleton height={130} />}>
+          {(p) => (
+            <>
+              <ErrorNote error={p.error} />
+              {p.error ? null : <div className="p-3"><AreaSeries points={p.data} color="oklch(0.58 0.13 240)" height={130} fmt={(n) => fmtNum(n, 0)} /></div>}
+            </>
+          )}
         </Deferred>
       </Card>
     </div>
