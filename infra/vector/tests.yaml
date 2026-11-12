@@ -432,3 +432,41 @@ tests:
               assert_eq!(.tags.op, "/api/v1/public/m/:merchant_username/products")
               assert!(!exists(.tags.path))
               assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+
+  - name: NestJS logger level read from the line, with or without colour codes (BAC-41 row 9)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api-ts
+          message: "\x1b[33m[Nest] 4120  - \x1b[39m11/12/2026, 10:01:03 AM \x1b[33m   WARN\x1b[39m \x1b[38;5;3m[Payouts] \x1b[39m\x1b[33mbank gateway slow\x1b[39m"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api-ts
+          message: "[Nest] 4120  - 11/12/2026, 10:01:04 AM   ERROR [ExceptionsHandler] connect ECONNREFUSED"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api-ts
+          message: "[Nest] 4120  - 11/12/2026, 10:01:05 AM     LOG [RoutesResolver] AppController {/}"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              m = to_string(.message) ?? ""
+              if contains(m, "WARN") { assert_eq!(.level, "warn") } else if contains(m, "ERROR") { assert_eq!(.level, "error") } else { assert_eq!(.level, "info") }
+
+  - name: a structured line that mentions Nest keeps its own level (BAC-41 row 9)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api-ts
+          message: '{"level":50,"msg":"[Nest] says WARN in text"}'
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.level, "error")

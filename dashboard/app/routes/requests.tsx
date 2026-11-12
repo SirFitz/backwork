@@ -219,59 +219,39 @@ function Feed({
         }}
       </Deferred>
 
-      {/* controls */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* controls: desktop in one wrapping row; phone (frame 8) service and search in one row, the rest folded */}
+      <div className="hidden flex-wrap items-center gap-2 md:flex">
         <Form method="get" className="flex flex-wrap items-center gap-2">
-          <select name="service" defaultValue={service} onChange={(e) => submit(e.currentTarget.form)} className={SELECT} aria-label="Service">
-            <option value="all">All services</option>
-            {services.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select name="range" defaultValue={range} onChange={(e) => submit(e.currentTarget.form)} className={SELECT} aria-label="Range">
-            {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
-          </select>
-          <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted">
-            <input
-              type="checkbox"
-              name={HEALTH_PARAM}
-              value="1"
-              defaultChecked={health === HealthChecks.Shown}
-              onChange={(e) => submit(e.currentTarget.form)}
-              className="accent-brand"
-            />
-            Show health checks
-          </label>
+          <ServiceSelect services={services} service={service} />
+          <RangeSelect range={range} />
+          <HealthBox health={health} />
         </Form>
-        <Deferred resolve={totals} fallback={<StatusSeg counts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />}>
-          {(t) => {
-            const tot = t.data;
-            const counts =
-              tot && tot.total > 0
-                ? {
-                    all: tot.total,
-                    ...Object.fromEntries(FILTERS.slice(1).map((f) => [f, tot.byClass[f as keyof InboundTotals["byClass"]]])),
-                  }
-                : loadedCounts;
-            return <StatusSeg counts={counts} value={statusFilter} onChange={setStatusFilter} />;
-          }}
-        </Deferred>
-        <select value={method} onChange={(e) => setMethod(e.target.value)} className={SELECT} aria-label="Method">
-          {methods.map((m) => <option key={m} value={m}>{m === "all" ? "all methods" : m}</option>)}
-        </select>
-        <div className="relative min-w-[200px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
-          <input
-            value={q}
-            onChange={(e) => { setQ(e.target.value); setExactRoute(null); }}
-            placeholder="Filter by path, route or service"
-            aria-label="Filter by route or service"
-            className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-9 text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
-          />
-          {exactRoute !== null ? (
-            <button type="button" onClick={() => { setExactRoute(null); setQ(""); }} aria-label="Clear the route filter" className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-faint hover:text-fg">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
+        <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
+        <MethodSelect methods={methods} value={method} onChange={setMethod} />
+        <RouteSearch q={q} exactRoute={exactRoute} onChange={(v) => { setQ(v); setExactRoute(null); }} onClear={() => { setExactRoute(null); setQ(""); }} />
+      </div>
+      <div className="space-y-2 md:hidden">
+        <Form method="get" className="flex min-w-0 items-center gap-2">
+          <input type="hidden" name="range" value={range} />
+          {health === HealthChecks.Shown ? <input type="hidden" name={HEALTH_PARAM} value="1" /> : null}
+          <div className="w-[42%] min-w-0 shrink-0"><ServiceSelect services={services} service={service} full /></div>
+          <RouteSearch q={q} exactRoute={exactRoute} onChange={(v) => { setQ(v); setExactRoute(null); }} onClear={() => { setExactRoute(null); setQ(""); }} />
+        </Form>
+        <details className="group rounded-lg border border-border bg-surface">
+          <summary className="flex h-9 cursor-pointer list-none items-center justify-between px-3 text-[13px] text-muted">
+            More filters
+            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, health === HealthChecks.Shown ? "health checks" : null].filter(Boolean).join(" · ") || "last 1h"}</span>
+          </summary>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border p-2">
+            <Form method="get" className="flex min-w-0 flex-wrap items-center gap-2">
+              <input type="hidden" name="service" value={service} />
+              <RangeSelect range={range} />
+              <HealthBox health={health} />
+            </Form>
+            <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
+            <MethodSelect methods={methods} value={method} onChange={setMethod} />
+          </div>
+        </details>
       </div>
 
       <Card>
@@ -284,7 +264,31 @@ function Feed({
         {rows.length === 0 ? (
           <Empty icon={<Network className="h-5 w-5" />} title="No matching requests">Adjust the filters, widen the service selection or the range.</Empty>
         ) : (
-          <div className="max-h-[64vh] overflow-auto scroll-thin">
+          <>
+          {/* phone (frame 8): one card per request; nothing scrolls sideways */}
+          <ul className="max-h-[70vh] divide-y divide-border overflow-y-auto md:hidden">
+            {rows.map((r) => (
+              <li key={`m|${r.traceID}|${r.service}|${r.startMs}`}>
+                <Link to={`/requests/${r.traceID}`} className="block px-3.5 py-2.5 hover:bg-surface-2/50">
+                  <div className="flex min-w-0 items-start justify-between gap-2.5 font-mono text-[12.5px]">
+                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                      {r.method ? <span className="font-semibold text-faint">{r.method} </span> : null}
+                      {r.path ?? (r.route || <span className="text-faint">(no route)</span>)}
+                    </span>
+                    <span className={cn("shrink-0 font-semibold tabular-nums", statusTone(r.status))}>{r.status ?? "—"}</span>
+                  </div>
+                  {r.path && r.route && r.route !== r.path ? <div className="mt-0.5 font-mono text-2xs text-faint [overflow-wrap:anywhere]">{r.route}</div> : null}
+                  <div className="mt-[3px] flex min-w-0 items-center justify-between gap-2.5 font-mono text-[11px]">
+                    <span className="min-w-0 truncate text-accent">{r.service}</span>
+                    <span className={cn("shrink-0 tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-faint")}>
+                      <Clock ts={r.startMs} seconds /> · {fmtMs(r.durationMs)}
+                    </span>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden max-h-[64vh] overflow-auto scroll-thin md:block">
             <table className="w-full text-[13px]">
               <thead className="sticky top-0 bg-surface">
                 <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
@@ -319,6 +323,7 @@ function Feed({
               </tbody>
             </table>
           </div>
+          </>
         )}
         <div className="flex flex-wrap items-center justify-center gap-3 border-t border-border p-3">
           {next !== null ? (
@@ -343,24 +348,109 @@ function Feed({
 }
 
 function SummaryCards({ total, errPct, p95 }: { total: number | null; errPct: number | null; p95: number | null }) {
-  const val = "mt-1 font-mono text-2xl font-semibold tabular-nums";
+  const val = "mt-1 font-mono text-lg font-semibold tabular-nums sm:text-2xl";
+  const tile = "min-w-0 px-3 py-2.5 sm:px-4 sm:py-3.5";
   return (
-    <div className="grid grid-cols-3 gap-3">
-      <Card className="px-4 py-3.5"><div className="text-2xs uppercase tracking-wide text-faint">Requests</div><div className={val}>{total === null ? <Skeleton className="h-7 w-16" /> : total.toLocaleString("en-US")}</div></Card>
-      <Card className="px-4 py-3.5"><div className="text-2xs uppercase tracking-wide text-faint">Error rate</div><div className={cn(val, errPct === null ? "" : errPct >= 5 ? "text-err" : errPct >= 1 ? "text-warn" : "text-ok")}>{errPct === null ? <Skeleton className="h-7 w-14" /> : fmtPct(errPct)}</div></Card>
-      <Card className="px-4 py-3.5"><div className="text-2xs uppercase tracking-wide text-faint">p95 latency</div><div className={cn(val, p95 !== null && (p95 >= 1000 ? "text-err" : p95 >= 500 ? "text-warn" : ""))}>{p95 === null ? <Skeleton className="h-7 w-16" /> : fmtMs(p95)}</div></Card>
+    <div className="grid grid-cols-3 gap-2 sm:gap-3">
+      <Card className={tile}><div className="text-2xs uppercase tracking-wide text-faint">Requests</div><div className={val}>{total === null ? <Skeleton className="h-7 w-16" /> : total.toLocaleString("en-US")}</div></Card>
+      <Card className={tile}><div className="truncate text-2xs uppercase tracking-wide text-faint">Error rate</div><div className={cn(val, errPct === null ? "" : errPct >= 5 ? "text-err" : errPct >= 1 ? "text-warn" : "text-ok")}>{errPct === null ? <Skeleton className="h-7 w-14" /> : fmtPct(errPct)}</div></Card>
+      <Card className={tile}><div className="truncate text-2xs uppercase tracking-wide text-faint">p95 latency</div><div className={cn(val, p95 !== null && (p95 >= 1000 ? "text-err" : p95 >= 500 ? "text-warn" : ""))}>{p95 === null ? <Skeleton className="h-7 w-16" /> : fmtMs(p95)}</div></Card>
     </div>
   );
 }
 
 function StatusSeg({ counts, value, onChange }: { counts: Record<string, number>; value: StatusFilter; onChange: (f: StatusFilter) => void }) {
   return (
-    <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-2xs">
+    <div className="inline-flex max-w-full flex-wrap rounded-lg border border-border bg-surface p-0.5 text-2xs">
       {FILTERS.map((f) => (
         <button key={f} type="button" onClick={() => onChange(f)} aria-pressed={value === f} className={cn("rounded-md px-2.5 py-1.5 font-medium transition-colors", value === f ? "bg-surface-2 text-fg" : "text-muted hover:text-fg")}>
           {f} <span className="text-faint">{(counts[f] ?? 0).toLocaleString("en-US")}</span>
         </button>
       ))}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- filter controls (shared by both layouts)
+
+function ServiceSelect({ services, service, full = false }: { services: string[]; service: string; full?: boolean }) {
+  const submit = useSubmit();
+  return (
+    <select name="service" defaultValue={service} onChange={(e) => submit(e.currentTarget.form)} className={cn(SELECT, full && "w-full sm:w-full")} aria-label="Service">
+      <option value="all">All services</option>
+      {services.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
+  );
+}
+
+function RangeSelect({ range }: { range: string }) {
+  const submit = useSubmit();
+  return (
+    <select name="range" defaultValue={range} onChange={(e) => submit(e.currentTarget.form)} className={cn(SELECT, "w-auto")} aria-label="Range">
+      {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
+    </select>
+  );
+}
+
+function HealthBox({ health }: { health: HealthChecks }) {
+  const submit = useSubmit();
+  return (
+    <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted">
+      <input type="checkbox" name={HEALTH_PARAM} value="1" defaultChecked={health === HealthChecks.Shown} onChange={(e) => submit(e.currentTarget.form)} className="accent-brand" />
+      Show health checks
+    </label>
+  );
+}
+
+function MethodSelect({ methods, value, onChange }: { methods: string[]; value: string; onChange: (m: string) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={cn(SELECT, "w-auto")} aria-label="Method">
+      {methods.map((m) => <option key={m} value={m}>{m === "all" ? "all methods" : m}</option>)}
+    </select>
+  );
+}
+
+function RouteSearch({ q, exactRoute, onChange, onClear }: { q: string; exactRoute: string | null; onChange: (v: string) => void; onClear: () => void }) {
+  return (
+    <div className="relative min-w-0 flex-1 md:min-w-[200px]">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
+      <input
+        value={q}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Filter by path, route or service"
+        aria-label="Filter by path, route or service"
+        className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-9 text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
+      />
+      {exactRoute !== null ? (
+        <button type="button" onClick={onClear} aria-label="Clear the route filter" className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-faint hover:text-fg">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusPicker({
+  totals,
+  loadedCounts,
+  value,
+  onChange,
+}: {
+  totals: Promise<{ data: InboundTotals | null; error: string | null }>;
+  loadedCounts: Record<string, number>;
+  value: StatusFilter;
+  onChange: (f: StatusFilter) => void;
+}) {
+  return (
+    <Deferred resolve={totals} fallback={<StatusSeg counts={loadedCounts} value={value} onChange={onChange} />}>
+      {(t) => {
+        const tot = t.data;
+        const counts =
+          tot && tot.total > 0
+            ? { all: tot.total, ...Object.fromEntries(FILTERS.slice(1).map((f) => [f, tot.byClass[f as keyof InboundTotals["byClass"]]])) }
+            : loadedCounts;
+        return <StatusSeg counts={counts} value={value} onChange={onChange} />;
+      }}
+    </Deferred>
   );
 }

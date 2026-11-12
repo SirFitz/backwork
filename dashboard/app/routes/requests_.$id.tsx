@@ -6,7 +6,7 @@ import { defer } from "@remix-run/node";
 import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, OctagonX, SearchX, Unplug, Zap,
+  ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, OctagonX, RotateCcw, SearchX, Unplug, Zap,
 } from "lucide-react";
 import { Badge, Card, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
@@ -18,6 +18,7 @@ import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { requestPath, routeHint } from "~/lib/hops/paths";
+import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
@@ -479,7 +480,9 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
   const stopped = tree.gaps.filter((g) => g.kind === GapKind.Stopped);
   const missing = tree.gaps.filter((g) => g.kind === GapKind.NoReceiver);
   const callers = tree.gaps.filter((g) => g.kind === GapKind.MissingCaller);
-  if (!stopped.length && !missing.length && !callers.length) return null;
+  // A request can finish with no gap and still have failed underneath (frame 3's lead, BAC-41).
+  const problems = requestProblems(tree);
+  if (!stopped.length && !missing.length && !callers.length && !problems.failedCalls.length && !problems.retried) return null;
   const row = "flex gap-[11px] py-[9px] text-[13px] leading-normal text-fg [&+&]:border-t [&+&]:border-err/20";
   return (
     <div className="mb-4 rounded-[10px] border border-err/40 bg-err/[0.09] px-3.5 py-1" role="alert">
@@ -499,6 +502,18 @@ function Alert({ tree, lastLog, logsState }: { tree: RequestTree; lastLog: numbe
           </div>
         );
       })}
+      {problems.failedCalls.map((f) => (
+        <div key={`fc-${f.destination}`} className={row}>
+          <OctagonX className="mt-px h-[17px] w-[17px] shrink-0 text-err" />
+          <div><b className="font-semibold">{failedCallsSentence(f)}</b></div>
+        </div>
+      ))}
+      {problems.retried ? (
+        <div className={row}>
+          <RotateCcw className="mt-px h-[17px] w-[17px] shrink-0 text-warn" />
+          <div><b className="font-semibold">{retriedSentence(problems.retried)}</b></div>
+        </div>
+      ) : null}
       {missing.length ? (
         <div className={cn(row, "hidden md:flex")}>
           <Unplug className="mt-px h-[17px] w-[17px] shrink-0 text-warn" />
