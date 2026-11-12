@@ -63,7 +63,7 @@ export const links: LinksFunction = () => [{ rel: "stylesheet", href: tailwind }
 
 export const meta: MetaFunction = () => [
   { title: "backwork.dev" },
-  { name: "description", content: "Self-hosted log aggregation and application performance monitoring." },
+  { name: "description", content: "Request tracing and performance monitoring from the logs you already write." },
 ];
 
 // Public routes render bare (no app shell) and don't require a session. The

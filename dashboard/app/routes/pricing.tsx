@@ -1,15 +1,17 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { ArrowRight, Check, Github } from "lucide-react";
+import { useId, useState } from "react";
+import { Check } from "lucide-react";
 import { getUser } from "~/lib/auth/context.server";
-import { MarketingShell, seo, SITE, REPO } from "~/components/marketing";
+import { CONTACT, CtaBand, JsonLd, MarketingShell, NavKey, SITE, Wrap, btnPrimary, btnSecondary, seo } from "~/components/marketing";
+import { Billing, EVERY_PLAN, PLANS, PlanId, cheapest, estimateOn, formatMoney, formatRequests, planById, priceFor, type Plan } from "~/components/site/plans";
 import { cn } from "~/lib/utils";
 
 export const meta: MetaFunction = () =>
   seo({
     title: "Pricing — backwork",
-    description: "Self-host backwork for free, or let us run it for you. Transparent plans for the whole observability stack — no per-GB surprises.",
+    description: "Pay for what you send: plans include traced requests and log lines each month. Free plan, no card needed. Team $29, Business $99. Never a surprise bill.",
     path: "/pricing",
   });
 
@@ -17,101 +19,152 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ authed: !!(await getUser(request)) });
 }
 
-const TIERS = [
-  {
-    name: "Self-host",
-    price: "Free",
-    unit: "forever",
-    blurb: "The whole stack, on your own hardware. Open source.",
-    cta: { label: "Get the code", href: REPO, external: true },
-    highlight: false,
-    features: ["Request view, Requests, Performance, Logs, Errors & Alerts", "Unlimited hosts, projects & retention (your disk)", "Organizations, teams & roles", "Correlator hop records, read from your logs", "One Docker-Compose deploy", "Community support on GitHub"],
-  },
-  {
-    name: "Cloud",
-    price: "Free",
-    unit: "in beta",
-    blurb: "Managed backwork, hosted by us — free while in beta.",
-    cta: { label: "Start free", href: "/register", external: false },
-    highlight: true,
-    features: ["Everything in Self-host, fully managed", "30-day hop records, 14-day figures, 7-day logs", "Multi-tenant orgs & per-project tokens", "Email alert channels included", "Free during beta — usage-based plans planned", "Best-effort support"],
-  },
-  {
-    name: "Enterprise",
-    price: "Let's talk",
-    unit: "",
-    blurb: "Compliance, scale and SLA needs — on the roadmap.",
-    cta: { label: "Contact us", href: "mailto:hello@backwork.dev?subject=backwork%20Enterprise", external: true },
-    highlight: false,
-    features: ["SSO / SAML provisioning (planned)", "Custom retention & data residency", "Audit logs & role policies", "Priority support & uptime SLA", "Dedicated or air-gapped deployment", "Onboarding & migration help"],
-  },
-];
+function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
+  const price = priceFor(plan, billing);
+  const a = plan.allowance;
+  const r = plan.retention;
+  const lines: string[] = [];
+  if (a) lines.push(`${formatRequests(a.requestsPerMonth)} requests traced a month`, `${a.logGbPerMonth} GB of log lines a month`);
+  if (r) lines.push(r.requestPathsDays === r.logLinesDays ? `Kept ${r.requestPathsDays} days` : `Request paths kept ${r.requestPathsDays} days, log lines ${r.logLinesDays}`);
+  lines.push(...plan.features);
+  const extra = a && a.extraPerMillionRequests !== null && a.extraPerGb !== null
+    ? `More: ${formatMoney(a.extraPerMillionRequests)} per million requests, ${formatMoney(a.extraPerGb)} per GB, only with your yes.`
+    : null;
+  const href = plan.cta.href;
+  const ctaClass = cn(plan.featured ? btnPrimary : btnSecondary, "w-full");
+  return (
+    <article className={cn(
+      "flex flex-col rounded-2xl border bg-bg p-6",
+      plan.featured ? "border-brand/50 shadow-[0_0_0_3px_oklch(var(--brand)/0.09),0_30px_60px_-34px_oklch(0.2_0.02_265/0.35)]" : "border-border",
+    )}>
+      <div className="flex items-center justify-between">
+        <h3 className="text-[17px] font-semibold">{plan.name}</h3>
+        {plan.badge && <span className="rounded bg-brand/10 px-1.5 py-px text-[11px] font-medium text-brand ring-1 ring-inset ring-brand/25">{plan.badge}</span>}
+      </div>
+      <div className="mt-5 flex items-baseline gap-2">
+        <span className="text-[44px] font-semibold leading-none tracking-[-0.03em]">{price === null ? "Custom" : formatMoney(price)}</span>
+        {price !== null && price > 0 && <span className="text-[14px] text-muted">{billing === Billing.Yearly ? "/ year" : "/ month"}</span>}
+      </div>
+      <p className="mb-6 mt-2.5 min-h-[44px] text-[14.5px] text-muted">{plan.tagline}</p>
+      {href.startsWith("mailto:") ? <a href={href} className={ctaClass}>{plan.cta.label}</a> : <Link to={href} className={ctaClass}>{plan.cta.label}</Link>}
+      <ul className="mt-6 grid gap-2.5 border-t border-border pt-5">
+        {lines.map((l) => <li key={l} className="grid grid-cols-[18px_1fr] gap-2.5 text-[14px]"><Check className="mt-[3px] h-4 w-4 text-ok" /><span>{l}</span></li>)}
+      </ul>
+      {extra && <p className="mt-5 text-[12.5px] text-faint">{extra}</p>}
+    </article>
+  );
+}
 
-const FAQ = [
-  ["Is the self-hosted version really free?", "Yes — the full stack is open source. Clone the repo, run one Docker command, and use every feature with no license cost."],
-  ["Is the hosted Cloud free right now?", "Yes — Cloud is in beta and free to use today. Paid, usage-based plans are planned; we'll give plenty of notice before anything is charged."],
-  ["Will you charge per GB of logs?", "No. When paid plans arrive they'll be usage-based on hosts, not raw log volume, so a traffic spike won't spike your bill."],
-  ["Can I move between self-host and Cloud?", "Anytime. It's the same software, so you can start self-hosted and switch to managed (or back) without changing your agents."],
+// Slider positions map to these steps, so the common small cases get most of the track.
+const REQUEST_STEPS = [0, 1_000, 3_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
+const GB_STEPS = [0, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
+
+function Slider({ label, value, steps, index, onChange, format }: {
+  label: string; value: string; steps: number[]; index: number; onChange: (i: number) => void; format: (n: number) => string;
+}) {
+  const id = useId();
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-[14px] text-muted">
+        <label htmlFor={id}>{label}</label><b className="font-mono text-[15px] text-fg">{value}</b>
+      </div>
+      <input
+        id={id} type="range" min={0} max={steps.length - 1} step={1} value={index}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-valuetext={value}
+        className="mt-3 w-full accent-[oklch(var(--brand))]"
+      />
+      <div className="mt-1 flex justify-between font-mono text-[11px] text-faint"><span>{format(steps[0])}</span><span>{format(steps[steps.length - 1])}</span></div>
+    </div>
+  );
+}
+
+function Estimator() {
+  const [ri, setRi] = useState(5);
+  const [gi, setGi] = useState(7);
+  const perDay = REQUEST_STEPS[ri];
+  const gbPerDay = GB_STEPS[gi];
+  const month = { requests: perDay * 30, gb: Math.round(gbPerDay * 30 * 10) / 10 };
+  const best = cheapest(month.requests, month.gb);
+  const team = estimateOn(planById(PlanId.Team), month.requests, month.gb);
+  const fmtGb = (n: number) => (n < 1 ? `${Math.round(n * 1000)} MB` : `${n} GB`);
+  return (
+    <div className="mt-5 grid items-center gap-8 rounded-2xl border border-border bg-surface p-6 sm:p-7 lg:grid-cols-[1fr_1.2fr_1fr] lg:gap-10">
+      <div>
+        <h3 className="text-[18px] font-semibold">What would I pay?</h3>
+        <p className="mt-1.5 text-[14px] text-muted">Rough numbers are fine. Your dashboard shows the real ones after the first day.</p>
+      </div>
+      <div className="grid gap-6">
+        <Slider label="Requests a day" value={formatRequests(perDay)} steps={REQUEST_STEPS} index={ri} onChange={setRi} format={formatRequests} />
+        <Slider label="Log lines a day" value={fmtGb(gbPerDay)} steps={GB_STEPS} index={gi} onChange={setGi} format={fmtGb} />
+      </div>
+      <div aria-live="polite">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[36px] font-semibold leading-none tracking-[-0.03em]">{formatMoney(best.total)}</span>
+          <span className="text-[14px] text-muted">/ month on {best.plan.name}</span>
+        </div>
+        <p className="mt-2 font-mono text-[12.5px] text-faint">{best.breakdown}</p>
+        <p className="mt-1.5 text-[14px] text-muted">
+          {formatRequests(month.requests)} requests and {fmtGb(month.gb)} a month.
+          {best.plan.id === PlanId.Free && team ? " Team adds 30-day request paths and the switches." : ""}
+          {best.plan.id === PlanId.Business ? " Business is cheaper than Team with extras at this volume." : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const FAQ: [string, string][] = [
+  ["What counts as a traced request?", "One request into your services, with every hop it makes. Calls between your own services, and to databases and caches, are part of it and are not counted again."],
+  ["What happens near the limit?", "We email you at 80% and at 100%. On a paid plan nothing extra is charged without your yes; on Free, collection pauses until next month."],
+  ["How do we keep the bill down?", "Switch off what you don't need, for a project or a single service, from the dashboard. Quieter log levels help too. No developer is needed."],
+  ["Can we pay yearly?", "Yes. Pay yearly and get two months free: Team is $290 a year, Business $990."],
+  ["Do I need a card to start?", "No. Free needs no card, and the 14-day trial of Team or Business doesn't either."],
+  ["Can we leave and take our data?", "Any time. Export your log lines before you go; we delete everything 30 days after you close the account."],
 ];
 
 export default function Pricing() {
   const { authed } = useLoaderData<typeof loader>();
+  const [billing, setBilling] = useState<Billing>(Billing.Monthly);
   return (
-    <MarketingShell authed={authed} active="pricing">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
-        "@context": "https://schema.org", "@type": "Product", name: "backwork",
-        description: "Self-hosted request tracing, performance figures and log search in one dashboard.", url: SITE + "/pricing",
-        offers: TIERS.map((t) => ({ "@type": "Offer", name: t.name, price: t.price === "Free" ? "0" : t.price === "Custom" ? undefined : t.price.replace("$", ""), priceCurrency: "USD" })),
-      }) }} />
-
-      <section className="mx-auto max-w-6xl px-5 pt-16 pb-10 text-center sm:px-6 lg:pt-24">
-        <div data-reveal>
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-2xs font-medium text-muted"><span className="h-1.5 w-1.5 rounded-full bg-brand" />Pricing</div>
-          <h1 className="mx-auto mt-5 max-w-2xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">Free to self-host. Pay only for convenience.</h1>
-          <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-muted sm:text-base">Run the entire stack yourself at no cost, or let us host, scale and back it up. Either way you're never billed per gigabyte.</p>
-        </div>
-      </section>
-
-      <section className="mx-auto grid max-w-6xl gap-4 px-5 pb-12 sm:px-6 lg:grid-cols-3">
-        {TIERS.map((t) => (
-          <div key={t.name} data-reveal className={cn("flex flex-col rounded-2xl border bg-surface p-6", t.highlight ? "border-brand shadow-lg shadow-brand/10 ring-1 ring-brand/20" : "border-border")}>
-            {t.highlight ? <div className="mb-3 inline-flex w-fit items-center rounded-full bg-brand/10 px-2.5 py-0.5 text-2xs font-semibold text-brand">Most popular</div> : null}
-            <h2 className="text-[15px] font-semibold">{t.name}</h2>
-            <p className="mt-1 text-[13px] text-muted">{t.blurb}</p>
-            <div className="mt-4 flex items-baseline gap-1.5">
-              <span className="font-mono text-3xl font-semibold tracking-tight">{t.price}</span>
-              <span className="text-2xs text-faint">{t.unit}</span>
-            </div>
-            {t.cta.external ? (
-              <a href={t.cta.href} target={t.cta.href.startsWith("mailto") ? undefined : "_blank"} rel="noreferrer" className={cn("mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition", t.highlight ? "bg-brand text-brand-fg hover:opacity-90" : "border border-border-strong text-fg hover:bg-surface-2")}>{t.name === "Self-host" ? <Github className="h-4 w-4" /> : null}{t.cta.label}</a>
-            ) : (
-              <Link to={t.cta.href} className={cn("mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition", t.highlight ? "bg-brand text-brand-fg hover:opacity-90" : "border border-border-strong text-fg hover:bg-surface-2")}>{t.cta.label} <ArrowRight className="h-4 w-4" /></Link>
-            )}
-            <ul className="mt-6 space-y-2.5 border-t border-border pt-5">
-              {t.features.map((f) => (
-                <li key={f} className="flex gap-2.5 text-[13px] text-muted"><Check className="mt-0.5 h-4 w-4 shrink-0 text-ok" />{f}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </section>
-
-      <section className="mx-auto max-w-5xl px-5 py-14 sm:px-6">
-        <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
-          <div data-reveal className="h-max lg:sticky lg:top-24">
-            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Pricing questions</h2>
-            <p className="mt-3 text-[14px] leading-relaxed text-muted">Straight answers on plans and billing — no asterisks.</p>
-          </div>
-          <div data-reveal className="divide-y divide-border border-y border-border">
-            {FAQ.map(([q, a]) => (
-              <details key={q} className="group py-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[14.5px] font-medium">{q}<span className="text-lg leading-none text-muted transition group-open:rotate-45">+</span></summary>
-                <p className="mt-2.5 text-[13.5px] leading-relaxed text-muted">{a}</p>
-              </details>
+    <MarketingShell authed={authed} active={NavKey.Pricing}>
+      <JsonLd data={{
+        "@context": "https://schema.org", "@type": "Product", name: "backwork", url: `${SITE}/pricing`,
+        offers: PLANS.filter((p) => p.monthlyPrice !== null).map((p) => ({ "@type": "Offer", name: p.name, price: String(p.monthlyPrice), priceCurrency: "USD" })),
+      }} />
+      <section>
+        <Wrap className="pb-14 pt-16 text-center sm:pt-24">
+          <h1 className="mx-auto text-balance text-[36px] font-semibold leading-[1.06] tracking-[-0.035em] sm:text-[52px]">Pay for what you send. Never a surprise bill.</h1>
+          <p className="mx-auto mt-5 max-w-[56ch] text-[17px] leading-relaxed text-muted sm:text-[18px]">Every plan includes a number of traced requests and a volume of log lines each month. We tell you before you reach either.</p>
+          <div role="radiogroup" aria-label="Billing" className="mt-7 inline-flex gap-0.5 rounded-full border border-border bg-surface p-[3px] text-[13.5px]">
+            {[Billing.Monthly, Billing.Yearly].map((b) => (
+              <button key={b} type="button" role="radio" aria-checked={billing === b} onClick={() => setBilling(b)}
+                className={cn("rounded-full px-3.5 py-1.5", billing === b ? "bg-bg font-medium text-fg shadow-sm" : "text-muted")}>
+                {b === Billing.Monthly ? "Monthly" : <>Yearly <em className="ml-1 font-medium not-italic text-ok">2 months free</em></>}
+              </button>
             ))}
           </div>
-        </div>
+        </Wrap>
       </section>
+      <section className="border-b border-border pb-20 sm:pb-24">
+        <Wrap>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{PLANS.map((p) => <PlanCard key={p.id} plan={p} billing={billing} />)}</div>
+          <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl border border-border px-5 py-4 text-[14px]">
+            <span className="mr-1 font-semibold">Every plan includes</span>
+            {EVERY_PLAN.map((i) => <span key={i} className="inline-flex items-center gap-1.5 text-muted"><Check className="h-3.5 w-3.5 text-ok" />{i}</span>)}
+          </div>
+          <Estimator />
+        </Wrap>
+      </section>
+      <section className="border-b border-border">
+        <Wrap className="grid gap-10 py-16 sm:py-20 lg:grid-cols-[280px_1fr] lg:gap-12">
+          <h2 className="text-[28px] font-semibold tracking-[-0.025em]">Plain answers</h2>
+          <div className="grid gap-7 sm:grid-cols-2 sm:gap-x-10">
+            {FAQ.map(([q, a]) => <div key={q}><h3 className="text-[16px] font-semibold">{q}</h3><p className="mt-2 text-[14.5px] text-muted">{a}</p></div>)}
+          </div>
+        </Wrap>
+      </section>
+      <CtaBand secondary={{ label: "Talk to us", to: `mailto:${CONTACT}` }} />
     </MarketingShell>
   );
 }
