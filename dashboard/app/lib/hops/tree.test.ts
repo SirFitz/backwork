@@ -9,7 +9,7 @@ const hid = (n: number): HopId => n.toString(16).padStart(16, "0") as HopId;
 
 interface Spec {
   id: number; parent?: number; svc: string; via?: Via; method?: string; op?: string; peer?: string;
-  start?: number; dur?: number; sent?: boolean; tracer?: boolean; pid?: string; attempt?: number;
+  start?: number; dur?: number; sent?: boolean; tracer?: boolean; handoff?: boolean; pid?: string; attempt?: number;
   status?: number; outcome?: "ok" | "error"; error?: string; totals?: Partial<HopRecord["totals"] & object>; fields?: Record<string, string>;
 }
 
@@ -19,7 +19,7 @@ function base(kind: HopKind, s: Spec, timeMs: number): HopRecord {
   const end = kind === "in_end" || kind === "out_end";
   return {
     traceId: TRACE, hop: kind, hopId: hid(s.id), parentHop: s.parent ? hid(s.parent) : null,
-    hopSent: out ? s.sent ?? true : null, tracer: out ? s.tracer ?? false : false, parentId: s.pid ?? "b7ad6b7169203331",
+    hopSent: out ? s.sent ?? true : null, tracer: out ? s.tracer ?? false : false, handoff: out ? s.handoff ?? false : false, parentId: s.pid ?? "b7ad6b7169203331",
     service: s.svc, source: s.svc, adapter: "test", via: s.via ?? "http", method: s.method ?? null, op: s.op ?? null, peer: out ? s.peer ?? null : null, table: null, stmt: null,
     attempt: out ? null : s.attempt ?? null, outcome: end ? s.outcome ?? "ok" : null, status: end ? s.status ?? null : null,
     error: end ? s.error ?? null : null, durationUs: end && s.dur !== undefined ? Math.round(s.dur * 1000) : null,
@@ -146,7 +146,7 @@ describe("the healthy request of frame 2", () => {
     expect(storeCallCounts(tree)).toEqual({ db: 3, cache: 1 });
   });
   test("where the time went: 32.6 ms own, 3.8 ms database, 24.8 ms waiting", () => {
-    expect(tree.split).toEqual({ totalUs: 61200, dbUs: 3800, cacheUs: 0, waitingUs: 24800, ownUs: 32600 });
+    expect(tree.split).toEqual({ totalUs: 61200, dbUs: 3800, cacheUs: 0, waitingUs: 24800, ownUs: 32600, dbCalls: 1, dbSumUs: 3800, cacheCalls: 0, cacheSumUs: 0, backgroundCalls: 0, backgroundUs: 0 });
   });
   test("log lines go under the innermost inbound hop of their service", () => {
     expect(byId(6).logs.map((l) => l.line)).toEqual([
@@ -331,5 +331,124 @@ describe("calls with no record on the other side (design 7.4 and 9)", () => {
     ];
     const tree = buildRequestTree(r, [], T0 + 5000, [], new Set());
     expect(tree.gaps.filter((g) => g.kind === GapKind.NoReceiver).map((g) => g.detail)).toEqual(["kms.eu-west-1.amazonaws.com"]);
+  });
+});
+
+describe("where the time went when calls overlap", () => {
+  const splitOf = (records: HopRecord[]) => buildRequestTree(records, [], NOW).split;
+  test("parallel database calls count once: the union of their intervals, with the sum kept", () => {
+    // 122 ms request; three calls of 40 ms each, all running between 10 and 60 ms.
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 122, totals: { dbCalls: 3, dbUs: 120000 } }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 10, dur: 40, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 15, dur: 40, sent: false }),
+      ...hop("out", { id: 4, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 20, dur: 40, sent: false }),
+    ]);
+    expect(s).toMatchObject({ totalUs: 122000, dbUs: 50000, ownUs: 72000, dbCalls: 3, dbSumUs: 120000 });
+  });
+  test("sequential calls add up as before", () => {
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 100 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 10, dur: 20, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 40, dur: 20, sent: false }),
+    ]);
+    expect(s).toMatchObject({ dbUs: 40000, ownUs: 60000, dbSumUs: 40000 });
+  });
+  test("the parts never exceed the whole and own time is never negative", () => {
+    // Durations that reach outside the request (an ORM's queue time) and a cache call inside a database call.
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: -20, dur: 60, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "cache", op: "get", peer: "redis", start: 5, dur: 10, sent: false }),
+      ...hop("out", { id: 4, parent: 1, svc: API, method: "GET", peer: "other.internal", start: 30, dur: 20 }),
+    ]);
+    expect(s!.dbUs + s!.cacheUs + s!.waitingUs + s!.ownUs).toBe(s!.totalUs);
+    expect(s).toMatchObject({ totalUs: 50000, dbUs: 40000, cacheUs: 0, waitingUs: 10000, ownUs: 0 });
+  });
+  test("calls in the totals but not recorded one by one still count, within what is left", () => {
+    const s = splitOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 30, totals: { dbCalls: 5, dbUs: 90000 } }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 0, dur: 10, sent: false }),
+    ]);
+    expect(s).toMatchObject({ totalUs: 30000, dbUs: 30000, ownUs: 0, dbCalls: 5, dbSumUs: 90000 });
+  });
+});
+
+describe("calls that run on after the response", () => {
+  const treeOf = (records: HopRecord[]) => buildRequestTree(records, [], NOW);
+  test("Romario's sequential request (trace ace94e08): three selects, incr 108 ms, expire 108 ms, a select; the bar is unchanged", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 229.6, totals: { dbCalls: 4, dbUs: 7400, cacheCalls: 2, cacheUs: 217000 } }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 1, dur: 2, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 3.5, dur: 2, sent: false }),
+      ...hop("out", { id: 4, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 6, dur: 2, sent: false }),
+      ...hop("out", { id: 5, parent: 1, svc: API, via: "cache", op: "incr", peer: "redis", start: 9, dur: 108.5, sent: false }),
+      ...hop("out", { id: 6, parent: 1, svc: API, via: "cache", op: "expire", peer: "redis", start: 118, dur: 108.5, sent: false }),
+      ...hop("out", { id: 7, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 227, dur: 1.4, sent: false }),
+    ]);
+    expect(t.hops.some((h) => h.afterResponse)).toBe(false);
+    expect(t.split).toMatchObject({ totalUs: 229600, dbUs: 7400, cacheUs: 217000, waitingUs: 0, ownUs: 5200 });
+  });
+  test("two overlapping calls count once", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 100 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 10, dur: 30, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 20, dur: 30, sent: false }),
+    ]);
+    expect(t.split).toMatchObject({ cacheUs: 40000, ownUs: 60000, cacheCalls: 2, cacheSumUs: 60000 });
+  });
+  test("a call that starts inside and ends after the response is tagged and left out of the bar", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 5, dur: 10, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 40, dur: 100, sent: false }),
+    ]);
+    const late = t.hops.find((h) => h.hopId === hid(3))!;
+    expect(late.afterResponse).toBe(true);
+    expect(late.durationUs).toBe(100000);
+    expect(t.split).toMatchObject({ totalUs: 50000, dbUs: 10000, cacheUs: 0, ownUs: 40000 });
+  });
+  test("a call wholly after the response is tagged, drawn where it ran, and left out of the bar", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 80, dur: 20, sent: false }),
+    ]);
+    const late = t.hops.find((h) => h.hopId === hid(2))!;
+    expect(late.afterResponse).toBe(true);
+    expect(late.startMs).toBeCloseTo(T0 + 80, 6);
+    expect(t.split).toMatchObject({ totalUs: 50000, cacheUs: 0, ownUs: 50000 });
+  });
+});
+
+describe("calls marked handoff=true (HOP-23)", () => {
+  const treeOf = (records: HopRecord[]) => buildRequestTree(records, [], NOW);
+  test("a background call inside the window is tagged, left out of the bar and counted on its own", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 100 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 10, dur: 20, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 40, dur: 30, sent: false, handoff: true }),
+    ]);
+    const bg = t.hops.find((h) => h.hopId === hid(3))!;
+    expect(bg.handoff).toBe(true);
+    expect(bg.afterResponse).toBe(false);
+    expect(t.split).toMatchObject({ dbUs: 20000, cacheUs: 0, ownUs: 80000, backgroundCalls: 1, backgroundUs: 30000 });
+  });
+  test("a background call past the response is background, not 'after the response'", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "cache", op: "set", peer: "redis", start: 40, dur: 100, sent: false, handoff: true }),
+    ]);
+    const bg = t.hops.find((h) => h.hopId === hid(2))!;
+    expect(bg.handoff).toBe(true);
+    expect(bg.afterResponse).toBe(false);
+    expect(t.split).toMatchObject({ cacheUs: 0, ownUs: 50000, backgroundCalls: 1 });
+  });
+  test("records without the field render as before", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 5, dur: 10, sent: false }),
+    ]);
+    expect(t.hops.every((h) => !h.handoff && !h.afterResponse)).toBe(true);
+    expect(t.split).toMatchObject({ dbUs: 10000, ownUs: 40000, backgroundCalls: 0, backgroundUs: 0 });
   });
 });

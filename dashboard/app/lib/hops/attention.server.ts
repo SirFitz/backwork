@@ -93,7 +93,7 @@ export function windowQueries(offset: string | null): { requests: string; errA: 
     requests: `sum by (service) (increase(${COUNT}{${inbound}}${range}))`,
     errA: `sum by (service) (increase(${COUNT}{${inbound},outcome="error"}${range}))`,
     errB: `sum by (service) (increase(${COUNT}{${inbound},outcome!="error",status_class="5xx"}${range}))`,
-    p95: `histogram_quantile(0.95, sum by (service, le) (rate(${BUCKET}{${inbound}}${range})))`,
+    p95: `histogram_quantile(0.95, sum by (service, le) (increase(${BUCKET}{${inbound}}${range})))`,
   };
 }
 

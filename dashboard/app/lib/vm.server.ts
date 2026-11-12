@@ -20,6 +20,11 @@ export type Series = { metric: Record<string, string>; points: Array<{ t: number
 // no org_id) gets no filter.
 function applyScope(params: URLSearchParams, t?: Tenant): URLSearchParams {
   if (t && !t.platform) params.append("extra_filters[]", `{org_id=${JSON.stringify(t.orgId)}}`);
+  // The hop counters arrive in short bursts with long silences. VictoriaMetrics' rollup result
+  // cache answered increase() over 6 h with 200 for a series whose samples add up to 180 (and
+  // the same query uncached with 180, matching the records in Loki), so results are never
+  // taken from that cache. The data set is small; the cost is a few milliseconds per query.
+  params.set("nocache", "1");
   return params;
 }
 

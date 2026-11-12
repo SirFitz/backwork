@@ -93,6 +93,26 @@ function windowOf(range: PerfRange): string {
   return range;
 }
 
+const DURATION_UNIT_SECONDS: Readonly<Record<string, number>> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 };
+
+/** Seconds in a PromQL duration such as `15m`, `6h` or `7d`. */
+export function windowSeconds(window: string): number {
+  const m = /^(\d+)([smhdw])$/.exec(window);
+  if (!m) throw new Error(`not a PromQL duration: ${window}`);
+  return Number(m[1]) * DURATION_UNIT_SECONDS[m[2]];
+}
+
+/**
+ * Per second over a window, as `increase / window length`. Not `rate()`: Vector writes these
+ * counters only while records arrive (bursts of samples about a second apart, then nothing), and
+ * VictoriaMetrics' `rate()` divides by the time the samples span, not by the window, so a burst
+ * of 80 requests in 6 seconds read as 13 a second over six hours. `increase()` counts what
+ * happened in the window, resets included, and matches the records in Loki.
+ */
+function perSecond(sel: string, window: string, labels: readonly string[]): string {
+  return `sum ${by(labels)} (increase(${sel}[${window}])) / ${windowSeconds(window)}`;
+}
+
 // ---------------------------------------------------------------- query builders (pure)
 
 /** What a table groups by and filters on. */
@@ -124,7 +144,7 @@ function by(labels: readonly string[], extra: readonly string[] = []): string {
 /** Requests (or calls) per second over the range. */
 export function rateQuery(dir: "in" | "out", scope: Scope, range: PerfRange): string {
   const sel = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
-  return `sum ${by(scope.by)} (rate(${sel}[${windowOf(range)}]))`;
+  return perSecond(sel, windowOf(range), scope.by);
 }
 
 /** Failed requests per second, as two queries whose results are added in code:
@@ -142,13 +162,13 @@ export function errorRateQueries(dir: "in" | "out", scope: Scope, range: PerfRan
     `status_class="5xx"`,
     ...hm,
   ].join(",")}}`;
-  return [`sum ${by(scope.by)} (rate(${failed}[${w}]))`, `sum ${by(scope.by)} (rate(${fivexx}[${w}]))`];
+  return [perSecond(failed, w, scope.by), perSecond(fivexx, w, scope.by)];
 }
 
 /** Latency quantile in seconds over the range. */
 export function quantileQuery(q: Quantile, dir: "in" | "out", scope: Scope, range: PerfRange, window?: string): string {
   const sel = selector(`${HopMetric.Duration}_bucket`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
-  return `histogram_quantile(${q}, sum ${by(scope.by, ["le"])} (rate(${sel}[${window ?? windowOf(range)}])))`;
+  return `histogram_quantile(${q}, sum ${by(scope.by, ["le"])} (increase(${sel}[${window ?? windowOf(range)}])))`;
 }
 
 /** Share of inbound time spent in databases and caches (0..1). */
@@ -157,7 +177,7 @@ export function storeShareQuery(scope: Scope, range: PerfRange): string {
   const hm = healthMatchers("in", scope.health);
   const store = selector(HopMetric.StoreSeconds, scope.where, hm);
   const total = selector(`${HopMetric.Duration}_sum`, { dir: "in", ...scope.where }, hm);
-  return `sum ${by(scope.by)} (rate(${store}[${w}])) / sum ${by(scope.by)} (rate(${total}[${w}]))`;
+  return `sum ${by(scope.by)} (increase(${store}[${w}])) / sum ${by(scope.by)} (increase(${total}[${w}]))`;
 }
 
 /** Data-store calls per inbound request. */
@@ -166,7 +186,7 @@ export function storeCallsPerRequestQuery(scope: Scope, range: PerfRange): strin
   const hm = healthMatchers("in", scope.health);
   const calls = selector(HopMetric.StoreCalls, scope.where, hm);
   const reqs = selector(`${HopMetric.Duration}_count`, { dir: "in", ...scope.where }, hm);
-  return `sum ${by(scope.by)} (rate(${calls}[${w}])) / sum ${by(scope.by)} (rate(${reqs}[${w}]))`;
+  return `sum ${by(scope.by)} (increase(${calls}[${w}])) / sum ${by(scope.by)} (increase(${reqs}[${w}]))`;
 }
 
 /** Inbound hops started and not yet finished over the last 15 minutes, by service, never
@@ -466,7 +486,7 @@ export function httpTotalsQuery(range: string, service: string | null, health: H
 
 export function httpP95Query(range: string, service: string | null, health: HealthChecks = HealthChecks.Hidden): string {
   const where: Matchers = { dir: "in", via: Via.Http, ...(service ? { service } : {}) };
-  return `histogram_quantile(0.95, sum by (le) (rate(${selector(`${HopMetric.Duration}_bucket`, where, healthMatchers("in", health))}[${range}])))`;
+  return `histogram_quantile(0.95, sum by (le) (increase(${selector(`${HopMetric.Duration}_bucket`, where, healthMatchers("in", health))}[${range}])))`;
 }
 
 /** Inbound HTTP totals for the Requests page's summary and status counts. */
