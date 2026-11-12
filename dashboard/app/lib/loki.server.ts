@@ -182,6 +182,15 @@ export async function rateByService(query: string, tenant?: Tenant): Promise<Rec
   return out;
 }
 
+/** Label sets of an instant grouped metric query, e.g. `sum by (service, source) (...)`. */
+export async function labelSets(query: string, tenant?: Tenant): Promise<Array<Record<string, string>>> {
+  const res = await fetchJson<{ data: { result: Array<{ metric: Record<string, string> }> } }>(
+    `${config.lokiUrl}/loki/api/v1/query?query=${encodeURIComponent(scoped(query, tenant))}`,
+    { timeoutMs: 12000, retries: 1 }
+  );
+  return (res.data.result || []).map((r) => r.metric || {});
+}
+
 /** Instant metric query returning a single scalar (sum of vector), or fallback. */
 export async function scalar(query: string, fallback = 0, tenant?: Tenant): Promise<number> {
   const res = await fetchJson<{ data: { result: Array<{ value: [number, string] }> } }>(
