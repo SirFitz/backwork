@@ -8,7 +8,7 @@ import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNo
 import {
   ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, OctagonX, RotateCcw, SearchX, Unplug, Zap,
 } from "lucide-react";
-import { Badge, Card, Skeleton } from "~/components/ui";
+import { Badge, Card, CardHeadText, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
@@ -284,7 +284,7 @@ export default function RequestPage() {
   const d = useLoaderData<typeof loader>();
   return (
     <div className="animate-fade-in">
-      <Link to="/requests" className="mb-3.5 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-fg">
+      <Link to="/requests" className="mb-2 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-fg">
         <ArrowLeft className="h-[15px] w-[15px]" /> Requests
       </Link>
       <Progressive d={d} />
@@ -430,7 +430,7 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
   const faults = faultCount(tree);
   const fact = "whitespace-nowrap";
   return (
-    <div className="mb-4 flex items-start justify-between gap-8">
+    <div data-content className="mb-4 flex items-start justify-between gap-8">
       <div className="min-w-0">
         <div className="hidden md:block"><Title head={head} /></div>
         <div className="md:hidden"><Title head={head} size="sm" /></div>
@@ -648,11 +648,8 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
   const dbHost = sharedDatabaseHost(ctx.tree.hops);
   return (
     <Card className="relative">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="hidden md:block">
-          <h2 className="m-0 text-[15px] font-semibold tracking-tight">Path</h2>
-          <p className="m-0 mt-0.5 text-2xs text-faint">Every hop this request made, parent to child</p>
-        </div>
+      <div data-card-head className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-border px-4 py-1.5">
+        <CardHeadText title="Path" sub="Every hop this request made, parent to child" className="hidden md:flex" />
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-2xs text-muted">
           {ctx.tree.services.map((s) => (
             <span key={s} className="inline-flex items-center gap-1.5"><Dot colour={ctx.colours.get(s) as string} />{s}</span>
@@ -893,7 +890,7 @@ function LogsOnly({ d }: { d: Data }) {
         for (const l of list) byService.set(l.service, [...(byService.get(l.service) ?? []), l]);
         return (
           <>
-            <div className="mb-4">
+            <div data-content className="mb-4">
               <h1 className="m-0 font-mono text-[21px] font-semibold tracking-tight [overflow-wrap:anywhere]">{d.traceId}</h1>
               <p className="mt-2 text-[12.5px] text-muted">
                 No hop records for this ID, so there is no path. These are the log lines that carry it, by service, in time order.

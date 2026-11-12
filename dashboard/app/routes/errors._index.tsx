@@ -11,6 +11,7 @@ import { Ago } from "~/components/time";
 export const meta: MetaFunction = () => [{ title: "Errors · backwork" }];
 
 const STATUSES = ["open", "resolved", "ignored", "all"] as const;
+const FILTER_SELECT = "h-8 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
@@ -36,30 +37,46 @@ export default function Errors() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Errors" sub="Exceptions reported by your services, grouped by fingerprint — newest activity first. Resolve a group and it reopens automatically if it happens again." />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-2xs">
-          {STATUSES.map((s) => (
-            <a
-              key={s}
-              href={`/errors?status=${s}${d.service !== "all" ? `&service=${encodeURIComponent(d.service)}` : ""}`}
-              className={cn("rounded-md px-2.5 py-1.5 font-medium capitalize transition-colors", d.status === s ? "bg-surface-2 text-fg" : "text-muted hover:text-fg")}
-            >
-              {s} <span className="text-faint">{d.counts[s] ?? 0}</span>
-            </a>
-          ))}
-        </div>
-        {d.services.length ? (
-          <Form method="get" className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="status" value={d.status} />
-            <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className="h-9 w-full max-w-full sm:w-auto rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40">
-              <option value="all">all services</option>
-              {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </Form>
-        ) : null}
-      </div>
+      <PageTitle
+        title="Errors"
+        sub="Exceptions reported by your services, grouped by fingerprint — newest activity first. Resolve a group and it reopens automatically if it happens again."
+        right={
+          <>
+            {/* phone: status and service as two selects so the header stays one row */}
+            <Form method="get" className="flex min-w-0 items-center gap-2 md:hidden">
+              <select name="status" aria-label="Status" defaultValue={d.status} onChange={(e) => submit(e.currentTarget.form)} className={cn(FILTER_SELECT, "capitalize")}>
+                {STATUSES.map((s) => <option key={s} value={s}>{s} {d.counts[s] ?? 0}</option>)}
+              </select>
+              {d.services.length ? (
+                <select name="service" aria-label="Service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className={cn(FILTER_SELECT, "min-w-0 max-w-[150px]")}>
+                  <option value="all">all services</option>
+                  {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : null}
+            </Form>
+            <div className="hidden h-8 items-center rounded-lg border border-border bg-surface p-0.5 text-2xs md:inline-flex">
+              {STATUSES.map((s) => (
+                <a
+                  key={s}
+                  href={`/errors?status=${s}${d.service !== "all" ? `&service=${encodeURIComponent(d.service)}` : ""}`}
+                  className={cn("rounded-md px-2 py-1 font-medium capitalize transition-colors", d.status === s ? "bg-surface-2 text-fg" : "text-muted hover:text-fg")}
+                >
+                  {s} <span className="text-faint">{d.counts[s] ?? 0}</span>
+                </a>
+              ))}
+            </div>
+            {d.services.length ? (
+              <Form method="get" className="hidden min-w-0 items-center gap-2 md:flex">
+                <input type="hidden" name="status" value={d.status} />
+                <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className={FILTER_SELECT}>
+                  <option value="all">all services</option>
+                  {d.services.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Form>
+            ) : null}
+          </>
+        }
+      />
 
       <Card>
         <CardHead title="Error groups" sub={`${d.groups.length} group${d.groups.length === 1 ? "" : "s"}`} right={<Badge tone="neutral">{d.counts.open ?? 0} open</Badge>} />
