@@ -403,7 +403,7 @@ export function stackConfigYaml(): string {
 # backwork collector. Tails EVERY container on the host's stdout/stderr,
 # derives a friendly service name, normalises the level, detects Correlator
 # hop records and link lines (kind="hop"), applies the sensitive-data filter,
-# ships to Loki, and exposes hop metrics + host + internal metrics for VM.
+# ships to Loki, and exposes hop metrics + its own metrics for VM.
 # The host's own telemetry belongs to the platform org: no switches here.
 data_dir: /vector-data
 
@@ -415,11 +415,6 @@ sources:
 
   vector_metrics:
     type: internal_metrics
-
-  host:
-    type: host_metrics
-    scrape_interval_secs: 15
-    collectors: [cpu, memory, disk, filesystem, load, network]
 
 transforms:
   bw_normalize:
@@ -458,7 +453,7 @@ sinks:
 
   prometheus:
     type: prometheus_exporter
-    inputs: [vector_metrics, host, bw_hop_cardinality]
+    inputs: [vector_metrics, bw_hop_cardinality]
     address: 0.0.0.0:9598
     buckets: ${bucketsYaml}
     # Keep idle hop series for 15 minutes so rate() sees no false resets.
@@ -478,7 +473,11 @@ data_dir: /var/lib/backwork-vector
 sources:
   docker:
     type: docker_logs
-    exclude_containers: ["backwork-agent", "backwork-agent-controls", "backwork-vmagent", "backwork-node-exporter", "backwork-cadvisor"]
+    # Prefix match: every agent instance on the host (backwork-agent[-<instance>],
+    # backwork-agent-controls[-<instance>]) is left out.
+    exclude_containers: ["backwork-agent"]
+    # --include <prefix,...>: only these container-name prefixes (line removed when empty).
+    include_containers: [__INCLUDE__]
   # Services under PM2 (design 4): the installer mounts PM2's log directory
   # here; empty when the host has none.
   pm2:
@@ -524,6 +523,9 @@ sinks:
     type: prometheus_remote_write
     inputs: [bw_hop_cardinality]
     endpoint: __ENDPOINT__/metrics/api/v1/write?kind=hop
+    # The healthcheck posts an empty write, which VictoriaMetrics answers 400.
+    healthcheck:
+      enabled: false
     auth:
       strategy: bearer
       token: __TOKEN__

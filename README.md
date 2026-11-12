@@ -15,7 +15,7 @@ telemetry directly:
 
 | Component | Tool | Role |
 |---|---|---|
-| Logs | **Loki** | LogQL search, 7-day hot retention |
+| Logs | **Loki** | LogQL search, 7-day hot retention (hop records 30 days) |
 | Metrics | **VictoriaMetrics** | PromQL time-series store |
 | Container metrics | **cAdvisor** | real per-container CPU / memory / network / disk |
 | Traces | **Jaeger** | OTLP ingest (for apps that emit spans) |
@@ -49,8 +49,32 @@ For local inspection with published ports:
 
 ```bash
 docker compose -f docker-compose.yaml -f docker-compose.local.yml up -d --build
-open http://localhost:3000
+open http://localhost:3000   # BW_LOCAL_PORT=3410 to publish the dashboard elsewhere
 ```
+
+## Hop records, switches and the sensitive-data filter
+
+Services that use Correlator write hop records (a start and an end log line per
+hop) and link lines. The collector and the agent detect them, label them
+`kind="hop"` (every other line is `kind="log"`), turn end records into the
+`backwork_hop_*` metrics, and replace sensitive values with `[filtered]` before
+anything is saved. Hop records are kept 30 days, ordinary lines 7.
+
+- Both Vector configs come from one module,
+  `dashboard/app/lib/agent/vector-config.server.ts`. `infra/vector/vector.yaml` is
+  generated from it: after a change run `cd dashboard && bun ../infra/vector/generate.ts`
+  (a dashboard test fails while the file is stale).
+- Vector unit tests: `infra/vector/test.sh` (stack config) and
+  `infra/vector/agent/test.sh` (agent config with switches off and an org pattern).
+- Switches and filter patterns live in Postgres (`data_controls`, `filter_patterns`,
+  `dashboard/app/lib/controls.server.ts`). Everything is on unless switched off;
+  off at organisation, project or service level wins. The ingest proxies enforce
+  them and filter again; agents read them from `GET /ingest/controls?format=vector`
+  every 30 s and reload Vector when they change.
+- Agents on hosts that run services under PM2 read PM2's log files too
+  (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
+- Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local
+  compose file runs four of them). Tests only; never on a backwork people use.
 
 ## Config
 

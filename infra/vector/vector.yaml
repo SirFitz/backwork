@@ -4,7 +4,7 @@
 # backwork collector. Tails EVERY container on the host's stdout/stderr,
 # derives a friendly service name, normalises the level, detects Correlator
 # hop records and link lines (kind="hop"), applies the sensitive-data filter,
-# ships to Loki, and exposes hop metrics + host + internal metrics for VM.
+# ships to Loki, and exposes hop metrics + its own metrics for VM.
 # The host's own telemetry belongs to the platform org: no switches here.
 data_dir: /vector-data
 
@@ -16,11 +16,6 @@ sources:
 
   vector_metrics:
     type: internal_metrics
-
-  host:
-    type: host_metrics
-    scrape_interval_secs: 15
-    collectors: [cpu, memory, disk, filesystem, load, network]
 
 transforms:
   bw_normalize:
@@ -354,7 +349,7 @@ sinks:
 
   prometheus:
     type: prometheus_exporter
-    inputs: [vector_metrics, host, bw_hop_cardinality]
+    inputs: [vector_metrics, bw_hop_cardinality]
     address: 0.0.0.0:9598
     buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900]
     # Keep idle hop series for 15 minutes so rate() sees no false resets.
