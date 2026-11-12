@@ -49,6 +49,7 @@ import { themeSessionResolver } from "~/lib/theme.server";
 import { ensureEvaluator } from "~/lib/evaluator.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
+import { readLivePaused, writeLivePaused } from "~/lib/live-pref";
 import type { LookupPreview } from "~/routes/lookup";
 import { Clock } from "~/components/time";
 
@@ -136,7 +137,19 @@ function LiveStatus() {
   const revalidator = useRevalidator();
   // null until mounted: a clock rendered on the server never matches the browser's (hydration).
   const [last, setLast] = useState<number | null>(null);
+  // Starts live so the server render matches the browser's; the saved choice is applied after mount.
   const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    setPaused(readLivePaused());
+  }, []);
+
+  const togglePaused = useCallback(() => {
+    setPaused((p) => {
+      writeLivePaused(!p);
+      return !p;
+    });
+  }, []);
 
   useEffect(() => {
     if (paused) return;
@@ -154,7 +167,7 @@ function LiveStatus() {
     <div className="flex items-center gap-2">
       <button
         type="button"
-        onClick={() => setPaused((p) => !p)}
+        onClick={togglePaused}
         className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg sm:px-2.5"
         title={paused ? "Resume live updates" : "Pause live updates"}
         aria-label={paused ? "Paused: resume live updates" : "Live: pause live updates"}
