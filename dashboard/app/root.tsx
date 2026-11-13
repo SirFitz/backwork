@@ -445,7 +445,9 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
             <div className="mb-1 border-b border-border px-1 pb-1.5">
               <div className="px-2 py-1 text-2xs uppercase tracking-wide text-faint">Organizations</div>
               {auth.orgs.map((o) => (
-                <Form key={o.id} method="post" action="/action/set-org">
+                // reloadDocument: switching organisation changes the whole tenant, so load the
+                // page fresh. A client-side navigation left the menu open and gave no sign it was working.
+                <Form key={o.id} method="post" action="/action/set-org" reloadDocument onSubmit={() => setOpen(false)}>
                   <input type="hidden" name="orgId" value={o.id} />
                   <button className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-surface-2", o.id === auth.org.id ? "text-brand" : "text-fg")}>
                     <Building2 className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{o.name}</span>
