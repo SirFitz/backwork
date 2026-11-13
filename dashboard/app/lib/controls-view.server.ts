@@ -46,7 +46,7 @@ export const FEATURE_MEANING: Record<Feature, string> = {
   [Feature.Logs]: "What each service prints.",
   [Feature.Hops]: "The path and timing of every request.",
   [Feature.Stores]: "Time spent in each data store.",
-  [Feature.NamedFields]: "Fields a developer attached to a request.",
+  [Feature.NamedFields]: "Extra details your team adds to a request.",
   [Feature.Statements]: "The table and the shape of each database query, values removed.",
   [Feature.Paths]: "The path each request called, long parts masked.",
   [Feature.LinkedIds]: "Order numbers and provider references.",

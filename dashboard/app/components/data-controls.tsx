@@ -153,17 +153,46 @@ function Cell({ c, projectId, service, canManage, label }: { c: CellView; projec
   );
 }
 
-export function DataControlsPanel({ view, heading, gridHeads }: { view: ControlsView; heading: string; gridHeads: Record<string, string> }) {
+/** A named run of switches (Settings splits what is stored from the detail kept inside each request). */
+export interface SwitchGroup {
+  title: string;
+  features: readonly string[];
+}
+
+export function DataControlsPanel({
+  view,
+  heading,
+  gridHeads,
+  groups,
+}: {
+  view: ControlsView;
+  heading: string;
+  gridHeads: Record<string, string>;
+  groups?: readonly SwitchGroup[];
+}) {
   const builtIn = view.patterns.filter((p) => p.builtIn);
   const own = view.patterns.filter((p) => !p.builtIn);
+  const listed = new Set(groups?.flatMap((g) => g.features) ?? []);
+  const rows = (list: SwitchView[]) =>
+    list.map((s) => <SwitchRow key={s.feature} s={s} projectId={view.projectId} canManage={view.canManage} />);
   return (
     <div>
       <div className="grid gap-y-5 md:grid-cols-2 md:gap-x-9">
         <div className="min-w-0">
           <h3 className="text-[13.5px] font-semibold tracking-tight">{heading}</h3>
-          <div className="mt-1.5">
-            {view.switches.map((s) => <SwitchRow key={s.feature} s={s} projectId={view.projectId} canManage={view.canManage} />)}
-          </div>
+          {groups ? (
+            <div className="mt-1.5 space-y-4">
+              {groups.map((g) => (
+                <div key={g.title}>
+                  <div className="mb-0.5 text-2xs uppercase tracking-wide text-faint">{g.title}</div>
+                  {rows(view.switches.filter((s) => g.features.includes(s.feature)))}
+                </div>
+              ))}
+              {view.switches.some((s) => !listed.has(s.feature)) ? <div>{rows(view.switches.filter((s) => !listed.has(s.feature)))}</div> : null}
+            </div>
+          ) : (
+            <div className="mt-1.5">{rows(view.switches)}</div>
+          )}
         </div>
         <div className="min-w-0 border-t border-border pt-5 md:border-l md:border-t-0 md:pl-9 md:pt-0">
           <div className="flex items-center gap-3">
@@ -172,7 +201,7 @@ export function DataControlsPanel({ view, heading, gridHeads }: { view: Controls
             <ControlSwitch feature={view.filter.feature} projectId={view.projectId} service={null} on={view.filter.on} disabled={!view.canManage || view.filter.lockedOff} label="Sensitive-data filter" />
           </div>
           <p className="mt-2 text-[12.5px] leading-normal text-muted">
-            Runs on the server the logs come from, before anything leaves it. What it finds is replaced with <span className="font-mono">[filtered]</span>.
+            Applied where your logs start, before anything is sent to backwork. What it finds is replaced with <span className="font-mono">[filtered]</span>.
           </p>
           <div className="mt-3.5 text-2xs uppercase tracking-wide text-faint">Built in</div>
           <div className="mt-[7px] flex flex-wrap items-center gap-1.5">

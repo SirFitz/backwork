@@ -504,13 +504,6 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
             </NavLink>
           ))}
         </nav>
-        <div className="px-5 py-4 text-2xs leading-relaxed text-faint">
-          <div className="mb-1 flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-faint" />
-            Loki · VictoriaMetrics
-          </div>
-          self-hosted observability
-        </div>
       </aside>
 
       <div className="flex min-h-screen min-w-0 flex-col">
