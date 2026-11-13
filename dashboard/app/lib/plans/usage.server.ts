@@ -1,15 +1,17 @@
-// Usage counters and the gate in front of ingest. Metered organisations only: an unmetered
-// organisation costs no database read or write per push.
+// What a limited organisation takes in, per 5-minute bucket, and the lookup of its limits.
+// Unlimited organisations cost no database read or write per push beyond the cached plan lookup.
 import { eq, sql } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
-import { orgUsage, orgs } from "~/db/schema";
+import { orgBuckets, orgs } from "~/db/schema";
 import { cached } from "~/lib/cache.server";
-import { currentPeriod, limitsFor, pausedReason, type Limits, type PausedBecause, type Usage } from "./limits";
+import { isCapped, limitsFor, type Limits } from "./limits";
+import { bucketStart, type Bucket } from "./window";
 
 const PLAN_TTL_MS = 30_000;
-const USAGE_TTL_MS = 5_000;
+/** Counters older than this are not needed: nothing is kept longer than the stack's 30-day retention. */
+const KEEP_BUCKETS_DAYS = 31;
 
-/** The limits of an organisation, or null when it is not metered. Cached briefly. */
+/** The limits of an organisation, or null when it has none. Cached briefly. */
 export function orgLimits(orgId: string): Promise<Limits | null> {
   return cached(`plan:${orgId}`, PLAN_TTL_MS, async () => {
     await ensureSchema();
@@ -22,38 +24,37 @@ export function orgLimits(orgId: string): Promise<Limits | null> {
   });
 }
 
-/** What the organisation has collected so far this month. Cached briefly. */
-export function orgUsageNow(orgId: string, period: string = currentPeriod()): Promise<Usage> {
-  return cached(`usage:${orgId}:${period}`, USAGE_TTL_MS, async () => {
-    const rows = await db
-      .select({ requests: orgUsage.requests, bytes: orgUsage.bytes })
-      .from(orgUsage)
-      .where(sql`${orgUsage.orgId} = ${orgId} AND ${orgUsage.period} = ${period}`)
-      .limit(1);
-    return rows[0] ?? { requests: 0, bytes: 0 };
-  });
+/** Does this organisation hold a rolling window? Only then are its pushes counted. */
+export async function isWindowed(orgId: string): Promise<boolean> {
+  const l = await orgLimits(orgId);
+  return l !== null && isCapped(l);
 }
 
-/** Add what a push brought in. One atomic upsert; the totals come back. */
-export async function addUsage(orgId: string, add: Usage, period: string = currentPeriod()): Promise<Usage> {
+/** Add what a push brought in to its 5-minute bucket. One atomic upsert. */
+export async function addToBucket(orgId: string, add: { requests: number; bytes: number }, atMs: number = Date.now()): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO org_buckets (org_id, bucket, requests, bytes) VALUES (${orgId}, ${bucketStart(atMs)}, ${add.requests}, ${add.bytes})
+    ON CONFLICT (org_id, bucket) DO UPDATE
+      SET requests = org_buckets.requests + EXCLUDED.requests, bytes = org_buckets.bytes + EXCLUDED.bytes`);
+}
+
+/** The organisation's buckets since a time (unix seconds), oldest first. */
+export async function loadBuckets(orgId: string, sinceS: number): Promise<Bucket[]> {
   const res = await db.execute(sql`
-    INSERT INTO org_usage (org_id, period, requests, bytes) VALUES (${orgId}, ${period}, ${add.requests}, ${add.bytes})
-    ON CONFLICT (org_id, period) DO UPDATE
-      SET requests = org_usage.requests + EXCLUDED.requests, bytes = org_usage.bytes + EXCLUDED.bytes, updated_at = now()
-    RETURNING requests, bytes`);
-  const row = res.rows[0] as { requests: string | number; bytes: string | number };
-  return { requests: Number(row.requests), bytes: Number(row.bytes) };
+    SELECT bucket, requests, bytes FROM org_buckets WHERE org_id = ${orgId} AND bucket >= ${sinceS} ORDER BY bucket`);
+  return (res.rows as Array<{ bucket: string | number; requests: string | number; bytes: string | number }>).map((r) => ({
+    startS: Number(r.bucket),
+    requests: Number(r.requests),
+    bytes: Number(r.bytes),
+  }));
 }
 
-export interface Gate {
-  limits: Limits | null;
-  /** Set when collection is paused for this organisation. */
-  paused: PausedBecause | null;
+/** Forget counters older than a time (unix seconds): what they counted has been deleted. */
+export async function pruneBuckets(orgId: string, beforeS: number): Promise<void> {
+  await db.execute(sql`DELETE FROM org_buckets WHERE org_id = ${orgId} AND bucket < ${beforeS}`);
 }
 
-/** Is the organisation allowed to push right now? Checked before the body is read. */
-export async function gateFor(orgId: string): Promise<Gate> {
-  const limits = await orgLimits(orgId);
-  if (!limits) return { limits: null, paused: null };
-  return { limits, paused: pausedReason(limits, await orgUsageNow(orgId)) };
+/** The oldest counters worth loading. */
+export function bucketsSince(nowMs: number): number {
+  return Math.floor(nowMs / 1000) - KEEP_BUCKETS_DAYS * 86400;
 }

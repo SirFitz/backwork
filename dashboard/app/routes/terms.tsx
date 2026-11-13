@@ -28,7 +28,7 @@ const SECTIONS: [string, string[]][] = [
     "You retain all rights to the telemetry and content you send. You grant us only the limited rights needed to operate the Service for you. You're responsible for ensuring you have the right to send us that data.",
   ]],
   ["Plans, trials & changes", [
-    "Plans include a monthly allowance of traced requests and log lines, as described on the pricing page. The Free plan is never billed: collection pauses when its allowance is used. On paid plans, usage beyond the allowance is charged only after you agree to it. We may change features or pricing with reasonable notice. Free and trial plans are provided as-is and may change or end.",
+    "Plans include a monthly allowance of traced requests and log lines, as described on the pricing page. The Free plan is never billed: it keeps your newest requests and data up to its limit and discards the oldest as new ones arrive. On paid plans, usage beyond the allowance is charged only after you agree to it. We may change features or pricing with reasonable notice. Free and trial plans are provided as-is and may change or end.",
   ]],
   ["Availability", [
     "We work to keep the Service reliable but, except where a written SLA applies (Enterprise), it is provided without an availability guarantee.",

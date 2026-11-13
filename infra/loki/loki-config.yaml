@@ -46,6 +46,10 @@ compactor:
   working_directory: /loki/compactor
   retention_enabled: true
   delete_request_store: filesystem
+  # Plan limits trim a rolling window by deleting the oldest data (lib/plans/retention.server.ts).
+  # Loki hides a deleted range from queries once this has passed, so keep it short: the default is 24 h,
+  # which would leave a day of data beyond the plan's cap.
+  delete_request_cancel_period: 10m
 
 analytics:
   reporting_enabled: false

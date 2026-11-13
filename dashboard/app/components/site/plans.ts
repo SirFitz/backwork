@@ -14,7 +14,7 @@ export enum Billing {
 }
 
 /** What a plan includes each month, and what more costs. `null` extra prices mean
- *  collection pauses at the limit and the plan is never billed for more. */
+ *  the plan keeps its newest requests and data up to the limit, dropping the oldest, and is never billed for more. */
 export interface Allowance {
   requestsPerMonth: number;
   logGbPerMonth: number;
@@ -47,7 +47,7 @@ export const PLANS: readonly Plan[] = [
     id: PlanId.Free,
     name: "Free",
     monthlyPrice: 0,
-    tagline: "For a first look. Collection pauses at the limit, and Free is never billed.",
+    tagline: "For a first look. Keeps your newest requests and data up to the limit and drops the oldest. Never billed.",
     allowance: { requestsPerMonth: 100_000, logGbPerMonth: 1, extraPerMillionRequests: null, extraPerGb: null },
     retention: { requestPathsDays: 3, logLinesDays: 3 },
     cta: { label: "Start free", href: "/register" },

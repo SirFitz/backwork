@@ -195,7 +195,7 @@ function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: 
   else if (a.status === AccountStatus.Active) line = `Renews on ${fmtDate(a.periodEnd)}${a.paidPlan ? ` at ${formatMoney(priceFor(PLANS.find((p) => p.id === a.paidPlan) as Plan, a.billing ?? Billing.Monthly) ?? 0)} / ${cycle}` : ""}.`;
   else if (a.status === AccountStatus.Cancelled) line = a.plan !== PlanId.Free ? `Cancelled. ${planName(a.plan)} runs until ${fmtDate(a.periodEnd)}.` : "Cancelled.";
   else if (a.awaitingPayment) line = "Waiting for your payment to go through. This page updates when it does.";
-  else line = "Free never expires and is never billed. Collection pauses at its limits.";
+  else line = "Free never expires and is never billed. It keeps your newest requests and data up to its limits and drops the oldest.";
   return (
     <Card>
       <CardHead

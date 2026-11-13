@@ -33,29 +33,13 @@ ALTER TABLE orgs ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'unmetered'
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS requests_limit integer;
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS storage_limit_bytes bigint;
 
-CREATE TABLE IF NOT EXISTS org_usage (
+DROP TABLE IF EXISTS org_usage;
+CREATE TABLE IF NOT EXISTS org_buckets (
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-  period text NOT NULL,
+  bucket bigint NOT NULL,
   requests bigint NOT NULL DEFAULT 0,
   bytes bigint NOT NULL DEFAULT 0,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (org_id, period));
-
-CREATE TABLE IF NOT EXISTS org_billing (
-  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
-  status text NOT NULL DEFAULT 'none',
-  trial_plan text, trial_ends_at timestamptz,
-  plan text, billing text, subscription_uid text, period_end timestamptz,
-  pending_plan text, pending_billing text,
-  card_on_file boolean NOT NULL DEFAULT false,
-  cancel_at_period_end boolean NOT NULL DEFAULT false,
-  checkout_reference text, checkout_plan text, checkout_billing text,
-  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
-CREATE INDEX IF NOT EXISTS org_billing_subscription_idx ON org_billing (subscription_uid);
-
-CREATE TABLE IF NOT EXISTS billing_events (
-  event_key text PRIMARY KEY, org_id text, type text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now());
+  PRIMARY KEY (org_id, bucket));
 
 CREATE TABLE IF NOT EXISTS memberships (
   id text PRIMARY KEY,

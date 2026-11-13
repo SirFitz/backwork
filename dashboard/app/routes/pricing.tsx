@@ -116,7 +116,7 @@ function Estimator() {
 
 const FAQ: [string, string][] = [
   ["What counts as a traced request?", "One request into your services, with every hop it makes. Calls between your own services, and to databases and caches, are part of it and are not counted again."],
-  ["What happens near the limit?", "We email you at 80% and at 100%. On a paid plan nothing extra is charged without your yes; on Free, collection pauses until next month."],
+  ["What happens near the limit?", "We email you at 80% and at 100%. On a paid plan nothing extra is charged without your yes; on Free, the oldest requests and data are dropped to make room for new ones, so collection never stops."],
   ["How do we keep the bill down?", "Switch off what you don't need, for a project or a single service, from the dashboard. Quieter log levels help too. No developer is needed."],
   ["Can we pay yearly?", "Yes. Pay yearly and get two months free: Team is $290 a year, Business $990."],
   ["Do I need a card to start?", "No. Free needs no card, and the 14-day trial of Team or Business doesn't either."],

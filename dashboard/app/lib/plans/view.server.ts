@@ -1,16 +1,16 @@
-// What the Settings page shows about the organisation's plan and this month's usage.
+// What the Settings page shows about the organisation's plan and what it holds.
 import { PLANS } from "~/components/site/plans";
-import { currentPeriod, pausedReason, type Limits, type PausedBecause } from "./limits";
-import { orgLimits, orgUsageNow } from "./usage.server";
+import { isCapped, type Limits } from "./limits";
+import { bucketsSince, loadBuckets, orgLimits } from "./usage.server";
 
 export interface PlanView {
   name: string;
-  period: string;
-  requests: { used: number; limit: number | null };
-  bytes: { used: number; limit: number | null };
-  paused: PausedBecause | null;
-  /** Free pauses at the limit; paid plans carry on and bill the extra. */
-  pausesAtLimit: boolean;
+  /** True: the organisation keeps a rolling window and the oldest data is dropped as new arrives. */
+  rolling: boolean;
+  requests: { held: number; cap: number | null };
+  bytes: { held: number; cap: number | null };
+  /** Unix seconds of the oldest data still counted, or null when nothing is counted yet. */
+  since: number | null;
   hopDays: number | null;
   logDays: number | null;
 }
@@ -19,19 +19,17 @@ function nameOf(l: Limits): string {
   return PLANS.find((p) => p.id === l.plan)?.name ?? l.plan;
 }
 
-/** The plan card, or null for an unmetered organisation (nothing to show). */
-export async function loadPlanView(orgId: string): Promise<PlanView | null> {
+/** The plan card, or null for an organisation with no limits (nothing to show). */
+export async function loadPlanView(orgId: string, nowMs: number = Date.now()): Promise<PlanView | null> {
   const limits = await orgLimits(orgId);
   if (!limits) return null;
-  const period = currentPeriod();
-  const usage = await orgUsageNow(orgId, period);
+  const buckets = isCapped(limits) ? await loadBuckets(orgId, bucketsSince(nowMs)) : [];
   return {
     name: nameOf(limits),
-    period,
-    requests: { used: usage.requests, limit: limits.requestsPerMonth },
-    bytes: { used: usage.bytes, limit: limits.storageBytes },
-    paused: pausedReason(limits, usage),
-    pausesAtLimit: limits.pauseAtLimit,
+    rolling: isCapped(limits),
+    requests: { held: buckets.reduce((n, b) => n + b.requests, 0), cap: limits.maxRequests },
+    bytes: { held: buckets.reduce((n, b) => n + b.bytes, 0), cap: limits.maxBytes },
+    since: buckets.length ? buckets[0].startS : null,
     hopDays: limits.hopDays,
     logDays: limits.logDays,
   };
