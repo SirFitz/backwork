@@ -196,4 +196,15 @@ describe("hopMetricsAllowed", () => {
     expect(hopMetricsAllowed([off(Feature.Hops, { projectId: "p1" })], "p1")).toBe(false);
     expect(hopMetricsAllowed([off(Feature.Metrics, { service: "a" })], "p1")).toBe(true);
   });
+
+  test("enforceStreams counts requests started (inbound http/rpc start records) and the bytes kept", () => {
+    const OUT = `trace_id=${T} hop=out hop_id=0a0a0a0a0a0a0a0a parent_hop=5d9e0b3347c1a2f8 adapter=fetch via=http peer=risk.internal`;
+    const JOB_IN = `trace_id=${T} hop=in hop_id=0b0b0b0b0b0b0b0b adapter=bullmq via=job op=Receipts`;
+    const r = enforceStreams(push([KV_IN, KV_END, OUT, JOB_IN, PLAIN]), { projectId: "p", rows: [], filter });
+    expect(r.requests).toBe(1);
+    expect(r.bytes).toBe(r.streams.flatMap((s) => s.values).reduce((n, v) => n + Buffer.byteLength(v[1] as string), 0));
+    const none = enforceStreams(push([KV_IN]), { projectId: "p", rows: [off(Feature.Hops)], filter });
+    expect(none.requests).toBe(0);
+    expect(none.bytes).toBe(0);
+  });
 });

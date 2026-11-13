@@ -11,6 +11,8 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 import { DataControlsPanel } from "~/components/data-controls";
+import { loadPlanView } from "~/lib/plans/view.server";
+import { PausedBecause } from "~/lib/plans/limits";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { safe } from "~/lib/config.server";
 import {
@@ -57,8 +59,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     null
   );
 
+  const plan = safe(() => loadPlanView(ctx.org.id), null);
+
   return defer({
     controls,
+    plan,
     gridHeads: GRID_HEAD,
     publicUrl: config.publicUrl,
     isPlatform,
@@ -153,6 +158,10 @@ export default function Settings() {
         </Card>
       )}
 
+      <Deferred resolve={d.plan} fallback={null}>
+        {(p) => (p.data ? <PlanCard plan={p.data} /> : null)}
+      </Deferred>
+
       <Card>
         <CardHead title="Data controls" sub="what backwork collects for the whole organisation · off here is off for every project" />
         <div className="px-4 pb-4 pt-[18px] sm:pl-8 sm:pr-5">
@@ -186,5 +195,52 @@ export default function Settings() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+
+function fmtBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(0)} MB`;
+  return `${Math.round(n / 1024)} KB`;
+}
+
+function UsageBar({ label, used, limit, show }: { label: string; used: number; limit: number | null; show: (n: number) => string }) {
+  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+  return (
+    <li className="px-4 py-2.5">
+      <div className="flex items-center justify-between text-[13px]">
+        <span className="text-muted">{label}</span>
+        <span className="font-mono">{show(used)}{limit ? ` of ${show(limit)}` : ""}</span>
+      </div>
+      {limit ? (
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-label={label} aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+          <div className={cn("h-full rounded-full", pct >= 100 ? "bg-err" : pct >= 80 ? "bg-warn" : "bg-brand")} style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function PlanCard({ plan }: { plan: import("~/lib/plans/view.server").PlanView }) {
+  return (
+    <Card>
+      <CardHead title={`${plan.name} plan`} sub={`usage for ${plan.period} (UTC)`} />
+      {plan.paused ? (
+        <div className="border-b border-border bg-surface-2 px-4 py-2.5 text-[13px] text-err">
+          Collection is paused: this month's {plan.paused === PausedBecause.Requests ? "request" : "storage"} limit is reached. It resumes on the 1st (UTC).
+        </div>
+      ) : null}
+      <ul className="divide-y divide-border">
+        <UsageBar label="Traced requests" used={plan.requests.used} limit={plan.requests.limit} show={(n) => n.toLocaleString("en-GB")} />
+        <UsageBar label="Stored data" used={plan.bytes.used} limit={plan.bytes.limit} show={fmtBytes} />
+        {plan.hopDays !== null && plan.logDays !== null ? (
+          <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
+            <span className="text-muted">Kept for</span>
+            <span className="font-mono">{plan.hopDays} days (requests) · {plan.logDays} days (logs)</span>
+          </li>
+        ) : null}
+      </ul>
+    </Card>
   );
 }

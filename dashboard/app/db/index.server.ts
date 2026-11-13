@@ -29,6 +29,18 @@ CREATE TABLE IF NOT EXISTS orgs (
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_slug_uniq ON orgs (slug);
 
+ALTER TABLE orgs ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'unmetered';
+ALTER TABLE orgs ADD COLUMN IF NOT EXISTS requests_limit integer;
+ALTER TABLE orgs ADD COLUMN IF NOT EXISTS storage_limit_bytes bigint;
+
+CREATE TABLE IF NOT EXISTS org_usage (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  period text NOT NULL,
+  requests bigint NOT NULL DEFAULT 0,
+  bytes bigint NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, period));
+
 CREATE TABLE IF NOT EXISTS memberships (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
