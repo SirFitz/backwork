@@ -5,6 +5,8 @@ import { getCompiledFilter, getControls } from "~/lib/controls.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
 import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
+import { addUsage, gateFor } from "~/lib/plans/usage.server";
+import { startPlanJobs } from "~/lib/plans/retention.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
 // <endpoint>/loki/api/v1/push. The bearer token resolves to an org + project;
@@ -19,6 +21,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   const tenant = await resolveIngestToken(token);
   if (!tenant) return new Response("unauthorized", { status: 401 });
+  startPlanJobs();
+
+  // Plan limits: a paused organisation sends nothing on. 204, not an error, so the agent does not
+  // retry and buffer; the header says why, and Settings shows it.
+  const gate = await gateFor(tenant.orgId);
+  if (gate.paused) return new Response(null, { status: 204, headers: { "x-backwork-paused": gate.paused } });
 
   const ct = request.headers.get("content-type") || "application/json";
   if (!ct.includes("json")) {
@@ -57,6 +65,8 @@ export async function action({ request }: ActionFunctionArgs) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ streams: result.streams }),
     });
+    // Count what was kept, once it is stored. A push that crosses the limit is kept whole; the next one is paused.
+    if (res.ok && gate.limits) await addUsage(tenant.orgId, { requests: result.requests, bytes: result.bytes }).catch(() => undefined);
     return new Response(await res.text(), { status: res.status });
   } catch (e: unknown) {
     return new Response("ingest backend error: " + (e instanceof Error ? e.message : String(e)), { status: 502 });

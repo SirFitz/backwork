@@ -160,6 +160,10 @@ export interface EnforceResult {
   streams: LokiStream[];
   kept: number;
   dropped: number;
+  /** Requests started in what was kept: inbound HTTP or RPC hop-start records (the unit plans count). */
+  requests: number;
+  /** Bytes of the kept lines, after the filter and field stripping: what is stored. */
+  bytes: number;
 }
 
 function isDataStore(c: Classified): boolean {
@@ -174,6 +178,8 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
   const groups = new Map<string, LokiStream>();
   let kept = 0;
   let dropped = 0;
+  let requests = 0;
+  let bytes = 0;
   for (const s of streams) {
     if (!isObject(s) || !isObject(s.stream) || !Array.isArray(s.values)) continue;
     const sent = typeof s.stream.service === "string" ? s.stream.service : null;
@@ -231,9 +237,11 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
       }
       g.values.push([v[0], out, ...v.slice(2)]);
       kept++;
+      bytes += Buffer.byteLength(out);
+      if (c.kind === LineKind.Hop && c.fields.hop === "in" && (c.fields.via === "http" || c.fields.via === "rpc")) requests++;
     }
   }
-  return { streams: [...groups.values()], kept, dropped };
+  return { streams: [...groups.values()], kept, dropped, requests, bytes };
 }
 
 /** Whether a hop-metrics remote write for this project is saved (design 19.1). */

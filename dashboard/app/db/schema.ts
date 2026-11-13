@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, bigint, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
@@ -27,8 +27,21 @@ export const orgs = pgTable("orgs", {
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   status: text("status").$type<"active" | "suspended">().notNull().default("active"),
+  /** A plan id (free, team, business, enterprise) or "unmetered". See lib/plans/limits.ts. */
+  plan: text("plan").notNull().default("unmetered"),
+  requestsLimit: integer("requests_limit"),
+  storageLimitBytes: bigint("storage_limit_bytes", { mode: "number" }),
   ...ts(),
 }, (t) => ({ slugUniq: uniqueIndex("orgs_slug_uniq").on(t.slug) }));
+
+/** What an organisation has collected in one billing month (UTC, YYYY-MM). */
+export const orgUsage = pgTable("org_usage", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  period: text("period").notNull(),
+  requests: bigint("requests", { mode: "number" }).notNull().default(0),
+  bytes: bigint("bytes", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.period] }) }));
 
 export const memberships = pgTable("memberships", {
   id: id(),
