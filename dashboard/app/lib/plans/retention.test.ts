@@ -1,9 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { limitsFor } from "./limits";
-import { capCutoff, expiryEnd, purgeOrg, type LokiOps, type VolumePoint } from "./retention.server";
+import { expiryEnd, trimOrg, type BucketStore, type LokiOps } from "./retention.server";
+import type { Bucket } from "./window";
 
 const H = 3_600_000;
 const NOW = Date.UTC(2026, 10, 13, 10, 30);
+const free = limitsFor({ plan: "free", requestsLimit: null, storageLimitBytes: null })!;
+const team = limitsFor({ plan: "team", requestsLimit: null, storageLimitBytes: null })!;
+
+function fakes(buckets: Bucket[]): { loki: LokiOps; store: BucketStore; removed: Array<[string, number, number]>; pruned: number[] } {
+  const removed: Array<[string, number, number]> = [];
+  const pruned: number[] = [];
+  return {
+    removed, pruned,
+    loki: { remove: async (q, s, e) => void removed.push([q, s, e]) },
+    store: { load: async () => buckets, prune: async (_o, before) => void pruned.push(before) },
+  };
+}
 
 describe("expiryEnd", () => {
   test("is now minus the days, rounded down to the hour, in unix seconds", () => {
@@ -11,34 +24,47 @@ describe("expiryEnd", () => {
   });
 });
 
-describe("capCutoff", () => {
-  const hours = (bytes: number[]): VolumePoint[] => bytes.map((b, i) => ({ tsMs: i * H, bytes: b }));
-  test("null when it all fits", () => expect(capCutoff(hours([10, 10, 10]), 100)).toBeNull());
-  test("keeps the newest buckets within 90% of the cap", () => {
-    // newest first: 40, 40 (=80 <= 90), then 40 would make 120 > 90
-    expect(capCutoff(hours([40, 40, 40, 40]), 100)).toBe(2 * H);
-  });
-  test("one bucket bigger than the cap keeps only the newest bucket", () => {
-    expect(capCutoff(hours([50, 500]), 100)).toBe(1 * H);
-  });
-});
-
-describe("purgeOrg", () => {
-  const free = limitsFor({ plan: "free", requestsLimit: null, storageLimitBytes: null })!;
-  function fake(points: VolumePoint[]): { ops: LokiOps; removed: Array<[string, number, number]> } {
-    const removed: Array<[string, number, number]> = [];
-    return { removed, ops: { volume: async () => points, remove: async (q, s, e) => void removed.push([q, s, e]) } };
-  }
-  test("expires hops and logs by age and does not trim when under the cap", async () => {
-    const f = fake([{ tsMs: NOW - H, bytes: 1000 }]);
-    const r = await purgeOrg("ORG", free, f.ops, NOW);
+describe("trimOrg", () => {
+  const nowS = Math.floor(NOW / 1000);
+  test("a window that fits only expires by age and prunes nothing", async () => {
+    const f = fakes([{ startS: nowS - 600, requests: 10, bytes: 1000 }]);
+    const r = await trimOrg("ORG", free, f.loki, f.store, NOW);
     expect(f.removed.map((x) => x[0])).toEqual(['{org_id="ORG",kind="hop"}', '{org_id="ORG",kind="log"}']);
-    expect(r.capCutoffMs).toBeNull();
+    expect(r.cutoffS).toBeNull();
+    expect(f.pruned).toEqual([]);
   });
-  test("trims the oldest hours when over the cap", async () => {
-    const f = fake([{ tsMs: NOW - 3 * H, bytes: 900 * 1024 ** 2 }, { tsMs: NOW - 2 * H, bytes: 900 * 1024 ** 2 }, { tsMs: NOW - H, bytes: 100 * 1024 ** 2 }]);
-    const r = await purgeOrg("ORG", free, f.ops, NOW);
-    expect(r.capCutoffMs).toBe(NOW - H);
-    expect(f.removed.at(-1)).toEqual(['{org_id="ORG"}', Math.floor((NOW - 30 * 24 * H) / 86_400_000) * 86400, Math.floor((NOW - H) / 1000)]);
+
+  test("over the request cap: deletes everything older than the cut and forgets those counters", async () => {
+    // newest 5-min bucket first: 60K, 60K -> the second would make 120K > 100K
+    const f = fakes([
+      { startS: nowS - 1800, requests: 60_000, bytes: 1 },
+      { startS: nowS - 900, requests: 60_000, bytes: 1 },
+      { startS: nowS - 600, requests: 60_000, bytes: 1 },
+    ]);
+    const r = await trimOrg("ORG", free, f.loki, f.store, NOW);
+    expect(r.cutoffS).toBe(nowS - 600);
+    expect(f.removed.at(-1)?.[0]).toBe('{org_id="ORG"}');
+    expect(f.removed.at(-1)?.[2]).toBe(nowS - 600);
+    expect(f.pruned).toEqual([nowS - 600]);
+  });
+
+  test("a repeat cut only re-asks for the stretch since the last one", async () => {
+    const last = new Map<string, number>();
+    const rows: Bucket[] = [{ startS: nowS - 900, requests: 90_000, bytes: 1 }, { startS: nowS - 600, requests: 90_000, bytes: 1 }];
+    const a = fakes(rows);
+    await trimOrg("ORG", free, a.loki, a.store, NOW, last);
+    const b = fakes(rows);
+    await trimOrg("ORG", free, b.loki, b.store, NOW + 600_000, last);
+    const firstStart = a.removed.at(-1)![1];
+    const secondStart = b.removed.at(-1)![1];
+    expect(secondStart).toBeGreaterThan(firstStart);
+    expect(secondStart).toBe(nowS - 600 - 2 * 3600);
+  });
+
+  test("a plan with no window is never cut by size", async () => {
+    const f = fakes([{ startS: nowS - 600, requests: 1e9, bytes: 1e12 }]);
+    const r = await trimOrg("ORG", team, f.loki, f.store, NOW);
+    expect(r.cutoffS).toBeNull();
+    expect(f.removed.map((x) => x[0])).toEqual(['{org_id="ORG",kind="hop"}', '{org_id="ORG",kind="log"}']);
   });
 });

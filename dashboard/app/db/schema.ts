@@ -34,14 +34,13 @@ export const orgs = pgTable("orgs", {
   ...ts(),
 }, (t) => ({ slugUniq: uniqueIndex("orgs_slug_uniq").on(t.slug) }));
 
-/** What an organisation has collected in one billing month (UTC, YYYY-MM). */
-export const orgUsage = pgTable("org_usage", {
+/** What a limited organisation took in per 5-minute bucket (bucket = start, unix seconds). The rolling window is cut from these. */
+export const orgBuckets = pgTable("org_buckets", {
   orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
-  period: text("period").notNull(),
+  bucket: bigint("bucket", { mode: "number" }).notNull(),
   requests: bigint("requests", { mode: "number" }).notNull().default(0),
   bytes: bigint("bytes", { mode: "number" }).notNull().default(0),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.period] }) }));
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.bucket] }) }));
 
 export const memberships = pgTable("memberships", {
   id: id(),

@@ -12,7 +12,6 @@ import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 import { DataControlsPanel } from "~/components/data-controls";
 import { loadPlanView } from "~/lib/plans/view.server";
-import { PausedBecause } from "~/lib/plans/limits";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { safe } from "~/lib/config.server";
 import {
@@ -222,21 +221,37 @@ function UsageBar({ label, used, limit, show }: { label: string; used: number; l
   );
 }
 
+function fmtSince(sec: number): string {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - sec) / 60));
+  if (mins < 90) return `${mins} min`;
+  const hrs = mins / 60;
+  return hrs < 48 ? `${hrs.toFixed(1)} hours` : `${Math.round(hrs / 24)} days`;
+}
+
 function PlanCard({ plan }: { plan: import("~/lib/plans/view.server").PlanView }) {
   return (
     <Card>
-      <CardHead title={`${plan.name} plan`} sub={`usage for ${plan.period} (UTC)`} right={<Link to="/billing" className="text-[13px] text-brand hover:underline">Billing</Link>} />
-      {plan.paused ? (
-        <div className="border-b border-border bg-surface-2 px-4 py-2.5 text-[13px] text-err">
-          Collection is paused: this month's {plan.paused === PausedBecause.Requests ? "request" : "storage"} limit is reached. It resumes on the 1st (UTC).
-        </div>
-      ) : null}
+      <CardHead
+        title={`${plan.name} plan`}
+        sub={plan.rolling ? "keeps your newest requests and data; the oldest are dropped as new ones arrive" : "what this plan keeps"}
+        right={<Link to="/billing" className="text-[13px] text-brand hover:underline">Billing</Link>}
+      />
       <ul className="divide-y divide-border">
-        <UsageBar label="Traced requests" used={plan.requests.used} limit={plan.requests.limit} show={(n) => n.toLocaleString("en-GB")} />
-        <UsageBar label="Stored data" used={plan.bytes.used} limit={plan.bytes.limit} show={fmtBytes} />
+        {plan.rolling ? (
+          <>
+            <UsageBar label="Traced requests held" used={plan.requests.held} limit={plan.requests.cap} show={(n) => n.toLocaleString("en-GB")} />
+            <UsageBar label="Stored data held" used={plan.bytes.held} limit={plan.bytes.cap} show={fmtBytes} />
+            {plan.since !== null ? (
+              <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
+                <span className="text-muted">Oldest request held</span>
+                <span className="font-mono">{fmtSince(plan.since)} ago</span>
+              </li>
+            ) : null}
+          </>
+        ) : null}
         {plan.hopDays !== null && plan.logDays !== null ? (
           <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
-            <span className="text-muted">Kept for</span>
+            <span className="text-muted">Kept for at most</span>
             <span className="font-mono">{plan.hopDays} days (requests) · {plan.logDays} days (logs)</span>
           </li>
         ) : null}
