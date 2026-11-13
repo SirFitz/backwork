@@ -6,7 +6,7 @@ import { defer } from "@remix-run/node";
 import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, Copy, CornerDownRight, Database, Link2, LogIn, OctagonX, RotateCcw, SearchX, Unplug, Zap,
+  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Database, Link2, LogIn, OctagonX, RotateCcw, SearchX, Unplug, Zap,
 } from "lucide-react";
 import { Badge, Card, CardHeadText, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
@@ -15,6 +15,7 @@ import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { splitRequests, type RequestPart } from "~/lib/hops/split";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
+import { buildPathNodes, expandableKeys, rowUs, visibleRows, type VisibleRow } from "~/lib/hops/path-rows";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
@@ -663,39 +664,64 @@ function ticks(axisMs: number): Array<{ at: number; label: string }> {
 
 const GRID = "md:grid md:grid-cols-[minmax(0,1fr)_44px_96px_84px_minmax(200px,330px)] md:gap-x-3 md:items-center";
 
+/** A group of repeated calls drawn as one hop: from the first start to the last end. */
+function groupSpan(members: readonly Hop[]): Hop {
+  const first = members[0];
+  const start = Math.min(...members.map((m) => m.startMs));
+  const end = Math.max(...members.map((m) => m.endMs ?? m.startMs));
+  return { ...first, startMs: start, endMs: end, durationUs: Math.round((end - start) * 1000), children: [], gaps: [], unrecorded: [] };
+}
+
 function PathCard({ ctx }: { ctx: RowCtx }) {
   const anyOpen = ctx.tree.hops.some((h) => h.state !== HopState.Finished);
+  const nodes = useMemo(() => buildPathNodes(ctx.tree.roots), [ctx.tree]);
+  // What the viewer opened or folded by hand; everything else follows the defaults (CP-26).
+  const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const headUs = headHop(ctx.tree)?.durationUs ?? 0;
+  const visible = visibleRows(nodes, overrides, headUs);
+  const foldable = useMemo(() => expandableKeys(nodes), [nodes]);
+  const allOpen = foldable.length > 0 && foldable.every((k) => visible.some((r) => r.node.key === k && r.expanded));
+  const toggle = (key: string, open: boolean): void => setOverrides((m) => new Map(m).set(key, open));
+  const setAll = (open: boolean): void => setOverrides(new Map(foldable.map((k) => [k, open])));
   const rows: ReactNode[] = [];
-  const pushHop = (hop: Hop, depth: number): void => {
-    for (const g of hop.gaps) {
-      if (g.kind === GapKind.OutsideCaller) rows.push(<GapRow key={`oc-${hop.hopId}`} depth={depth} note title="Called from outside this organisation." text="The caller's records are not here: it belongs to another organisation, or its records were not collected." icon={<LogIn className="h-3.5 w-3.5 shrink-0 text-faint" />} />);
-      if (g.kind === GapKind.TracerBetween) rows.push(<GapRow key={`tb-${hop.hopId}`} depth={depth} title="Passed through a tracer-only service." text="A service that sends spans but no hop records sat between these two hops." note />);
-    }
-    rows.push(<HopRow key={hop.hopId} hop={hop} depth={depth} ctx={ctx} />);
-    if (ctx.openHop === hop.hopId) rows.push(<HopDetail key={`d-${hop.hopId}`} hop={hop} depth={depth} ctx={ctx} />);
-    for (const c of hop.children) pushHop(c, depth + 1);
-    for (const u of hop.unrecorded) {
-      rows.push(
-        <GapRow key={`u-${hop.hopId}-${u.store}`} depth={depth + 1} note
-          title={`${plural(u.calls, u.store === StoreKind.Db ? "more database call" : "more cache call", u.store === StoreKind.Db ? "more database calls" : "more cache calls")}`}
-          text={`not recorded one by one · ${fmtUs(u.us)} in all`} icon={u.store === StoreKind.Db ? <Database className="h-3.5 w-3.5 text-faint" /> : <Zap className="h-3.5 w-3.5 text-faint" />} />,
-      );
-    }
-    for (const g of hop.gaps) {
-      if (g.kind === GapKind.NoReceiver) {
+  for (const row of visible) {
+    const hop = row.node.hop;
+    if (row.tail) {
+      const open = visible.some((r) => !r.tail && r.node === row.node && r.expanded);
+      for (const u of open ? hop.unrecorded : []) {
         rows.push(
-          <GapRow key={`nr-${hop.hopId}`} depth={depth + 1} title={`${g.label}.`}
-            text={hop.via === Via.Job ? "The job was not picked up, or its worker does not report hops." : "The receiver does not report hop records, or the call never arrived."} />,
+          <GapRow key={`u-${hop.hopId}-${u.store}`} depth={row.depth + 1} note
+            title={`${plural(u.calls, u.store === StoreKind.Db ? "more database call" : "more cache call", u.store === StoreKind.Db ? "more database calls" : "more cache calls")}`}
+            text={`not recorded one by one · ${fmtUs(u.us)} in all`} icon={u.store === StoreKind.Db ? <Database className="h-3.5 w-3.5 text-faint" /> : <Zap className="h-3.5 w-3.5 text-faint" />} />,
         );
       }
+      for (const g of hop.gaps) {
+        if (g.kind === GapKind.NoReceiver) {
+          rows.push(
+            <GapRow key={`nr-${hop.hopId}`} depth={row.depth + 1} title={`${g.label}.`}
+              text={hop.via === Via.Job ? "The job was not picked up, or its worker does not report hops." : "The receiver does not report hop records, or the call never arrived."} />,
+          );
+        }
+      }
+      continue;
     }
-  };
-  for (const r of ctx.tree.roots) pushHop(r, 0);
+    for (const g of hop.gaps) {
+      if (g.kind === GapKind.OutsideCaller) rows.push(<GapRow key={`oc-${hop.hopId}`} depth={row.depth} note title="Called from outside this organisation." text="The caller's records are not here: it belongs to another organisation, or its records were not collected." icon={<LogIn className="h-3.5 w-3.5 shrink-0 text-faint" />} />);
+      if (g.kind === GapKind.TracerBetween) rows.push(<GapRow key={`tb-${hop.hopId}`} depth={row.depth} title="Passed through a tracer-only service." text="A service that sends spans but no hop records sat between these two hops." note />);
+    }
+    rows.push(<HopRow key={row.node.key} row={row} ctx={ctx} onFold={(open) => toggle(row.node.key, open)} />);
+    if (!row.node.members && ctx.openHop === hop.hopId) rows.push(<HopDetail key={`d-${hop.hopId}`} hop={hop} call={row.node.call} depth={row.depth} ctx={ctx} />);
+  }
   const dbHost = sharedDatabaseHost(ctx.tree.hops);
   return (
     <Card className="relative">
       <div data-card-head className="flex min-h-11 items-center justify-between gap-x-3 border-b border-border px-4 py-1.5">
         <CardHeadText title="Path" sub="Every hop this request made, parent to child" className="hidden md:flex md:min-w-[8rem]" />
+        {foldable.length > 0 ? (
+          <button type="button" onClick={() => setAll(!allOpen)} className="shrink-0 rounded-md border border-border px-2 py-1 text-2xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg">
+            {allOpen ? "Fold all" : "Open all"}
+          </button>
+        ) : null}
         {/* the legend stays one row (scrolls sideways when it holds many services) so the header stays one row */}
         <div className="scroll-thin flex min-w-0 max-w-full items-center gap-x-3.5 overflow-x-auto whitespace-nowrap text-2xs text-muted">
           {ctx.tree.services.map((s) => (
@@ -760,13 +786,43 @@ function HopText({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
   );
 }
 
-function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
+/** The words on a merged call row: what the callee spent and what the network added. */
+function callNote(call: Hop, hop: Hop): string {
+  if (call.durationUs === null || hop.durationUs === null) return "";
+  const net = call.durationUs - hop.durationUs;
+  return net > 0 ? `handled in ${fmtUs(hop.durationUs)} · network ${fmtUs(net)}` : "";
+}
+
+function FoldButton({ row, onFold }: { row: VisibleRow; onFold: (open: boolean) => void }) {
+  if (!row.expandable) return <span className="inline-block h-[14px] w-[14px] shrink-0" aria-hidden />;
+  const Icon = row.expanded ? ChevronDown : ChevronRight;
+  return (
+    <button
+      type="button"
+      aria-expanded={row.expanded}
+      aria-label={row.expanded ? "Fold what this hop made" : "Show what this hop made"}
+      onClick={(e) => { e.stopPropagation(); onFold(!row.expanded); }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-fg"
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function HopRow({ row, ctx, onFold }: { row: VisibleRow; ctx: RowCtx; onFold: (open: boolean) => void }) {
+  const { node, depth } = row;
+  const hop = node.hop;
+  const members = node.members;
+  // A merged pair is drawn with the caller's timing (what the caller waited); a group as one span.
+  const timed: Hop = members ? groupSpan(members) : node.call ?? hop;
   const status = statusOf(hop);
-  const note = noteOf(hop);
-  const geom = geometry(hop, ctx.axisStart, ctx.axisMs, ctx.now);
-  const selected = ctx.openHop === hop.hopId;
+  const note = [node.call ? callNote(node.call, hop) : "", members ? `${members.length} calls · ${fmtUs(rowUs(node))} in all` : noteOf(hop)].filter(Boolean).join(" · ");
+  const geom = geometry(timed, ctx.axisStart, ctx.axisMs, ctx.now);
+  const selected = !members && ctx.openHop === hop.hopId;
   const colour = ctx.colours.get(hop.service) as string;
-  const toggle = () => ctx.setOpenHop(selected ? null : hop.hopId);
+  const toggle = () => (members ? onFold(!row.expanded) : ctx.setOpenHop(selected ? null : hop.hopId));
+  const took = members ? fmtUs(rowUs(node)) : tookText(timed, ctx.now);
   return (
     <div
       role="button"
@@ -780,16 +836,20 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
       {/* desktop */}
       <div className="hidden min-w-0 items-center gap-[7px] whitespace-nowrap md:flex" style={{ paddingLeft: depth * 18 }}>
         {depth ? <CornerDownRight className="-ml-[17px] -mr-[3px] h-[13px] w-[13px] shrink-0 text-border-strong" /> : null}
+        <FoldButton row={row} onFold={onFold} />
         <HopText hop={hop} ctx={ctx} />
+        {members ? <span className="shrink-0 font-mono text-[12px] font-medium text-muted">×{members.length}</span> : null}
         {note ? <span className="min-w-0 truncate text-2xs text-faint">{note}</span> : null}
+        {row.summary && !members ? <span className="min-w-0 shrink-0 truncate rounded-full bg-surface-2 px-2 py-px text-2xs text-muted">{row.summary}</span> : null}
       </div>
       <div className="hidden font-mono text-[11.5px] text-faint md:block">{hop.via}</div>
       <div className="hidden md:block"><Badge tone={status.tone}>{status.text}</Badge></div>
-      <div className="hidden text-right font-mono text-[12.5px] tabular-nums md:block">{tookText(hop, ctx.now)}</div>
-      <div className="hidden md:block"><Bar hop={hop} colour={colour} geom={geom} /></div>
+      <div className="hidden text-right font-mono text-[12.5px] tabular-nums md:block">{took}</div>
+      <div className="hidden md:block"><Bar hop={timed} colour={colour} geom={geom} /></div>
       {/* phone: the hop stacks and keeps its own time bar under its text */}
       <div className="md:hidden" style={{ paddingLeft: depth * 12 }}>
         <div className="flex min-w-0 items-center gap-[7px] text-[12.5px]">
+          <FoldButton row={row} onFold={onFold} />
           <IoTag dir={hop.dir} />
           <Dot colour={colour} />
           <span className="min-w-0 [overflow-wrap:anywhere]">
@@ -802,17 +862,18 @@ function HopRow({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
           <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt ?? undefined}>{statementTail(hop)}</div>
         ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
-          {[hop.via, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), tookText(hop, ctx.now)].filter(Boolean).join(" · ")}
+          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary].filter(Boolean).join(" · ")}
         </div>
-        <Bar hop={hop} colour={colour} geom={geom} thin />
+        <Bar hop={timed} colour={colour} geom={geom} thin />
       </div>
     </div>
   );
 }
 
-function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }) {
+function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | null; depth: number; ctx: RowCtx }) {
   const facts: Array<[string, ReactNode]> = [
     ["Hop", hop.hopId],
+    ...(call ? ([["Called as", `${outLabel(call)} · the caller waited ${tookText(call, ctx.now)}`]] as Array<[string, ReactNode]>) : []),
     ["Parent", hop.parentHop ?? "none"],
     ["Adapter", hop.adapter ?? "not reported"],
     ["Started", <Clock key="s" ts={hop.startMs} />],
