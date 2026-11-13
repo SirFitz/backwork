@@ -39,7 +39,8 @@ function bounds(window: SearchWindow, now: number): { start: number; end: number
 }
 
 function toRaw(e: loki.LogEntry): RawLogEntry {
-  return { ts: e.ts, line: e.line, labels: e.labels };
+  // Hop records keep Loki's sub-millisecond time, so records written in one millisecond stay in order.
+  return { ts: e.tsExactMs ?? e.ts, line: e.line, labels: e.labels };
 }
 
 function assertTraceId(id: TraceId): void {
