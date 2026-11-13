@@ -408,6 +408,48 @@ describe("calls that run on after the response", () => {
     expect(late.durationUs).toBe(100000);
     expect(t.split).toMatchObject({ totalUs: 50000, dbUs: 10000, cacheUs: 0, ownUs: 40000 });
   });
+  test("CP-27: a call recorded as starting before its caller is moved to the caller's start, keeping its duration", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 14, dur: 18 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 0, dur: 10, sent: false }),
+      ...hop("out", { id: 3, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: 20, dur: 5, sent: false }),
+    ]);
+    const early = t.hops.find((h) => h.hopId === hid(2))!;
+    expect(early.startMs).toBeCloseTo(T0 + 14, 6);
+    expect(early.endMs).toBeCloseTo(T0 + 24, 6);
+    expect(early.durationUs).toBe(10000);
+    expect(early.skewMs).toBeCloseTo(14, 6);
+    const fine = t.hops.find((h) => h.hopId === hid(3))!;
+    expect(fine.skewMs).toBe(0);
+    expect(fine.startMs).toBeCloseTo(T0 + 20, 6);
+  });
+  test("CP-27: a call reaching into its caller from before is clipped at the caller's start, its end kept", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, via: "db", op: "select", peer: "db", start: -20, dur: 60, sent: false }),
+    ]);
+    const call = t.hops.find((h) => h.hopId === hid(2))!;
+    expect(call.startMs).toBeCloseTo(T0, 6);
+    expect(call.endMs).toBeCloseTo(T0 + 40, 6);
+    expect(call.durationUs).toBe(60000);
+    expect(call.skewMs).toBeCloseTo(20, 6);
+  });
+  test("CP-27: a moved call keeps its place in start order and its children follow it", () => {
+    const t = treeOf([
+      ...hop("in", { id: 1, svc: API, op: "/x", start: 10, dur: 40 }),
+      ...hop("out", { id: 2, parent: 1, svc: API, method: "GET", peer: "other.internal", start: 2, dur: 20, status: 200 }),
+      ...hop("in", { id: 3, parent: 2, svc: RISK, op: "/y", start: 3, dur: 15, status: 200 }),
+    ]);
+    const call = t.hops.find((h) => h.hopId === hid(2))!;
+    const callee = t.hops.find((h) => h.hopId === hid(3))!;
+    expect(call.startMs).toBeCloseTo(T0 + 10, 6);
+    expect(callee.startMs).toBeGreaterThanOrEqual(call.startMs);
+    expect(t.hops.map((h) => h.hopId)).toEqual([hid(1), hid(2), hid(3)]);
+  });
+  test("CP-27: nothing moves when every call starts at or after its caller", () => {
+    const t = treeOf(healthy());
+    expect(t.hops.every((h) => h.skewMs === 0)).toBe(true);
+  });
   test("a call wholly after the response is tagged, drawn where it ran, and left out of the bar", () => {
     const t = treeOf([
       ...hop("in", { id: 1, svc: API, op: "/x", start: 0, dur: 50 }),

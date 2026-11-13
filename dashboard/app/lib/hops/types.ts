@@ -215,6 +215,10 @@ export interface Hop {
   /** An outbound call that ended after its inbound hop's end record: it ran on after the response
    *  was sent. Drawn where it ran and left out of "where the time went". */
   afterResponse: boolean;
+  /** Milliseconds this hop's start was moved later because its records put it before its parent's
+   *  start, which cannot happen (clock difference, a late start record, or queue time in the
+   *  duration). 0 when not moved. */
+  skewMs: number;
   children: Hop[];
 }
 

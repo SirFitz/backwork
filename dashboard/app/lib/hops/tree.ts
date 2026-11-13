@@ -92,6 +92,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     unrecorded: [],
     isStore: isStoreVia(base.via),
     afterResponse: false,
+    skewMs: 0,
     children: [],
   };
 }
@@ -242,6 +243,29 @@ function dedupeLinks(links: readonly LinkedId[]): LinkedId[] {
 }
 
 /**
+ * A call cannot start before the hop that made it. When its records say so, its start moves to the
+ * parent's start and `skewMs` says by how much:
+ * - wholly before the parent (a clock difference between machines, or a start record written late):
+ *   the whole call moves later and keeps its duration;
+ * - reaching into the parent from before (an ORM's queue time counted in the duration): only the
+ *   start is clipped; the end stays where it was recorded, and the time split already counts it that way.
+ * Parents are visited before their children, so a moved parent is the reference for its children.
+ */
+function alignToParents(flat: readonly Hop[], byId: ReadonlyMap<HopId, Hop>): void {
+  for (const h of flat) {
+    const parent = h.parentHop ? byId.get(h.parentHop) : undefined;
+    if (!parent || parent === h) continue;
+    const early = parent.startMs - h.startMs;
+    if (early <= 0) continue;
+    const whollyBefore = h.endMs !== null && h.endMs <= parent.startMs;
+    h.startMs = parent.startMs;
+    if (whollyBefore && h.endMs !== null) h.endMs += early;
+    h.skewMs = early;
+  }
+  for (const h of flat) h.children.sort(byStart);
+}
+
+/**
  * Build the tree of one trace.
  * @param records hop records of the trace (parsed, any order)
  * @param logs ordinary log lines of the trace
@@ -294,6 +318,11 @@ export function buildRequestTree(
     const end = windowEnd(h, now);
     h.logs = parent.logs.filter((l) => l.timeMs >= h.startMs && l.timeMs <= end);
   }
+
+  // A call cannot start before the hop that made it. When the records say so (a clock difference
+  // between machines, or a start record written late), move the call, and what it made, later by
+  // the difference and keep its duration, so the page never draws a child ahead of its parent.
+  alignToParents(flat, byId);
 
   // Calls still running when the response went: drawn where they ran, out of the time split.
   for (const h of inbound) {

@@ -246,7 +246,9 @@ function geometry(hop: Hop, axisStart: number, axisMs: number, now: number): Bar
   }
   const left = Math.min(100, Math.max(0, (startOff / axisMs) * 100));
   if (hop.state !== HopState.Finished) return { left, width: Math.max(100 - left, 0.9), open: true, later: null };
-  const width = Math.min(100 - left, Math.max(((elapsedUs(hop, now) / 1000) / axisMs) * 100, 0.9));
+  // A start moved to its caller's start (skewMs) is drawn from there to where it ended.
+  const drawnMs = hop.skewMs > 0 && hop.endMs !== null ? hop.endMs - hop.startMs : elapsedUs(hop, now) / 1000;
+  const width = Math.min(100 - left, Math.max((drawnMs / axisMs) * 100, 0.9));
   return { left, width: Math.max(width, 0.9), open: false, later: null };
 }
 
@@ -820,6 +822,7 @@ function HopDetail({ hop, depth, ctx }: { hop: Hop; depth: number; ctx: RowCtx }
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
   }
+  if (hop.skewMs > 0) facts.push(["Start", `drawn from its caller's start: its records put it ${fmtGap(hop.skewMs)} earlier`]);
   if (hop.handoff) facts.push(["Made", "in the background (handoff)"]);
   else if (hop.afterResponse) facts.push(["Note", "ended after the response"]);
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
