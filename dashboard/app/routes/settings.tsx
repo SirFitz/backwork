@@ -225,7 +225,7 @@ function UsageBar({ label, used, limit, show }: { label: string; used: number; l
 function PlanCard({ plan }: { plan: import("~/lib/plans/view.server").PlanView }) {
   return (
     <Card>
-      <CardHead title={`${plan.name} plan`} sub={`usage for ${plan.period} (UTC)`} />
+      <CardHead title={`${plan.name} plan`} sub={`usage for ${plan.period} (UTC)`} right={<Link to="/billing" className="text-[13px] text-brand hover:underline">Billing</Link>} />
       {plan.paused ? (
         <div className="border-b border-border bg-surface-2 px-4 py-2.5 text-[13px] text-err">
           Collection is paused: this month's {plan.paused === PausedBecause.Requests ? "request" : "storage"} limit is reached. It resumes on the 1st (UTC).

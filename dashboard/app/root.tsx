@@ -42,6 +42,7 @@ import {
   Search,
   Sun,
   Users,
+  CreditCard,
 } from "lucide-react";
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
@@ -114,6 +115,7 @@ const NAV = [
   { to: "/errors", label: "Errors", icon: Bug },
   { to: "/alerts", label: "Alerts", icon: BellRing },
   { to: "/projects", label: "Projects", icon: FolderKanban },
+  { to: "/billing", label: "Billing", icon: CreditCard },
   { to: "/settings", label: "Settings", icon: Cog },
 ];
 

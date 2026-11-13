@@ -6,7 +6,25 @@ export const config = {
   ingestToken: process.env.INGEST_TOKEN || "",
   // public base URL, used by the agent install script
   publicUrl: process.env.PUBLIC_URL || "https://backwork.dev",
+  // Billing through Inkress (BAC-57). Off until the keys are set.
+  billing: {
+    /** Username of the Inkress merchant that sells backwork's plans. */
+    merchant: process.env.INKRESS_BILLING_MERCHANT || "backwork",
+    /** `live` = api.inkress.com; anything else = the Inkress dev API. */
+    mode: process.env.INKRESS_BILLING_API_MODE || "test",
+    /** Reads and checkout links. */
+    platformKey: process.env.INKRESS_BILLING_PLATFORM_KEY || "",
+    /** Merchant-bound key, for plan changes. */
+    secretKey: process.env.INKRESS_BILLING_SECRET_KEY || process.env.INKRESS_BILLING_PLATFORM_KEY || "",
+    /** The merchant's client secret, which signs webhook tokens. */
+    webhookSecret: process.env.INKRESS_BILLING_WEBHOOK_SECRET || "",
+  },
 };
+
+/** Billing can take payments only when the Inkress keys are set. */
+export function billingConfigured(): boolean {
+  return !!config.billing.platformKey && !!config.billing.webhookSecret;
+}
 
 const DEFAULT_TIMEOUT = 15000;
 

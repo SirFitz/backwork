@@ -10,10 +10,18 @@ import { createUserSession } from "~/lib/auth/session.server";
 import { getUser } from "~/lib/auth/context.server";
 import { assertSameOrigin, clientIp, rateLimit } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
+import { isPaidPlanId } from "~/lib/billing/rules";
+import type { PaidPlanId } from "~/lib/billing/types";
+
+/** The plan a pricing-page button asked for (?plan=team), if it is one we sell. */
+function wantedPlan(request: Request): PaidPlanId | null {
+  const plan = new URL(request.url).searchParams.get("plan");
+  return isPaidPlanId(plan) ? plan : null;
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   if (await getUser(request)) throw redirect("/");
-  return json({});
+  return json({ plan: wantedPlan(request) });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -43,7 +51,8 @@ export async function action({ request }: ActionFunctionArgs) {
     isPlatformAdmin: anyUser.length === 0, // first user bootstraps as platform admin
     emailVerifiedAt: new Date(),
   });
-  return createUserSession(id, null, "/onboarding", 0);
+  const plan = wantedPlan(request);
+  return createUserSession(id, null, plan ? `/onboarding?plan=${plan}` : "/onboarding", 0);
 }
 
 export default function Register() {
