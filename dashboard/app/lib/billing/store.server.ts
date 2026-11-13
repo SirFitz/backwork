@@ -1,10 +1,9 @@
 // Persistence for billing: the org_billing row, handled webhook deliveries, and writing the
 // plan an organisation gets onto the org itself (which the ingest limits read).
-import { and, eq, lte, ne } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { billingEvents, orgBilling, orgs } from "~/db/schema";
 import type { PlanId } from "~/components/site/plans";
-import { UNMETERED } from "~/lib/plans/limits";
 import { invalidate } from "~/lib/cache.server";
 import { AccountStatus, type BillingRow } from "./types";
 import { isBilling, isPaidPlanId } from "./rules";
@@ -82,8 +81,7 @@ export const dbStore: BillingStore = {
 
   async setOrgPlan(orgId, plan) {
     await ensureSchema();
-    // An unmetered organisation (backwork's own, internal apps) is never moved onto a plan.
-    await db.update(orgs).set({ plan, updatedAt: new Date() }).where(and(eq(orgs.id, orgId), ne(orgs.plan, UNMETERED)));
+    await db.update(orgs).set({ plan, updatedAt: new Date() }).where(eq(orgs.id, orgId));
     invalidate(`plan:${orgId}`);
   },
 
