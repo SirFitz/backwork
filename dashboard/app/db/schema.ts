@@ -34,6 +34,14 @@ export const orgs = pgTable("orgs", {
   ...ts(),
 }, (t) => ({ slugUniq: uniqueIndex("orgs_slug_uniq").on(t.slug) }));
 
+/** What a metered organisation took in per UTC day. The Usage page reads these; nothing trims them. */
+export const orgDaily = pgTable("org_daily", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  day: text("day").notNull(),
+  requests: bigint("requests", { mode: "number" }).notNull().default(0),
+  bytes: bigint("bytes", { mode: "number" }).notNull().default(0),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.day] }) }));
+
 /** What a limited organisation took in per 5-minute bucket (bucket = start, unix seconds). The rolling window is cut from these. */
 export const orgBuckets = pgTable("org_buckets", {
   orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
