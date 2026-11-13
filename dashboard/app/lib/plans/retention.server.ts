@@ -1,6 +1,7 @@
 // Expiry and the storage cap for metered organisations. Loki holds the data, so this asks it to
 // delete: older than the plan's retention, and the oldest hours when an organisation holds more
 // than its storage limit. Runs every few hours inside the dashboard; every call is idempotent.
+import { billing } from "~/lib/billing/index.server";
 import { ne } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { orgs } from "~/db/schema";
@@ -151,7 +152,11 @@ declare global {
 export function startPlanJobs(): void {
   if (globalThis.__bwPlanJobs) return;
   globalThis.__bwPlanJobs = true;
-  const run = (): void => void runPlanRetention().catch((e: unknown) => console.error("plan retention", e));
+  const run = (): void => {
+    void runPlanRetention().catch((e: unknown) => console.error("plan retention", e));
+    // Trials that ran out go back to Free (BAC-57).
+    void billing().settleTrials().catch((e: unknown) => console.error("billing: settle trials", e));
+  };
   setTimeout(run, FIRST_RUN_AFTER_MS).unref();
   setInterval(run, RUN_EVERY_MS).unref();
 }

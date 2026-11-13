@@ -41,6 +41,22 @@ CREATE TABLE IF NOT EXISTS org_usage (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org_id, period));
 
+CREATE TABLE IF NOT EXISTS org_billing (
+  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'none',
+  trial_plan text, trial_ends_at timestamptz,
+  plan text, billing text, subscription_uid text, period_end timestamptz,
+  pending_plan text, pending_billing text,
+  card_on_file boolean NOT NULL DEFAULT false,
+  cancel_at_period_end boolean NOT NULL DEFAULT false,
+  checkout_reference text, checkout_plan text, checkout_billing text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS org_billing_subscription_idx ON org_billing (subscription_uid);
+
+CREATE TABLE IF NOT EXISTS billing_events (
+  event_key text PRIMARY KEY, org_id text, type text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now());
+
 CREATE TABLE IF NOT EXISTS memberships (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,

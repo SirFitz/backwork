@@ -210,3 +210,31 @@ export const filterPatterns = pgTable("filter_patterns", {
   updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ orgNameUniq: uniqueIndex("filter_patterns_org_name_uniq").on(t.orgId, t.name) }));
+
+/** An organisation's billing state (BAC-57): trial, subscription at Inkress, scheduled change. */
+export const orgBilling = pgTable("org_billing", {
+  orgId: text("org_id").primaryKey().references(() => orgs.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("none"),
+  trialPlan: text("trial_plan"),
+  trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  plan: text("plan"),
+  billing: text("billing"),
+  subscriptionUid: text("subscription_uid"),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  pendingPlan: text("pending_plan"),
+  pendingBilling: text("pending_billing"),
+  cardOnFile: boolean("card_on_file").notNull().default(false),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  checkoutReference: text("checkout_reference"),
+  checkoutPlan: text("checkout_plan"),
+  checkoutBilling: text("checkout_billing"),
+  ...ts(),
+}, (t) => ({ subIdx: index("org_billing_subscription_idx").on(t.subscriptionUid) }));
+
+/** Inkress webhook deliveries already handled, so a replay does nothing. */
+export const billingEvents = pgTable("billing_events", {
+  eventKey: text("event_key").primaryKey(),
+  orgId: text("org_id"),
+  type: text("type").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

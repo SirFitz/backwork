@@ -19,3 +19,8 @@ export function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Pro
   });
   return val;
 }
+
+/** Forget a cached value so the next call recomputes it (after the underlying data changed). */
+export function invalidate(key: string): void {
+  store.delete(key);
+}

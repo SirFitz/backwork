@@ -10,6 +10,10 @@ import { setActiveOrg } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { slugify } from "~/lib/utils";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
+import { PlanId } from "~/components/site/plans";
+import { billing } from "~/lib/billing/index.server";
+import { isPaidPlanId } from "~/lib/billing/rules";
+import { billingConfigured } from "~/lib/config.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, memberships: mems } = await requireUser(request);
@@ -36,8 +40,11 @@ export async function action({ request }: ActionFunctionArgs) {
   if (name.length > 80) return json({ error: "Organization name is too long (80 max)." }, { status: 400 });
 
   const orgId = ulid();
-  await db.insert(orgs).values({ id: orgId, name, slug: await uniqueSlug(name) });
+  // A new customer organisation starts on Free (metered); a paid plan asked for on the pricing page starts its trial.
+  await db.insert(orgs).values({ id: orgId, name, slug: await uniqueSlug(name), plan: PlanId.Free });
   await db.insert(memberships).values({ id: ulid(), userId: user.id, orgId, role: "owner" });
+  const wanted = new URL(request.url).searchParams.get("plan");
+  if (isPaidPlanId(wanted) && billingConfigured()) await billing().startTrial(orgId, wanted).catch(() => undefined);
   return setActiveOrg(request, orgId, "/");
 }
 

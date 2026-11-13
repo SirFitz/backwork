@@ -92,6 +92,23 @@ The dashboard reads backend URLs from env (defaults target the compose network):
 | `DATABASE_URL` | the compose Postgres |
 | `DATA_DIR` | `/data` (legacy alert-rule import) |
 | `PUBLIC_URL` | `https://backwork.dev` (used by the agent installer) |
+| `INKRESS_BILLING_MERCHANT` | `backwork` (username of the Inkress merchant that sells the plans) |
+| `INKRESS_BILLING_API_MODE` | `test` (Inkress dev API); `live` = api.inkress.com |
+| `INKRESS_BILLING_PLATFORM_KEY` | key for plan reads and checkout links; billing is off while unset |
+| `INKRESS_BILLING_SECRET_KEY` | merchant-bound key for plan changes (defaults to the platform key) |
+| `INKRESS_BILLING_WEBHOOK_SECRET` | the merchant's client secret, which signs webhook tokens |
+
+## Billing (BAC-57)
+
+Customers pay for plans through Inkress; backwork stores no card data.
+
+- **Model.** An organisation is a customer of the `backwork` Inkress merchant with at most one subscription. Plans are the four USD plans there (Team and Business, monthly and yearly), tagged `data.backwork_plan` / `data.backwork_billing`. The pricing page stays the source of the displayed price; checkout is refused if Inkress's price differs.
+- **Trial.** 14 days of Team or Business, no card, once per organisation. A trial that ends without a subscription returns the organisation to Free (job runs with the plan jobs, and on page load).
+- **Flows (Billing page, owners and admins).** Start trial; Subscribe (Inkress hosted checkout, then the page and the webhook both "look again" at Inkress); Switch plan at renewal (Inkress plan-change); Cancel at period end; Update card (Inkress card-update link); invoices from Inkress periods.
+- **Webhook.** `POST /api/webhooks/inkress/billing`: HS256 token signed with the merchant secret, deduped on the event id, and only ever triggers a reconcile from Inkress, so replays and reordering cannot move a plan. The merchant's webhook row must list `subscription`, `card_charge` and `refund`.
+- **Plan on the org.** Reconcile writes the plan the organisation earns to `orgs.plan`, which the ingest limits already read. Organisations on `unmetered` (backwork's own and internal apps) are never billed or moved. New customer organisations start on `free`.
+- **Decisions.** No-card trial and cancel-at-period-end are the SaaS defaults, picked without asking; the client is ported from FleekSite's platform billing (`docs/platform-billing.md` there) and cut to the contracts backwork uses.
+- **Not built.** Usage overage (the pricing page's "more costs X per million") is not charged yet: paid plans do not pause at their allowance and nothing bills the extra.
 
 ## Notes
 
