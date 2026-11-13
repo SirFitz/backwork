@@ -222,7 +222,7 @@ function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: 
             {canManage ? <IntentForm intent={Intent.KeepPlan} label="Keep current plan" className={btnSecondary} /> : null}
           </div>
         ) : null}
-        <p><Link to="/settings" className="text-brand hover:underline">See this month's usage</Link></p>
+        {a.unmetered ? null : <p><Link to="/usage" className="text-brand hover:underline">See this month's usage</Link></p>}
       </div>
     </Card>
   );

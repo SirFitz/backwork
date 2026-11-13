@@ -5,6 +5,7 @@ import { db, ensureSchema } from "~/db/index.server";
 import { orgBuckets, orgs } from "~/db/schema";
 import { cached } from "~/lib/cache.server";
 import { isCapped, limitsFor, type Limits } from "./limits";
+import { utcDay, type DayCount } from "./month";
 import { bucketStart, type Bucket } from "./window";
 
 const PLAN_TTL_MS = 30_000;
@@ -47,6 +48,31 @@ export async function loadBuckets(orgId: string, sinceS: number): Promise<Bucket
     requests: Number(r.requests),
     bytes: Number(r.bytes),
   }));
+}
+
+/** Add what a push brought in to its UTC day. One atomic upsert. Days are never trimmed: the Usage page reads them. */
+export async function addToDaily(orgId: string, add: { requests: number; bytes: number }, atMs: number = Date.now()): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO org_daily (org_id, day, requests, bytes) VALUES (${orgId}, ${utcDay(atMs)}::date, ${add.requests}, ${add.bytes})
+    ON CONFLICT (org_id, day) DO UPDATE
+      SET requests = org_daily.requests + EXCLUDED.requests, bytes = org_daily.bytes + EXCLUDED.bytes`);
+}
+
+/** The organisation's days from a day on (YYYY-MM-DD), oldest first. */
+export async function loadDaily(orgId: string, fromDay: string): Promise<DayCount[]> {
+  const res = await db.execute(sql`
+    SELECT to_char(day, 'YYYY-MM-DD') AS day, requests, bytes FROM org_daily WHERE org_id = ${orgId} AND day >= ${fromDay}::date ORDER BY day`);
+  return (res.rows as Array<{ day: string; requests: string | number; bytes: string | number }>).map((r) => ({
+    day: r.day,
+    requests: Number(r.requests),
+    bytes: Number(r.bytes),
+  }));
+}
+
+/** The first day anything was counted for the organisation, or null when nothing has been. */
+export async function firstCountedDay(orgId: string): Promise<string | null> {
+  const res = await db.execute(sql`SELECT to_char(min(day), 'YYYY-MM-DD') AS day FROM org_daily WHERE org_id = ${orgId}`);
+  return (res.rows as Array<{ day: string | null }>)[0]?.day ?? null;
 }
 
 /** Forget counters older than a time (unix seconds): what they counted has been deleted. */

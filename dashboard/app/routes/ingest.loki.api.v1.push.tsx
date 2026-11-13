@@ -5,7 +5,8 @@ import { getCompiledFilter, getControls } from "~/lib/controls.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
 import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
-import { addToBucket, isWindowed } from "~/lib/plans/usage.server";
+import { isCapped } from "~/lib/plans/limits";
+import { addToBucket, addToDaily, orgLimits } from "~/lib/plans/usage.server";
 import { startPlanJobs } from "~/lib/plans/retention.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
@@ -60,9 +61,19 @@ export async function action({ request }: ActionFunctionArgs) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ streams: result.streams }),
     });
-    // A limited organisation keeps a rolling window: count what was stored, and the trim job drops the oldest.
-    if (res.ok && (await isWindowed(tenant.orgId))) await addToBucket(tenant.orgId, { requests: result.requests, bytes: result.bytes }).catch(() => undefined);
-    return new Response(await res.text(), { status: res.status });
+    // A metered organisation's intake is counted per day (the Usage page). A limited one also keeps a
+    // rolling window: count what was stored per 5 minutes, and the trim job drops the oldest.
+    if (res.ok) {
+      const limits = await orgLimits(tenant.orgId);
+      if (limits) {
+        const add = { requests: result.requests, bytes: result.bytes };
+        await addToDaily(tenant.orgId, add).catch(() => undefined);
+        if (isCapped(limits)) await addToBucket(tenant.orgId, add).catch(() => undefined);
+      }
+    }
+    // Loki answers a push with 204 and no body; a 204 response may not carry one, so build it empty.
+    const upstream = await res.text();
+    return new Response(upstream === "" || res.status === 204 ? null : upstream, { status: res.status });
   } catch (e: unknown) {
     return new Response("ingest backend error: " + (e instanceof Error ? e.message : String(e)), { status: 502 });
   }

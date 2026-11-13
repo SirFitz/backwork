@@ -179,7 +179,12 @@ function PlanCard({ plan }: { plan: PlanView }) {
       <CardHead
         title={`${plan.name} plan`}
         sub={plan.rolling ? "keeps your newest requests and data; the oldest are dropped as new ones arrive" : "what this plan includes"}
-        right={<Link to="/billing" className="text-[13px] text-brand hover:underline">Billing</Link>}
+        right={
+          <span className="flex items-center gap-3 text-[13px]">
+            <Link to="/usage" className="text-brand hover:underline">Usage</Link>
+            <Link to="/billing" className="text-brand hover:underline">Billing</Link>
+          </span>
+        }
       />
       {plan.rolling ? (
         <ul className="divide-y divide-border">

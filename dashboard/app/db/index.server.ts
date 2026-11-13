@@ -34,6 +34,12 @@ ALTER TABLE orgs ADD COLUMN IF NOT EXISTS requests_limit integer;
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS storage_limit_bytes bigint;
 
 DROP TABLE IF EXISTS org_usage;
+CREATE TABLE IF NOT EXISTS org_daily (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  day date NOT NULL,
+  requests bigint NOT NULL DEFAULT 0,
+  bytes bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (org_id, day));
 CREATE TABLE IF NOT EXISTS org_buckets (
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
   bucket bigint NOT NULL,
