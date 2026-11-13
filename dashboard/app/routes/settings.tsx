@@ -1,19 +1,17 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
-import { Link } from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
+import { ArrowRight } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
-import { config } from "~/lib/config.server";
-import * as vm from "~/lib/vm.server";
+import { config, safe } from "~/lib/config.server";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
-import { DataControlsPanel } from "~/components/data-controls";
-import { loadPlanView } from "~/lib/plans/view.server";
+import { DataControlsPanel, type SwitchGroup } from "~/components/data-controls";
+import { loadPlanView, type PlanView } from "~/lib/plans/view.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
-import { safe } from "~/lib/config.server";
+import { Feature } from "~/lib/controls.server";
 import {
   GRID_HEAD,
   applyControlChange,
@@ -23,17 +21,14 @@ import {
   type ControlsView,
 } from "~/lib/controls-view.server";
 
-async function ping(url: string): Promise<boolean> {
-  try {
-    const c = new AbortController();
-    const t = setTimeout(() => c.abort(), 5000);
-    const r = await fetch(url, { signal: c.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
+/** How long data is kept when the plan does not say otherwise. */
+const DEFAULT_KEPT_DAYS = { logs: 7, requests: 30, figures: 14 } as const;
+
+/** What the switches are grouped under: what is stored, and the detail kept inside each request. */
+const SWITCH_GROUPS: readonly SwitchGroup[] = [
+  { title: "Stored", features: [Feature.Logs, Feature.Hops, Feature.Stores, Feature.Metrics] },
+  { title: "Detail inside each request", features: [Feature.NamedFields, Feature.Statements, Feature.Paths, Feature.LinkedIds] },
+];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
@@ -41,16 +36,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const settingsKey = process.env.SETTINGS_KEY || "";
   const showToken = !settingsKey || url.searchParams.get("key") === settingsKey;
-
-  const health = Promise.all([
-    // /ready can flap 503; the labels API is a truer "is Loki serving" check
-    ping(`${config.lokiUrl}/loki/api/v1/labels`),
-    vm.targetsUp().then((t) => ({ ok: true, t })).catch(() => ({ ok: false, t: {} as Record<string, boolean> })),
-  ]).then(([lokiUp, targets]) => ({
-    loki: lokiUp,
-    victoriametrics: targets.ok,
-    vector: !!targets.t["vector"],
-  }));
 
   // The same switches as on Projects, for the whole organisation (design 19.1).
   const controls: Promise<{ data: ControlsView | null; error: string | null }> = safe(
@@ -64,14 +49,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
     controls,
     plan,
     gridHeads: GRID_HEAD,
+    groups: SWITCH_GROUPS,
     publicUrl: config.publicUrl,
     isPlatform,
     // The legacy global token is platform-only; customer orgs use per-project
     // tokens from the Projects page (never expose the platform token to them).
     token: isPlatform && showToken ? config.ingestToken : "",
-    tokenGated: isPlatform && !!settingsKey && !showToken,
-    health,
-    retention: { logs: "7 days hot (Loki)", metrics: "14 days (VictoriaMetrics)", hops: "30 days (Loki, hop records)" },
   });
 }
 
@@ -87,17 +70,6 @@ export async function action({ request }: ActionFunctionArgs) {
   return applyControlChange(request, ctx, fd, new Set<string>());
 }
 
-function HealthRow({ name, up, note }: { name: string; up: boolean; note: string }) {
-  return (
-    <li className="flex items-center gap-3 px-4 py-2.5">
-      {up ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <XCircle className="h-4 w-4 text-err" />}
-      <span className="font-medium">{name}</span>
-      <span className="text-2xs text-faint">{note}</span>
-      <span className={cn("ml-auto text-2xs font-medium", up ? "text-ok" : "text-err")}>{up ? "reachable" : "unreachable"}</span>
-    </li>
-  );
-}
-
 function CodeBlock({ children }: { children: string }) {
   return (
     <pre className="overflow-x-auto scroll-thin rounded-lg border border-border bg-surface-2 px-3.5 py-3 font-mono text-2xs leading-relaxed text-fg/90">
@@ -108,100 +80,73 @@ function CodeBlock({ children }: { children: string }) {
 
 export default function Settings() {
   const d = useLoaderData<typeof loader>();
-  const tok = d.token || "<INGEST_TOKEN>";
-
-  const agentCmd = `curl -fsSL ${d.publicUrl}/install.sh | sh -s -- \\
-  --token ${tok} \\
-  --name $(hostname)`;
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle title="Settings" sub="Connect more sources, check backend health, and see retention. Everything backwork ingests is real host telemetry." />
-
-      <Card>
-        <CardHead title={d.isPlatform ? "Backend health" : "backwork platform status"} sub={d.isPlatform ? "the storage + collection layer" : "the shared backend — not a check of your own data flow"} />
-        <Deferred resolve={d.health} fallback={<RowsSkeleton rows={3} />}>
-          {(h) => (
-            <ul className="divide-y divide-border">
-              <HealthRow name="Loki" up={h.loki} note="log storage · LogQL" />
-              <HealthRow name="VictoriaMetrics" up={h.victoriametrics} note="request figures · PromQL" />
-              <HealthRow name="Vector" up={h.vector} note="log collector (scrape target)" />
-            </ul>
-          )}
-        </Deferred>
-      </Card>
-
-      {d.isPlatform ? (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <Card>
-            <CardHead title="Ship logs from another server" sub="one command installs a Vector agent" />
-            <div className="space-y-2 p-4">
-              <CodeBlock>{agentCmd}</CodeBlock>
-              <p className="text-2xs text-faint">Runs a Vector container that forwards the host's container logs and Correlator hop records to backwork, tagged with the host name. View them under Logs and Requests.</p>
-            </div>
-          </Card>
-          <Card>
-            <CardHead title="Trace requests" sub="hop records from Correlator, read from the logs" />
-            <div className="space-y-2 p-4 text-[13px] text-muted">
-              <p>Add Correlator to a service and turn hop records on. They are ordinary log lines, so the agent above ships them with the rest of the logs; no other endpoint or token is needed.</p>
-              <p className="text-2xs text-faint">Requests and Performance fill in as hop records arrive.</p>
-            </div>
-          </Card>
-        </div>
-      ) : (
-        <Card>
-          <CardHead title="Connect a source" sub="ship logs and hop records from your own infrastructure" />
-          <div className="p-4 text-[13px] text-muted">
-            Create a <Link to="/projects" className="font-medium text-brand hover:underline">project</Link> to get an ingest token, then use the install command shown there. Your data is isolated to this organization.
-          </div>
-        </Card>
-      )}
+      <PageTitle title="Settings" sub="Your plan, what backwork collects and how long it keeps it." />
 
       <Deferred resolve={d.plan} fallback={null}>
         {(p) => (p.data ? <PlanCard plan={p.data} /> : null)}
       </Deferred>
 
       <Card>
-        <CardHead title="Data controls" sub="what backwork collects for the whole organisation · off here is off for every project" />
+        <CardHead title="What backwork collects" sub="for the whole organisation · off here is off for every project" />
         <div className="px-4 pb-4 pt-[18px] sm:pl-8 sm:pr-5">
           <Deferred resolve={d.controls} fallback={<RowsSkeleton rows={6} className="p-0" />}>
             {(panel) =>
               panel.error || !panel.data ? (
-                <div className="text-2xs text-warn">data source unavailable — {(panel.error ?? "no data").slice(0, 180)}</div>
+                <div className="text-2xs text-warn">These settings could not be loaded just now. Reload the page to try again.</div>
               ) : (
-                <DataControlsPanel view={panel.data} heading="Collected from this organisation" gridHeads={d.gridHeads} />
+                <DataControlsPanel view={panel.data} heading="Collected from this organisation" gridHeads={d.gridHeads} groups={d.groups} />
               )
             }
           </Deferred>
         </div>
       </Card>
 
-      <Card>
-        <CardHead title="Retention" sub="how long data is kept" />
-        <ul className="divide-y divide-border text-[13px]">
-          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Logs</span><span className="font-mono">{d.retention.logs}</span></li>
-          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Request figures</span><span className="font-mono">{d.retention.metrics}</span></li>
-          <li className="flex items-center justify-between px-4 py-2.5"><span className="text-muted">Hop records</span><span className="font-mono">{d.retention.hops}</span></li>
-        </ul>
-      </Card>
+      <Deferred resolve={d.plan} fallback={<KeptCard plan={null} />}>
+        {(p) => <KeptCard plan={p.data} />}
+      </Deferred>
 
-      {d.isPlatform && d.token ? (
-        <div className="rounded-xl border border-border bg-surface-2/40 px-4 py-3">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-faint" />
-            <p className="text-[13px] text-muted">Keep the ingest token secret — anyone who has it can write telemetry into this organization. Rotate it if it leaks.</p>
-          </div>
-        </div>
-      ) : null}
+      <Card>
+        <CardHead
+          className="border-b-0"
+          title="Add a service"
+          sub="each project has its own install command"
+          right={
+            <Link to="/projects" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+              Projects <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          }
+        />
+        {d.isPlatform ? (
+          <details className="group border-t border-border">
+            <summary className="cursor-pointer list-none px-4 py-2.5 text-[13px] text-muted hover:text-fg">
+              Install on another server with the organisation token
+            </summary>
+            <div className="space-y-2 px-4 pb-4">
+              <CodeBlock>{`curl -fsSL ${d.publicUrl}/install.sh | sh -s -- \\
+  --token ${d.token || "<INGEST_TOKEN>"} \\
+  --name $(hostname)`}</CodeBlock>
+              <p className="text-2xs text-faint">
+                Installs the backwork agent, which sends that server's container logs and request records here, tagged with the host name. Keep the token secret: anyone who has it can send data into this organisation.
+              </p>
+            </div>
+          </details>
+        ) : null}
+      </Card>
     </div>
   );
 }
-
 
 function fmtBytes(n: number): string {
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(0)} MB`;
   return `${Math.round(n / 1024)} KB`;
+}
+
+function days(n: number): string {
+  return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
 function UsageBar({ label, used, limit, show }: { label: string; used: number; limit: number | null; show: (n: number) => string }) {
@@ -228,33 +173,49 @@ function fmtSince(sec: number): string {
   return hrs < 48 ? `${hrs.toFixed(1)} hours` : `${Math.round(hrs / 24)} days`;
 }
 
-function PlanCard({ plan }: { plan: import("~/lib/plans/view.server").PlanView }) {
+function PlanCard({ plan }: { plan: PlanView }) {
   return (
     <Card>
       <CardHead
         title={`${plan.name} plan`}
-        sub={plan.rolling ? "keeps your newest requests and data; the oldest are dropped as new ones arrive" : "what this plan keeps"}
+        sub={plan.rolling ? "keeps your newest requests and data; the oldest are dropped as new ones arrive" : "what this plan includes"}
         right={<Link to="/billing" className="text-[13px] text-brand hover:underline">Billing</Link>}
       />
-      <ul className="divide-y divide-border">
-        {plan.rolling ? (
-          <>
-            <UsageBar label="Traced requests held" used={plan.requests.held} limit={plan.requests.cap} show={(n) => n.toLocaleString("en-GB")} />
-            <UsageBar label="Stored data held" used={plan.bytes.held} limit={plan.bytes.cap} show={fmtBytes} />
-            {plan.since !== null ? (
-              <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
-                <span className="text-muted">Oldest request held</span>
-                <span className="font-mono">{fmtSince(plan.since)} ago</span>
-              </li>
-            ) : null}
-          </>
-        ) : null}
-        {plan.hopDays !== null && plan.logDays !== null ? (
-          <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
-            <span className="text-muted">Kept for at most</span>
-            <span className="font-mono">{plan.hopDays} days (requests) · {plan.logDays} days (logs)</span>
+      {plan.rolling ? (
+        <ul className="divide-y divide-border">
+          <UsageBar label="Traced requests held" used={plan.requests.held} limit={plan.requests.cap} show={(n) => n.toLocaleString("en-GB")} />
+          <UsageBar label="Stored data held" used={plan.bytes.held} limit={plan.bytes.cap} show={fmtBytes} />
+          {plan.since !== null ? (
+            <li className="flex items-center justify-between px-4 py-2.5 text-[13px]">
+              <span className="text-muted">Oldest request held</span>
+              <span className="font-mono">{fmtSince(plan.since)} ago</span>
+            </li>
+          ) : null}
+        </ul>
+      ) : (
+        <p className="border-t border-border px-4 py-2.5 text-[13px] text-muted">Nothing is dropped early on this plan; data is kept for the periods below.</p>
+      )}
+    </Card>
+  );
+}
+
+/** How long each kind of data is kept: the plan's figure where it sets one, otherwise the standard. */
+function KeptCard({ plan }: { plan: PlanView | null }) {
+  const rows: { label: string; kept: number }[] = [
+    { label: "Log lines", kept: plan?.logDays ?? DEFAULT_KEPT_DAYS.logs },
+    { label: "Hop records", kept: plan?.hopDays ?? DEFAULT_KEPT_DAYS.requests },
+    { label: "Performance figures", kept: DEFAULT_KEPT_DAYS.figures },
+  ];
+  return (
+    <Card>
+      <CardHead title="How long data is kept" sub={plan ? `set by your ${plan.name} plan` : "after this, it is deleted"} />
+      <ul className="divide-y divide-border text-[13px]">
+        {rows.map((r) => (
+          <li key={r.label} className="flex items-center justify-between px-4 py-2.5">
+            <span className="text-muted">{r.label}</span>
+            <span className="font-mono">{days(r.kept)}</span>
           </li>
-        ) : null}
+        ))}
       </ul>
     </Card>
   );
