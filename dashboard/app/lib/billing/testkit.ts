@@ -14,7 +14,7 @@ export class MemoryStore implements BillingStore {
   async recordEvent(key: string) { if (this.events.has(key)) return false; this.events.add(key); return true; }
   async forgetEvent(key: string) { this.events.delete(key); }
   async orgPlan(orgId: string) { return this.orgPlans.get(orgId) ?? null; }
-  async setOrgPlan(orgId: string, plan: PlanId) { if (this.orgPlans.get(orgId) !== "unmetered") this.orgPlans.set(orgId, plan); }
+  async setOrgPlan(orgId: string, plan: PlanId) { this.orgPlans.set(orgId, plan); }
   async trialsEndedBy(now: Date) {
     return [...this.rows.values()].filter((r) => r.status === AccountStatus.Trialing && r.trialEndsAt && r.trialEndsAt <= now).map((r) => r.orgId);
   }

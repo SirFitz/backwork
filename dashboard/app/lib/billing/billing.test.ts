@@ -64,12 +64,16 @@ describe("trial", () => {
     expect((await store.get(ORG))?.status).toBe(AccountStatus.None);
     await expect(b.startTrial(ORG, PlanId.Team)).rejects.toBeInstanceOf(BillingRefusal);
   });
-  test("an unmetered organisation is never billed or moved", async () => {
+  test("an organisation included by agreement gets no trial and is not moved until it pays", async () => {
     store.orgPlans.set(ORG, "unmetered");
     const b = make();
     await expect(b.startTrial(ORG, PlanId.Team)).rejects.toBeInstanceOf(BillingRefusal);
-    await expect(b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER)).rejects.toBeInstanceOf(BillingRefusal);
+    await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
+    await b.reconcile(ORG);
     expect(store.orgPlans.get(ORG)).toBe("unmetered");
+    inkress.pay((await store.get(ORG))!.checkoutReference!, "p-team-m", ORG, new Date(clock.getTime() + 30 * DAY));
+    await b.reconcile(ORG);
+    expect(store.orgPlans.get(ORG)).toBe("team");
   });
   test("an org billing has never touched keeps the plan it has", async () => {
     store.orgPlans.set(ORG, "business");

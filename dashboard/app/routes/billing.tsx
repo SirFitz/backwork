@@ -35,6 +35,8 @@ function isIntent(v: string): v is Intent {
 /** What the page needs about the row, with dates as ISO strings for the wire. */
 interface AccountView {
   status: AccountStatus;
+  /** Included by agreement: no plan, limits or billing until it subscribes. */
+  unmetered: boolean;
   plan: PlanId;
   paidPlan: PlanId | null;
   billing: Billing | null;
@@ -49,9 +51,10 @@ interface AccountView {
   awaitingPayment: boolean;
 }
 
-function viewOf(row: BillingRow, now: Date): AccountView {
+function viewOf(row: BillingRow, now: Date, unmetered: boolean): AccountView {
   return {
     status: row.status,
+    unmetered,
     plan: effectivePlan(row, now),
     paidPlan: row.plan,
     billing: row.billing,
@@ -83,24 +86,24 @@ function invoiceOf(p: InkressPeriod): InvoiceView {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
-  const orgPlan = await dbStore.orgPlan(ctx.org.id);
-  if (orgPlan === UNMETERED) return defer({ billed: false as const, orgName: ctx.org.name });
-
   const service = billing();
   const now = new Date();
+  const unmetered = (await dbStore.orgPlan(ctx.org.id)) === UNMETERED;
   const row = await service.current(ctx.org.id);
   const sync = row.subscriptionUid !== null || row.checkoutReference !== null;
   // Ask Inkress in the background; the page is already on screen with what we hold.
   const account = sync
-    ? safe(async () => viewOf(await service.reconcile(ctx.org.id), new Date()), viewOf(row, now))
-    : Promise.resolve({ data: viewOf(row, now), error: null });
+    ? safe(async () => {
+        const fresh = await service.reconcile(ctx.org.id);
+        // Paying moves an organisation off "included by agreement", so ask again.
+        return viewOf(fresh, new Date(), (await dbStore.orgPlan(ctx.org.id)) === UNMETERED);
+      }, viewOf(row, now, unmetered))
+    : Promise.resolve({ data: viewOf(row, now, unmetered), error: null });
   const invoices = safe(async () => (await service.invoices(ctx.org.id)).map(invoiceOf), [] as InvoiceView[]);
   return defer({
-    billed: true as const,
-    orgName: ctx.org.name,
     canManage: ctx.role === "owner" || ctx.role === "admin",
     configured: billingConfigured(),
-    initial: viewOf(row, now),
+    initial: viewOf(row, now, unmetered),
     account,
     invoices,
   });
@@ -195,11 +198,12 @@ function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: 
   else if (a.status === AccountStatus.Active) line = `Renews on ${fmtDate(a.periodEnd)}${a.paidPlan ? ` at ${formatMoney(priceFor(PLANS.find((p) => p.id === a.paidPlan) as Plan, a.billing ?? Billing.Monthly) ?? 0)} / ${cycle}` : ""}.`;
   else if (a.status === AccountStatus.Cancelled) line = a.plan !== PlanId.Free ? `Cancelled. ${planName(a.plan)} runs until ${fmtDate(a.periodEnd)}.` : "Cancelled.";
   else if (a.awaitingPayment) line = "Waiting for your payment to go through. This page updates when it does.";
+  else if (a.unmetered) line = "Collection is not metered and nothing is billed. Subscribe to a plan below to move onto it.";
   else line = "Free never expires and is never billed. It keeps your newest requests and data up to its limits and drops the oldest.";
   return (
     <Card>
       <CardHead
-        title={`${planName(a.plan)} plan`}
+        title={a.unmetered ? "Included by agreement" : `${planName(a.plan)} plan`}
         sub={a.status === AccountStatus.Trialing ? "free trial" : paying ? (a.billing === Billing.Yearly ? "billed yearly" : "billed monthly") : undefined}
         right={
           canManage && paying ? (
@@ -228,6 +232,7 @@ function PlanButton({ plan, a, cycle, canManage, configured }: { plan: Plan; a: 
   const paying = a.status === AccountStatus.Active || a.status === AccountStatus.PastDue;
   if (plan.id === PlanId.Enterprise) return <a href={plan.cta.href} className={btnSecondary}>{plan.cta.label}</a>;
   if (plan.id === PlanId.Free) {
+    if (a.unmetered) return null;
     return a.plan === PlanId.Free
       ? <span className="text-[13px] text-muted">Your plan</span>
       : paying && !a.cancelAtPeriodEnd && canManage
@@ -244,7 +249,7 @@ function PlanButton({ plan, a, cycle, canManage, configured }: { plan: Plan; a: 
   const trialing = a.status === AccountStatus.Trialing;
   return (
     <div className="flex flex-wrap gap-2">
-      {!a.everTrialled ? <IntentForm intent={Intent.StartTrial} plan={plan.id} label="Start 14-day trial" className={btnSecondary} /> : null}
+      {!a.everTrialled && !a.unmetered ? <IntentForm intent={Intent.StartTrial} plan={plan.id} label="Start 14-day trial" className={btnSecondary} /> : null}
       <IntentForm intent={Intent.Checkout} plan={plan.id} billing={cycle} label={trialing ? "Subscribe" : "Subscribe and pay"} className={btnPrimary} />
     </div>
   );
@@ -270,7 +275,7 @@ function Plans({ a, canManage, configured }: { a: AccountView; canManage: boolea
       <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
         {PLANS.map((plan) => {
           const price = priceFor(plan, cycle);
-          const current = plan.id === a.plan;
+          const current = !a.unmetered && plan.id === a.plan;
           return (
             <div key={plan.id} className="flex flex-col gap-3 bg-surface p-4">
               <div className="flex items-baseline justify-between">
@@ -321,14 +326,6 @@ function Invoices({ items }: { items: InvoiceView[] }) {
 export default function BillingPage() {
   const d = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
-  if (!d.billed) {
-    return (
-      <div className="space-y-4">
-        <PageTitle title="Billing" />
-        <Card><p className="px-4 py-6 text-[13px] text-muted">{d.orgName} is included by agreement and is not billed.</p></Card>
-      </div>
-    );
-  }
   return (
     <div className="space-y-4">
       <PageTitle title="Billing" sub="Your plan, payments and invoices. Payments are handled by Inkress." />

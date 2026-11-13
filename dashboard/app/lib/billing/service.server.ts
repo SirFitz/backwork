@@ -53,18 +53,26 @@ export function createBilling(deps: BillingDeps) {
     if (!deps.configured) throw new BillingRefusal("Billing is not switched on yet.");
   };
 
-  /** Is this organisation one we bill? Unmetered organisations are granted by agreement. */
-  async function requireBilled(orgId: string): Promise<void> {
+  async function requireOrg(orgId: string): Promise<string> {
     const plan = await store.orgPlan(orgId);
     if (plan === null) throw new BillingRefusal("Organisation not found.");
-    if (plan === UNMETERED) throw new BillingRefusal("This organisation is included by agreement and is not billed.");
+    return plan;
   }
 
-  /** Save the row and put the plan it earns onto the organisation (once billing has been involved). */
+  /** A trial is for metered organisations; one included by agreement has no limits to try past. */
+  async function requireTrialEligible(orgId: string): Promise<void> {
+    if ((await requireOrg(orgId)) === UNMETERED) throw new BillingRefusal("This organisation is included by agreement. Subscribe to move to a paid plan.");
+  }
+
+  /**
+   * Save the row and put the plan it earns onto the organisation (once billing has been involved).
+   * An organisation included by agreement (unmetered) moves onto a plan only after it has paid for one.
+   */
   async function settle(row: BillingRow): Promise<BillingRow> {
     await store.save(row);
     const engaged = row.status !== AccountStatus.None || row.plan !== null || row.trialPlan !== null;
-    if (engaged && (await store.orgPlan(row.orgId)) !== UNMETERED) {
+    const unmetered = (await store.orgPlan(row.orgId)) === UNMETERED;
+    if (engaged && (!unmetered || row.plan !== null)) {
       await store.setOrgPlan(row.orgId, effectivePlan(row, deps.now()));
     }
     return row;
@@ -136,7 +144,7 @@ export function createBilling(deps: BillingDeps) {
 
     /** Start the 14-day trial of a paid plan. No card; once only per organisation. */
     async startTrial(orgId: string, plan: PaidPlanId): Promise<BillingRow> {
-      await requireBilled(orgId);
+      await requireTrialEligible(orgId);
       const row = (await store.get(orgId)) ?? emptyRow(orgId);
       if (row.trialPlan !== null || row.plan !== null) throw new BillingRefusal("This organisation has already had a trial or a paid plan.");
       const now = deps.now();
@@ -146,7 +154,7 @@ export function createBilling(deps: BillingDeps) {
     /** A hosted Inkress checkout for a paid plan. Returns where to send the owner. */
     async checkout(orgId: string, plan: PaidPlanId, billing: Billing, customer: Customer): Promise<{ url: string }> {
       requireConfigured();
-      await requireBilled(orgId);
+      await requireOrg(orgId);
       const row = await reconcile(orgId);
       if (row.status === AccountStatus.Active || row.status === AccountStatus.PastDue) {
         throw new BillingRefusal("This organisation already has a subscription. Change plan instead.");
