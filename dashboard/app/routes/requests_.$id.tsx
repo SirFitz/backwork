@@ -883,6 +883,7 @@ function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | nu
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
   }
+  if (hop.pipeline) facts.push(["Commands", `${hop.pipeline.ops.join(", ")} · sent as one MULTI block`]);
   if (hop.skewMs > 0) facts.push(["Start", `drawn from its caller's start: its records put it ${fmtGap(hop.skewMs)} earlier`]);
   if (hop.handoff) facts.push(["Made", "in the background (handoff)"]);
   else if (hop.afterResponse) facts.push(["Note", "ended after the response"]);

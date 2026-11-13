@@ -42,7 +42,7 @@ export interface VisibleRow {
 }
 
 function shapeKey(h: Hop): string {
-  return `${h.via}\u0000${h.op ?? ""}\u0000${h.table ?? ""}\u0000${h.stmt ?? ""}`;
+  return `${h.via}\u0000${h.op ?? ""}\u0000${h.table ?? ""}\u0000${h.stmt ?? ""}\u0000${h.pipeline?.ops.join(" ") ?? ""}`;
 }
 
 /** A call out of a service that reached exactly one inbound hop and nothing went wrong between them. */

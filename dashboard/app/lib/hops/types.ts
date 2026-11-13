@@ -175,6 +175,22 @@ export interface UnrecordedStoreCalls {
   us: number;
 }
 
+/** Redis commands that open and close a MULTI block (BAC-63). */
+export const BlockOp = {
+  Multi: "multi",
+  Exec: "exec",
+  Discard: "discard",
+} as const;
+export type BlockOp = (typeof BlockOp)[keyof typeof BlockOp];
+
+/** A MULTI ... EXEC block whose command records were drawn as one hop (BAC-63). */
+export interface StorePipeline {
+  /** The commands, MULTI first and EXEC (or DISCARD) last. */
+  ops: readonly string[];
+  /** The commands' own durations added up: what the request's totals counted for them. */
+  commandUs: number;
+}
+
 export interface Hop {
   hopId: HopId;
   dir: HopDir;
@@ -212,6 +228,8 @@ export interface Hop {
   unrecorded: UnrecordedStoreCalls[];
   /** True for `via` db or cache. */
   isStore: boolean;
+  /** Set when this hop stands for a whole MULTI block: one call, its commands listed here. */
+  pipeline: StorePipeline | null;
   /** An outbound call that ended after its inbound hop's end record: it ran on after the response
    *  was sent. Drawn where it ran and left out of "where the time went". */
   afterResponse: boolean;

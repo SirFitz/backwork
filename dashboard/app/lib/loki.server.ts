@@ -46,8 +46,16 @@ function scoped(query: string, t?: Tenant): string {
   return out;
 }
 
+/** Nanoseconds as Loki writes them to epoch ms keeping microseconds (a double cannot hold the ns). */
+export function exactMs(tsNs: string): number {
+  return /^\d{1,22}$/.test(tsNs) ? Number(BigInt(tsNs) / 1000n) / 1000 : Math.floor(Number(tsNs) / 1e6);
+}
+
 export type LogEntry = {
   ts: number; // ms
+  /** Epoch ms with the sub-millisecond part Loki keeps (BAC-63): orders records written within
+   *  one millisecond, such as the commands of a redis MULTI block. Set by queryRange. */
+  tsExactMs?: number;
   line: string;
   labels: Record<string, string>;
   level: string;
@@ -118,6 +126,7 @@ export async function queryRange(
       const labels = stream.stream || {};
       out.push({
         ts: Math.floor(Number(tsNs) / 1e6),
+        tsExactMs: exactMs(tsNs),
         line,
         labels,
         level: parsed.level || labels.level || "info",

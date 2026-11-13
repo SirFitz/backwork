@@ -13,9 +13,16 @@ export function hasStatementFields(hop: Pick<Hop, "via" | "table" | "stmt">): bo
 }
 
 /** The row label of a data-store hop. */
-export function storeLabel(hop: Pick<Hop, "via" | "op" | "peer" | "table" | "stmt">): string {
+export function storeLabel(hop: Pick<Hop, "via" | "op" | "peer" | "table" | "stmt"> & Partial<Pick<Hop, "pipeline">>): string {
   if (hasStatementFields(hop)) return [hop.op ?? "query", hop.table].filter(Boolean).join(" ");
-  return `${hop.op ?? ""} ${hop.peer ?? ""}`.trim() || hop.via;
+  return `${pipelineOps(hop) ?? hop.op ?? ""} ${hop.peer ?? ""}`.trim() || hop.via;
+}
+
+/** A MULTI block's commands as one word: "multi lpush/ltrim/expire/exec" (BAC-63); null for one command. */
+export function pipelineOps(hop: Partial<Pick<Hop, "pipeline">>): string | null {
+  const ops = hop.pipeline?.ops;
+  if (!ops || ops.length < 2) return null;
+  return `${ops[0]} ${ops.slice(1).join("/")}`;
 }
 
 /** The database host every database row with statement fields shares, or null. */

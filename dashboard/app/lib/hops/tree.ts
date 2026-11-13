@@ -19,6 +19,7 @@ import {
   type TraceLogLine,
   type UnrecordedStoreCalls,
 } from "./types";
+import { collapsePipelines, commandCount, commandUs } from "./pipeline";
 
 /** A hop with no end record becomes stalled after this long (design 7.3 step 5). */
 export const STALL_AFTER_MS = 60_000;
@@ -91,6 +92,7 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     gaps: [],
     unrecorded: [],
     isStore: isStoreVia(base.via),
+    pipeline: null,
     afterResponse: false,
     skewMs: 0,
     children: [],
@@ -183,10 +185,12 @@ export function timeSplit(hop: Hop, now: number): TimeSplit {
   const dbKids = storeKids.filter((c) => c.via === Via.Db);
   const cacheKids = storeKids.filter((c) => c.via === Via.Cache);
   const recordedSum = (kids: readonly Hop[]): number => kids.reduce((a, c) => a + (c.durationUs ?? 0), 0);
-  const dbSumUs = hop.totals ? hop.totals.dbUs : recordedSum(dbKids);
-  const cacheSumUs = hop.totals ? hop.totals.cacheUs : recordedSum(cacheKids);
-  const dbCalls = hop.totals ? hop.totals.dbCalls : dbKids.length;
-  const cacheCalls = hop.totals ? hop.totals.cacheCalls : cacheKids.length;
+  // One call per row (a MULTI block is one), plus the calls in the totals not recorded one by one.
+  const missing = (store: StoreKind): UnrecordedStoreCalls | undefined => storeShortfall(hop).find((u) => u.store === store);
+  const dbSumUs = recordedSum(dbKids) + (missing(StoreKind.Db)?.us ?? 0);
+  const cacheSumUs = recordedSum(cacheKids) + (missing(StoreKind.Cache)?.us ?? 0);
+  const dbCalls = dbKids.length + (missing(StoreKind.Db)?.calls ?? 0);
+  const cacheCalls = cacheKids.length + (missing(StoreKind.Cache)?.calls ?? 0);
 
   const db = intervalsOf(dbKids);
   const cacheOnly = subtractIntervals(intervalsOf(cacheKids), db);
@@ -217,10 +221,11 @@ function storeShortfall(hop: Hop): UnrecordedStoreCalls[] {
     [StoreKind.Cache, Via.Cache, hop.totals.cacheCalls, hop.totals.cacheUs],
   ];
   for (const [store, via, calls, us] of kinds) {
+    // The totals count every command, so a MULTI block counts as its commands here.
     const recorded = hop.children.filter((c) => c.isStore && c.via === via);
-    const missing = calls - recorded.length;
+    const missing = calls - recorded.reduce((a, c) => a + commandCount(c), 0);
     if (missing <= 0) continue;
-    const recordedUs = recorded.reduce((a, c) => a + (c.durationUs ?? 0), 0);
+    const recordedUs = recorded.reduce((a, c) => a + commandUs(c), 0);
     out.push({ store, calls: missing, us: Math.max(0, us - recordedUs) });
   }
   return out;
@@ -324,6 +329,20 @@ export function buildRequestTree(
   // the difference and keep its duration, so the page never draws a child ahead of its parent.
   alignToParents(flat, byId);
 
+  // A redis MULTI block is one call, not one per command (BAC-63).
+  let collapsed = false;
+  for (const h of flat) {
+    for (const gone of collapsePipelines(h)) {
+      byId.delete(gone.hopId);
+      collapsed = true;
+    }
+    for (const c of h.children) if (c.pipeline) byId.set(c.hopId, c);
+  }
+  if (collapsed) {
+    flat.length = 0;
+    walk(roots, (h) => flat.push(h));
+  }
+
   // Calls still running when the response went: drawn where they ran, out of the time split.
   for (const h of inbound) {
     if (h.endMs === null) continue;
@@ -412,15 +431,20 @@ export function headHop(tree: RequestTree): Hop | null {
   return tree.roots.find((h) => h.dir === HopDir.In) ?? tree.roots[0] ?? null;
 }
 
-/** Database and cache call counts of the whole request: totals where reported, records otherwise. */
+/**
+ * Database and cache call counts of the whole request: one per row the Path card shows (a MULTI
+ * block is one), plus the calls the totals report that were not recorded one by one. Calls that
+ * ended after the end record was written are in the rows but not the totals, so they still count.
+ */
 export function storeCallCounts(tree: RequestTree): { db: number; cache: number } {
   let db = 0;
   let cache = 0;
   for (const h of tree.hops) {
     if (h.dir !== HopDir.In) continue;
     const kids = h.children.filter((c) => c.isStore);
-    db += h.totals ? h.totals.dbCalls : kids.filter((c) => c.via === Via.Db).length;
-    cache += h.totals ? h.totals.cacheCalls : kids.filter((c) => c.via === Via.Cache).length;
+    const missing = (store: StoreKind): number => h.unrecorded.find((u) => u.store === store)?.calls ?? 0;
+    db += kids.filter((c) => c.via === Via.Db).length + missing(StoreKind.Db);
+    cache += kids.filter((c) => c.via === Via.Cache).length + missing(StoreKind.Cache);
   }
   // Data-store hops whose inbound hop is missing still count once each.
   for (const h of tree.hops) {
