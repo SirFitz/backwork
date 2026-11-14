@@ -165,8 +165,8 @@ export async function runDigestTick(now: number, deps: TickDeps = defaultTickDep
       out.push({ orgId: d.orgId, periodStart: due.periodStart, result: TickResult.Failed, outcomes: {} });
     }
   }
-  const sent = out.filter((r) => r.result === TickResult.Sent || r.result === TickResult.Failed);
-  if (sent.length) console.log(JSON.stringify({ msg: "weekly digest", runs: sent.map((r) => ({ org: r.orgId, period: r.periodStart, result: r.result })) }));
+  const due = out.filter((r) => r.result !== TickResult.NotDue);
+  if (due.length) console.log(JSON.stringify({ msg: "weekly digest", pid: process.pid, runs: due.map((r) => ({ org: r.orgId, period: r.periodStart, result: r.result })) }));
   return out;
 }
 

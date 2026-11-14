@@ -74,7 +74,7 @@ export function DigestCard({ d }: { d: DigestCardData }) {
     return (
       <Card>
         <CardHead title="Weekly digest" sub={<Summary d={d} />} />
-        <p className="px-4 py-3 text-2xs text-muted">Owners and admins choose when it is sent and where. {d.lastSent ?? ""}</p>
+        <p className="px-4 py-3 text-2xs text-muted">{["Owners and admins choose when it is sent and where.", d.lastSent ? `${d.lastSent}.` : null].filter(Boolean).join(" ")}</p>
       </Card>
     );
   }
