@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -71,7 +72,8 @@ function ChartTip({ active, payload, label, unit, fmt }: any) {
   );
 }
 
-function merge(series: Series[]) {
+/** One row per instant with a value per series name (the overlay included), oldest first. */
+export function merge(series: readonly Series[]): Array<Record<string, number>> {
   const map = new Map<number, Record<string, number>>();
   for (const s of series) for (const p of s.points) {
     const row = map.get(p.t) || { t: p.t };
@@ -81,21 +83,88 @@ function merge(series: Series[]) {
   return [...map.values()].sort((a, b) => a.t - b.t);
 }
 
-export function TimeSeries({ series, height = 200, unit, fmt }: { series: Series[]; height?: number; unit?: string; fmt?: (n: number) => string }) {
+/** A vertical marker at an instant (BAC-73: a deploy). `detail` is the hover text. */
+export interface ChartMarker {
+  /** ms */
+  t: number;
+  label: string;
+  detail?: string;
+}
+
+/** Markers inside the data's time span, so none sits off the chart. */
+export function markersWithin(markers: readonly ChartMarker[], data: ReadonlyArray<Record<string, number>>): ChartMarker[] {
+  if (!data.length) return [];
+  const first = data[0].t;
+  const last = data[data.length - 1].t;
+  return markers.filter((m) => m.t >= first && m.t <= last);
+}
+
+/** Neutral marker and overlay colour: not a status, not a service. */
+const MUTED = "oklch(0.62 0.01 260)";
+
+function MarkerFlag({ viewBox, marker }: { viewBox?: { x?: number; y?: number; height?: number }; marker: ChartMarker }) {
+  const x = viewBox?.x ?? 0;
+  const y = viewBox?.y ?? 0;
+  const h = viewBox?.height ?? 0;
+  return (
+    <g>
+      <title>{marker.detail ?? marker.label}</title>
+      {/* wide transparent hit area so the hover text is easy to reach */}
+      <rect x={x - 6} y={y} width={12} height={h} fill="transparent" />
+      <path d={`M${x - 4},${y} L${x + 4},${y} L${x},${y + 6} Z`} fill={MUTED} />
+    </g>
+  );
+}
+
+export function TimeSeries({
+  series,
+  height = 200,
+  unit,
+  fmt,
+  markers,
+  overlay,
+}: {
+  series: Series[];
+  height?: number;
+  unit?: string;
+  fmt?: (n: number) => string;
+  /** vertical dotted lines with hover text, e.g. deploys */
+  markers?: readonly ChartMarker[];
+  /** one more series drawn dashed and muted, e.g. last week */
+  overlay?: Series;
+}) {
   const hydrated = useHydrated();
   const ct = useChartTheme();
-  const data = merge(series);
+  const data = merge(overlay ? [...series, overlay] : series);
   if (!hydrated) return <div style={{ height }} className="animate-pulse rounded bg-surface-2/50" />;
   if (!data.length) return <div style={{ height }} className="flex items-center justify-center text-[13px] text-faint">no data in range</div>;
+  // Markers need a time axis: on the default category axis a line can only sit on a data point.
+  const timeAxis = markers !== undefined;
+  const shown = markers ? markersWithin(markers, data) : [];
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -6 }}>
         <CartesianGrid stroke={ct.grid} vertical={false} />
-        <XAxis dataKey="t" tickFormatter={fmtTick} stroke={ct.axis} fontSize={11} tickLine={false} axisLine={{ stroke: ct.grid }} minTickGap={44} />
+        <XAxis
+          dataKey="t"
+          tickFormatter={fmtTick}
+          stroke={ct.axis}
+          fontSize={11}
+          tickLine={false}
+          axisLine={{ stroke: ct.grid }}
+          minTickGap={44}
+          {...(timeAxis ? { type: "number" as const, scale: "time" as const, domain: ["dataMin", "dataMax"] } : {})}
+        />
         <YAxis stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} width={46} tickFormatter={fmt} />
         <Tooltip content={<ChartTip unit={unit} fmt={fmt} />} />
+        {overlay ? (
+          <Line key={`overlay:${overlay.name}`} type="monotone" dataKey={overlay.name} stroke={overlay.color || MUTED} strokeWidth={1.4} strokeDasharray="5 4" dot={false} isAnimationActive={false} connectNulls />
+        ) : null}
         {series.map((s) => (
           <Line key={s.name} type="monotone" dataKey={s.name} stroke={s.color} strokeWidth={1.8} dot={false} isAnimationActive={false} connectNulls />
+        ))}
+        {shown.map((m) => (
+          <ReferenceLine key={`m:${m.t}:${m.label}`} x={m.t} stroke={MUTED} strokeDasharray="2 3" ifOverflow="hidden" label={<MarkerFlag marker={m} />} />
         ))}
       </LineChart>
     </ResponsiveContainer>
