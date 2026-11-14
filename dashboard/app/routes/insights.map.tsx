@@ -3,8 +3,8 @@
 // on a phone and by toggle. The figures load deferred with their own skeleton and error state.
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate } from "@remix-run/react";
-import { useState } from "react";
+import { Link, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
 import { Network } from "lucide-react";
 import { Card, CardHead, Empty, InfoTip } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
@@ -18,13 +18,23 @@ import { serviceMap, type ServiceMapResult } from "~/lib/hops/service-map.server
 import { MAP_FRESH_MS, MAP_RANGES, parseMapRange } from "~/lib/hops/service-map";
 import { MapView, parseMapView, type MapSelection } from "~/lib/hops/service-map";
 import { plural } from "~/lib/hops/time-format";
+import { withBudget } from "~/lib/with-budget";
 import { cn } from "~/lib/utils";
 
 interface MapPanel {
   map: ServiceMapResult | null;
   /** Age of the figures when served, in milliseconds. */
   ageMs: number;
+  /** The first computation is still running: the page asks again in a few seconds. */
+  building: boolean;
 }
+
+/** The first map of an organisation scans recent records and reads several figures; past this the
+ *  page shows "building" instead of waiting (Remix gives up on a slow stream after 5 seconds). */
+const MAP_BUDGET_MS = 3_500;
+/** How often the page asks again while the map is being built, and how many times it tries. */
+const BUILD_POLL_MS = 3_000;
+const BUILD_POLL_MAX = 10;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
@@ -33,9 +43,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const range = parseMapRange(url.searchParams.get("range"));
   const view = parseMapView(url.searchParams.get("view"));
   const panel = safe<MapPanel>(async () => {
-    const map = await serviceMap(range, tenant);
-    return { map, ageMs: Date.now() - map.computedAt };
-  }, { map: null, ageMs: 0 });
+    const map = await withBudget(serviceMap(range, tenant), MAP_BUDGET_MS);
+    return map ? { map, ageMs: Date.now() - map.computedAt, building: false } : { map: null, ageMs: 0, building: true };
+  }, { map: null, ageMs: 0, building: false });
   return defer({ range, view, panel });
 }
 
@@ -82,7 +92,7 @@ function Notes({ map, ageMs }: { map: ServiceMapResult; ageMs: number }) {
   const notes: string[] = [];
   if (map.hiddenNodes > 0) notes.push(`The graph shows the 40 busiest; ${map.hiddenNodes} more ${plural(map.hiddenNodes, "is", "are")} in the list.`);
   if (map.unresolvedPeers > 0) {
-    notes.push(`${map.unresolvedPeers} ${plural(map.unresolvedPeers, "host", "hosts")} could not be matched to a service. Make sure they report to backwork.`);
+    notes.push(`${plural(map.unresolvedPeers, "host", "hosts")} could not be matched to a service. Make sure they report to backwork.`);
   }
   if (map.peersUnavailable) notes.push("Hosts could not be matched to services just now, so some services may show as external.");
   if (ageMs > MAP_FRESH_MS) notes.push(`Figures from about ${Math.max(1, Math.round(ageMs / 60_000))} min ago; newer ones are on the way.`);
@@ -119,6 +129,30 @@ function MapBody({ map, ageMs, view, range }: { map: ServiceMapResult; ageMs: nu
   );
 }
 
+/** Shown while the first computation runs; asks the loader again until the map is there. */
+function Building() {
+  const revalidator = useRevalidator();
+  const tries = useRef(0);
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    if (gaveUp) return;
+    const id = setTimeout(() => {
+      tries.current += 1;
+      if (tries.current >= BUILD_POLL_MAX) setGaveUp(true);
+      else revalidator.revalidate();
+    }, BUILD_POLL_MS);
+    return () => clearTimeout(id);
+  });
+  return (
+    <>
+      <RowsSkeleton rows={4} />
+      <p className="px-4 pb-4 text-center text-[13px] text-muted">
+        {gaveUp ? "The map is still being built. Reload the page in a minute." : "Building the map for the first time. It takes a few seconds and will appear here."}
+      </p>
+    </>
+  );
+}
+
 export default function ServiceMapPage() {
   const d = useLoaderData<typeof loader>();
   const range = d.range as PerfRange;
@@ -148,7 +182,9 @@ export default function ServiceMapPage() {
         }
       >
         {(panel) =>
-          panel.error || !panel.data.map ? (
+          panel.data.building ? (
+            <Building />
+          ) : panel.error || !panel.data.map ? (
             <p className="px-4 py-10 text-center text-[13px] text-err">The figures could not be read: {(panel.error ?? "no data").slice(0, 180)}</p>
           ) : (
             <MapBody map={panel.data.map as ServiceMapResult} ageMs={panel.data.ageMs} view={view} range={range} />
