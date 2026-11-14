@@ -18,6 +18,8 @@ import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from
 import { buildPathNodes, expandableKeys, pathKeysTo, rowUs, visibleRows, type PathNode, type VisibleRow } from "~/lib/hops/path-rows";
 import { detectRepeats, repeatChip, repeatHint, repeatNote, repeatSentence, repeatsByHop, type RepeatGroup, type RepeatReport } from "~/lib/hops/repeated";
 import { RepeatChip } from "~/components/insights/repeat-chip";
+import { WhyLine } from "~/components/insights/why-line";
+import { whyItWasSlow } from "~/lib/hops/verdict";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
@@ -423,6 +425,8 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   const repeats = useMemo(() => detectRepeats(tree, found.truncated), [tree, found.truncated]);
   const repeatOf = useMemo(() => repeatsByHop(repeats), [repeats]);
   const [focus, setFocus] = useState<RepeatFocus | null>(null);
+  // Why it was slow (BAC-70): from hop records only, so the build with logs gives the same line.
+  const verdict = useMemo(() => whyItWasSlow(tree, repeats, d.now), [tree, repeats, d.now]);
   const head = headHop(tree);
   if (!head) return <LogsOnly d={d} />;
   const lastLog = logs.length ? logs[logs.length - 1].timeMs : null;
@@ -434,6 +438,7 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
     <>
       <Header tree={tree} head={head} d={d} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
+      <WhyLine verdict={verdict} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
       <PathCard ctx={ctx} />
       <div className="mt-4 space-y-4 md:hidden">
