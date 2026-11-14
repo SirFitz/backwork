@@ -29,7 +29,8 @@ import {
   type ControlsView,
 } from "~/lib/controls-view.server";
 import { safe } from "~/lib/config.server";
-import { DeployAuditAction, deleteDeploy, listDeploys, markerLabel, type Deploy } from "~/lib/deploys.server";
+import { DeployAuditAction, deleteDeploy, listDeploys } from "~/lib/deploys.server";
+import { markerLabel, type Deploy } from "~/lib/deploys";
 import { Ago } from "~/components/time";
 
 /** Deploys listed on the page for admins (BAC-73). */
