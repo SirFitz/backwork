@@ -5,7 +5,10 @@ import { ArrowRight } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { config, safe } from "~/lib/config.server";
-import { requireOrg } from "~/lib/auth/context.server";
+import { hasRole, requireOrg } from "~/lib/auth/context.server";
+import { logAudit } from "~/lib/audit.server";
+import { PinAudit, loadPinSettings, pinUsage, savePinSettings } from "~/lib/pins.server";
+import { AUTO_PINS_INTENT, AutoPinCard, type AutoPinView } from "~/components/insights/auto-pin-card";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 import { DataControlsPanel, type SwitchGroup } from "~/components/data-controls";
@@ -44,10 +47,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   );
 
   const plan = safe(() => loadPlanView(ctx.org.id), null);
+  // Automatic pins (BAC-78): switches and how many pins the plan allows.
+  const pins: Promise<{ data: AutoPinView | null; error: string | null }> = safe(async () => {
+    const [settings, usage] = await Promise.all([loadPinSettings(ctx.org.id), pinUsage(ctx.org.id)]);
+    return { settings, count: usage.count, limit: usage.limit, canManage: hasRole(ctx.role, "admin") };
+  }, null);
 
   return defer({
     controls,
     plan,
+    pins,
     gridHeads: GRID_HEAD,
     groups: SWITCH_GROUPS,
     publicUrl: config.publicUrl,
@@ -63,6 +72,16 @@ export async function action({ request }: ActionFunctionArgs) {
   const ctx = await requireOrg(request);
   const fd = await request.formData();
   const intent = String(fd.get("intent") ?? "");
+  if (intent === AUTO_PINS_INTENT) {
+    if (!hasRole(ctx.role, "admin")) return json({ ok: false, error: "Only an admin can change automatic pins." }, { status: 403 });
+    const which = String(fd.get("which") ?? "");
+    if (which !== "slow" && which !== "failed") return json({ ok: false, error: "Unknown switch." }, { status: 400 });
+    const current = await loadPinSettings(ctx.org.id);
+    const next = { ...current, [which]: fd.get("on") === "1" };
+    await savePinSettings(ctx.org.id, ctx.user.id, next);
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: PinAudit.Settings, target: next });
+    return json({ ok: true });
+  }
   if (!isControlIntent(intent)) return json({ ok: false, error: "Unknown action." }, { status: 400 });
   // Organisation level only: a project id is never accepted here.
   fd.set("projectId", "");
@@ -106,6 +125,10 @@ export default function Settings() {
 
       <Deferred resolve={d.plan} fallback={<KeptCard plan={null} />}>
         {(p) => <KeptCard plan={p.data} />}
+      </Deferred>
+
+      <Deferred resolve={d.pins} fallback={<Card><CardHead title="Pinned requests" /><RowsSkeleton rows={2} /></Card>}>
+        {(p) => (p.data ? <AutoPinCard view={p.data} /> : <Card><CardHead title="Pinned requests" /><div className="border-t border-border px-4 py-2.5 text-2xs text-warn">These settings could not be loaded just now. Reload the page to try again.</div></Card>)}
       </Deferred>
 
       <Card>

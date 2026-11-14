@@ -14,6 +14,9 @@ import { pathTitle } from "~/lib/hops/paths";
 import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
 import { CHATTY_BADGE, byMostCalls, chattyRows, chattySentence, type ChattyVerdict } from "~/lib/hops/chatty";
 import { cn, fmtMs, fmtPct } from "~/lib/utils";
+import { listPinsPage } from "~/lib/pins.server";
+import { parsePinCursor, type PinPage } from "~/lib/pins";
+import { PINNED_PARAM, PinnedChip, PinnedList } from "~/components/insights/pinned-list";
 import { Clock } from "~/components/time";
 
 const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
@@ -34,6 +37,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const sinceMs = Date.now() - hrs * 3600_000;
   const beforeRaw = Number(url.searchParams.get("before"));
   const health = healthChecksFrom(url.searchParams.get(HEALTH_PARAM));
+
+  // The Pinned view (BAC-78): pinned requests from Postgres instead of the live feed.
+  if (url.searchParams.get(PINNED_PARAM) === "1") {
+    const cursor = parsePinCursor(url.searchParams.get("before"));
+    if (cursor) {
+      const page = await safe(() => listPinsPage(ctx.org.id, cursor), { rows: [], next: null } as PinPage);
+      return json({ kind: "pinned-older" as const, page: page.data, error: page.error });
+    }
+    const pins = safe(() => listPinsPage(ctx.org.id), { rows: [], next: null } as PinPage);
+    return defer({ kind: "pinned" as const, pins });
+  }
 
   const services = await safe(() => inboundServices(t), [] as string[]);
   const list = services.data;
@@ -91,11 +105,21 @@ const SELECT = "h-9 w-full max-w-full sm:w-auto rounded-lg border border-border 
 
 export default function Requests() {
   const d = useLoaderData<typeof loader>();
+  if (d.kind === "pinned") {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <PageTitle title="Requests" sub="Requests pinned by hand or kept automatically, newest first." right={<PinnedChip on />} />
+        <Deferred resolve={d.pins} fallback={<Card><CardHead title="Pinned requests" sub="kept after their records expire" /><RowsSkeleton rows={6} /></Card>}>
+          {(p) => <PinnedList first={p.data} error={p.error} />}
+        </Deferred>
+      </div>
+    );
+  }
   if (d.kind !== "page") return null;
   const hasServices = d.services.length > 0;
   return (
     <div className="space-y-4 animate-fade-in">
-      <PageTitle title="Requests" sub="A live feed of individual requests across your services: method, route, status and latency." />
+      <PageTitle title="Requests" sub="A live feed of individual requests across your services: method, route, status and latency." right={<PinnedChip on={false} />} />
       {!hasServices ? (
         <Card>
           <div className="flex flex-col items-center px-6 py-14 text-center">
