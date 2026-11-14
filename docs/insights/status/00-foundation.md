@@ -35,7 +35,8 @@ Baseline before changes: `tsc --noEmit` exit 0; `bun test` 400 pass, 2 skip, 0 f
 - `SCENARIO=insights`, `shop-api`, `compose.insights.yml`, `deploy.sh`, README sections.
 - Local stack `-p bwinsfound` (Loki 127.0.0.1:3191, VM 127.0.0.1:8491): Loki services `commerce-payments, commerce-risk, shop-api`; through the dashboard's own parser and tree: GET /shop 22 db calls, top shape `select plans.id, plans.name, plans.price from plans where plans.number = ?` x14 (shapeId 5bcb6030); GET /orders/:id slow shape 222 ms + 3 cache gets; GET /feed 12 cache calls; POST /checkout 3 services. VM `backwork_hop_duration_seconds_count` by route lists all four shop-api routes and the two checkout receivers. Regression: GET /shop 36 ms before, 66.6 ms after `deploy.sh`; deploy report answered 404 (endpoint arrives with feature 6).
 
-## Final
+## Final (PR https://github.com/SirFitz/backwork/pull/31)
 - `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (449 pass, 4 skip, 0 fail); with `DATABASE_URL`/`USAGE_TEST_DATABASE_URL` on a fresh `bw_ins_found`: exit 0 (452 pass, 1 skip, 0 fail).
 - `bun ../infra/vector/generate.ts --check`: up to date (no infra changes).
 - Cleanup: dev server stopped, `bwinsfound` containers, volumes and images removed, `bw_ins_found` dropped.
+DONE
