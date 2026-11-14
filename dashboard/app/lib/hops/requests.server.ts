@@ -33,13 +33,15 @@ export interface RequestListRow {
 /** Rows per page (design 13). */
 export const PAGE_SIZE = 100;
 
-/** LogQL for the newest inbound end records, optionally for one service. The line filters only
- *  narrow the scan; `parseHopRecord` decides. */
-export function inboundEndQuery(service: string | null, health: HealthChecks = HealthChecks.Hidden, onlyFailed = false): string {
+/** LogQL for the newest inbound end records, optionally for one service and one route template
+ *  (`op`, BAC-75: a quoted, escaped substring filter). The line filters only narrow the scan;
+ *  `parseHopRecord` decides, and callers still compare the route exactly. */
+export function inboundEndQuery(service: string | null, health: HealthChecks = HealthChecks.Hidden, onlyFailed = false, route: string | null = null): string {
   const sel = service ? `{kind="hop",service=${JSON.stringify(service)}}` : `{kind="hop"}`;
   const notHealth = health === HealthChecks.Hidden ? ` ${LOGQL_NOT_HEALTH_OR_MONITOR}` : "";
   const failed = onlyFailed ? ` ${LOGQL_FAILED}` : "";
-  return `${sel} |= "in_end" |~ "via\\\\W{1,6}http"${notHealth}${failed}`;
+  const onRoute = route ? ` |= ${JSON.stringify(route)}` : "";
+  return `${sel} |= "in_end" |~ "via\\\\W{1,6}http"${onRoute}${notHealth}${failed}`;
 }
 
 /** Narrows a scan to failed records: outcome error or a 5xx status (`isFailedRow` decides). */
