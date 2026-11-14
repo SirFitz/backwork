@@ -1,24 +1,21 @@
-// The weekly digest card's action on `/alerts` (BAC-77): save the settings or send a test now.
-// Admins and owners only; channels must be the organisation's own; both intents are audited. The
-// route checks the origin and the session, then hands the form here.
+// The weekly digest card on `/alerts` (BAC-77), server side: the loader's card data, and the
+// action (save the settings or send a test now). Admins and owners only; channels must be the
+// organisation's own; both intents are audited. The route checks the origin and the session, then
+// hands the form here.
 
 import type { Role } from "~/db/schema";
 import { hasRole } from "~/lib/auth/context.server";
 import { logAudit } from "~/lib/audit.server";
 import { loadChannels } from "~/lib/channels.server";
-import { DigestIntent, parseDigestForm, type DigestSettings } from "./settings";
-import { DELIVERY_OK, DestinationKind, outcomeLine, type Outcomes } from "./delivery";
-import { DigestAudit, loadDigestSettings, orgName, saveDigestSettings } from "./store.server";
+import { DigestIntent, parseDigestForm, type DigestActionResult, type DigestCardData, type DigestSettings } from "./settings";
+import { DELIVERY_OK, DestinationKind, outcomeLine, parseOutcomes, type Outcomes } from "./delivery";
+import { DIGEST_MAX_ATTEMPTS } from "./schedule";
+import { whenText } from "./build";
+import { DigestAudit, lastRun, lastSentRun, loadDigestSettings, orgName, saveDigestSettings, type DigestRun } from "./store.server";
 import { sendTestDigest } from "./schedule.server";
 
 /** The lowest role that may change or test the digest. */
 export const DIGEST_MIN_ROLE: Role = "admin";
-
-/** What the card's fetchers get back. */
-export type DigestActionResult =
-  | { intent: typeof DigestIntent.Save; ok: true }
-  | { intent: typeof DigestIntent.Save; ok: false; error: string }
-  | { intent: typeof DigestIntent.Test; ok: boolean; line: string; quiet: boolean };
 
 export interface DigestActor {
   orgId: string;
@@ -56,6 +53,27 @@ export function destinationName(key: string, channels: ReadonlyMap<string, strin
   const id = key.slice(at + 1);
   if (kind === DestinationKind.Channel) return channels.get(id) ?? "a removed channel";
   return "email to an owner or admin";
+}
+
+/** The latest run's problem as one line, or null when it has none. */
+export function runErrorLine(run: DigestRun | null, channels: ReadonlyMap<string, string>): string | null {
+  if (!run || run.sentAt !== null || run.error === null) return null;
+  const outcomes = parseOutcomes(run.error);
+  const what = Object.keys(outcomes).length ? outcomeLine(outcomes, (k) => destinationName(k, channels)) : run.error;
+  return `${whenText(run.claimedAt)}, attempt ${run.attempts} of ${DIGEST_MAX_ATTEMPTS}: ${what}`;
+}
+
+/** The card's data for the loader. */
+export async function loadDigestCard(orgId: string, role: Role): Promise<DigestCardData> {
+  const [settings, chans, last, sent] = await Promise.all([loadDigestSettings(orgId), loadChannels(orgId), lastRun(orgId), lastSentRun(orgId)]);
+  const names = new Map(chans.map((c) => [c.id, c.name]));
+  return {
+    canManage: hasRole(role, DIGEST_MIN_ROLE),
+    settings,
+    channels: chans.map((c) => ({ id: c.id, name: c.name, type: c.type, enabled: c.enabled })),
+    lastSent: sent?.sentAt != null ? `Last sent ${whenText(sent.sentAt)}` : null,
+    lastError: runErrorLine(last, names),
+  };
 }
 
 /** Handle one digest intent. Throws a 403 Response below `DIGEST_MIN_ROLE`. */

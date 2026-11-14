@@ -61,3 +61,30 @@ export function parseDigestForm(f: DigestFormInput, orgChannelIds: ReadonlySet<s
   if (enabled && channelIds.length === 0 && !emailAdmins) return { ok: false, error: "Choose a channel or email owners and admins." };
   return { ok: true, settings: { enabled, weekday, hourUtc, channelIds, emailAdmins } };
 }
+
+/** A channel as the card lists it. */
+export interface DigestChannelOption {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+}
+
+/** What the settings card renders: the settings, the channels to choose from, and the last runs
+ *  as text (rendered on the server, so the page hydrates the same text). */
+export interface DigestCardData {
+  /** Owners and admins may change and test it; others see the summary only. */
+  canManage: boolean;
+  settings: DigestSettings;
+  channels: DigestChannelOption[];
+  /** "Last sent 16 Nov 08:05 UTC", or null when it never was. */
+  lastSent: string | null;
+  /** The latest run's problem, when it has one: "16 Nov 08:05 UTC, attempt 2 of 3: Ops hook failed: HTTP 500". */
+  lastError: string | null;
+}
+
+/** What the card's fetchers get back from the action. */
+export type DigestActionResult =
+  | { intent: typeof DigestIntent.Save; ok: true }
+  | { intent: typeof DigestIntent.Save; ok: false; error: string }
+  | { intent: typeof DigestIntent.Test; ok: boolean; line: string; quiet: boolean };

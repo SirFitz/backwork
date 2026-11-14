@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleDigestAction, type DigestActionDeps, type DigestActor } from "./action.server";
+import { handleDigestAction, type DigestActionDeps, type DigestActor } from "./card.server";
 import { DELIVERY_OK } from "./delivery";
 import { DEFAULT_DIGEST_SETTINGS, DigestIntent, type DigestSettings } from "./settings";
 import { DigestAudit } from "./store.server";
