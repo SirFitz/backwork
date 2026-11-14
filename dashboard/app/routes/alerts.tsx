@@ -7,6 +7,7 @@ import { Check, Plus, Send, Trash2, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { AlertFormFields, EMPTY_DRAFT, FIELD, draftForMetric, type RuleDraft } from "~/components/insights/alert-form-fields";
+import { DigestCard } from "~/components/insights/digest-card";
 import * as alerts from "~/lib/alerts.server";
 import { alertTargets, evaluate, evaluateRule } from "~/lib/alerts-eval.server";
 import { clearState, forgetRule, loadStates, recentEvents, DELIVERED_OK, type StoredAlertState } from "~/lib/alert-state.server";
@@ -20,6 +21,8 @@ import { RuleStatus, ruleStatus } from "~/lib/alert-decision";
 import { isBreach, type AlertTargets } from "~/lib/alert-queries";
 import { fmtCount, fmtRuleValue, previewLine } from "~/lib/alert-message";
 import { cn } from "~/lib/utils";
+import { isDigestIntent } from "~/lib/digest/settings";
+import { defaultDigestActionDeps, handleDigestAction, loadDigestCard } from "~/lib/digest/card.server";
 
 /** "14 Nov 14:02 UTC", rendered on the server so the page hydrates the same text. */
 function utcText(ms: number): string {
@@ -105,6 +108,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   })().catch((): RulesData => ({ rows: [], channels: [] }));
   return defer({
     data,
+    digest: loadDigestCard(orgId, ctx.role).catch(() => null),
     targets: alertTargets(t).catch((): AlertTargets => ({ routes: [], shapes: [] })),
     channelTypes: channels.CHANNEL_TYPES,
   });
@@ -138,6 +142,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const orgId = ctx.org.id;
   const fd = await request.formData();
   const intent = String(fd.get("intent"));
+  if (isDigestIntent(intent)) {
+    const actor = { orgId, userId: ctx.user.id, role: ctx.role };
+    return json(await handleDigestAction(actor, intent, fd, defaultDigestActionDeps(request, actor)));
+  }
   const audit = (action: alerts.AlertAudit, target: Record<string, unknown>) => void logAudit({ request, orgId, actorUserId: ctx.user.id, action, target });
 
   // ---- channel intents ----
@@ -475,6 +483,10 @@ export default function Alerts() {
           </ul>
         )}
       </Card>
+
+      <Deferred resolve={d.digest} fallback={<Card><CardHead title="Weekly digest" /><RowsSkeleton rows={3} /></Card>}>
+        {(digest) => digest ? <DigestCard d={digest} /> : <Card><CardHead title="Weekly digest" /><p className="px-4 py-3 text-2xs text-muted">The digest settings could not be loaded. Reload the page to try again.</p></Card>}
+      </Deferred>
 
       <Card>
         <CardHead title="New channel" sub="webhook, Slack, Discord, email or SMS; you supply the destination and credentials" />
