@@ -44,6 +44,12 @@ and on the two services it calls. Every cycle (`CYCLE_S`, 30 s) it writes:
 | `GET /orders/:id` | shop-api | a slow query shape (`select ... from orders ... where customer_id = ? order by created_at desc`, 180 to 420 ms), then 3 independent cache gets one after another |
 | `GET /feed` | shop-api | a plain Redis pipeline of 12 gets in one write (must not be flagged) |
 | `POST /checkout` | shop-api, commerce-payments, commerce-risk | two outbound HTTP calls one after the other that do not depend on each other |
+| `GET /search` | shop-api | the cache-miss-heavy route (BAC-79): 10 one-key cache gets with `hit`, about one in five a hit; `cache_hit_n` and `cache_miss_n` on its end record |
+| `POST /refunds` | commerce-payments | the pool-starved route (BAC-79): 3 updates with `wait_us` (55 to 85 percent of each call spent waiting for a connection) and `db_wait_us` on its end record |
+
+`GET /orders/:id` also reports `hit` on its 3 gets (about three in four). The commerce-api routes and
+`GET /feed` report no hits or waits, so they show "no data" in the Cache hits and Conn. wait columns.
+These fields are the proposed Correlator HOP-25 and HOP-26 (docs/insights/12-cache-and-pool.md).
 
 Formats differ as in the rest of the fixtures: shop-api `json`, commerce-payments `kv`,
 commerce-risk `json-nested`.
