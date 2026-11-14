@@ -537,6 +537,112 @@ export function routesTable(
   });
 }
 
+// ---------------------------------------------------------------- routes by total time (BAC-74)
+
+/** One route's totals over a window: what the fix-first list ranks routes by. */
+export interface RouteTotalRow extends RouteKey {
+  /** Seconds the route's requests took in all (increase of the duration `_sum`). */
+  totalS: number;
+  requests: number;
+  failed: number;
+  /** Seconds, null when unknown. */
+  p95S: number | null;
+  /** Share of its time in databases and caches (0..1), null when unknown. */
+  storeShare: number | null;
+}
+
+/** The six queries of `routesByTotalTime`: total time with `topk`, the rest restricted to the same routes. */
+export interface RouteTotalQueries {
+  total: string;
+  requests: string;
+  errA: string;
+  errB: string;
+  p95: string;
+  storeShare: string;
+}
+
+/** Inbound route figures for the `limit` routes that took the most time in `range` (pure). */
+export function routesByTotalTimeQueries(scope: Scope, range: PerfRange, limit: number): RouteTotalQueries {
+  const w = windowOf(range);
+  const hm = healthMatchers("in", scope.health);
+  const inbound = { dir: "in", ...scope.where };
+  const top = `topk(${limit}, ${windowIncrease(selector(`${HopMetric.Duration}_sum`, inbound, hm), w, scope.by)})`;
+  const only = (q: string): string => `(${q}) and ${top}`;
+  const count = `${HopMetric.Duration}_count`;
+  return {
+    total: top,
+    requests: only(windowIncrease(selector(count, inbound, hm), w, scope.by)),
+    errA: only(windowIncrease(selector(count, { ...inbound, outcome: "error" }, hm), w, scope.by)),
+    errB: only(windowIncrease(selector(count, inbound, [...hm, `outcome!="error"`, `status_class="5xx"`]), w, scope.by)),
+    p95: only(quantileQuery(Quantile.P95, "in", scope, range)),
+    storeShare: only(storeShareQuery(scope, range)),
+  };
+}
+
+/** Seconds the scope's inbound requests took in all over `range`, ending `offset` before now (pure). */
+export function totalTimeQuery(
+  scope: Scope,
+  range: PerfRange,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): string {
+  const sel = selector(`${HopMetric.Duration}_sum`, { dir: "in", ...scope.where }, healthMatchers("in", scope.health));
+  return windowIncrease(sel, windowOf(range), scope.by, offset, lookbackSeconds);
+}
+
+/** `totalTimeQuery` read and keyed by the scope's labels joined with NUL. */
+export async function totalTimeBy(
+  scope: Scope,
+  range: PerfRange,
+  tenant: Tenant,
+  client: PromClient = vmClient,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): Promise<Map<string, number>> {
+  return toMap(await client.instant(totalTimeQuery(scope, range, offset, lookbackSeconds), tenant), scope.by);
+}
+
+/** The routes (of every service for `allRoutesScope`) that took the most time, largest first. */
+export async function routesByTotalTime(
+  scope: Scope,
+  range: PerfRange,
+  tenant: Tenant,
+  client: PromClient = vmClient,
+  limit: number = 15,
+): Promise<RouteTotalRow[]> {
+  const q = routesByTotalTimeQueries(scope, range, limit);
+  const [total, requests, errA, errB, p95, share] = await Promise.all([
+    client.instant(q.total, tenant),
+    client.instant(q.requests, tenant),
+    client.instant(q.errA, tenant),
+    client.instant(q.errB, tenant),
+    client.instant(q.p95, tenant),
+    client.instant(q.storeShare, tenant),
+  ]);
+  const labels = ["service", "method", "op"];
+  const reqM = toMap(requests, labels);
+  const errAM = toMap(errA, labels);
+  const errBM = toMap(errB, labels);
+  const p95M = toMap(p95, labels);
+  const shareM = toMap(share, labels);
+  return total
+    .filter((s) => Number.isFinite(s.value) && s.value > 0 && (s.metric.service ?? "") !== "")
+    .map((s): RouteTotalRow => {
+      const k = keyOf(s.metric, labels);
+      return {
+        service: s.metric.service ?? "",
+        method: s.metric.method ?? "",
+        op: s.metric.op ?? "",
+        totalS: s.value,
+        requests: reqM.get(k) ?? 0,
+        failed: (errAM.get(k) ?? 0) + (errBM.get(k) ?? 0),
+        p95S: finiteOrNull(p95M.get(k)),
+        storeShare: finiteOrNull(shareM.get(k)),
+      };
+    })
+    .sort((a, b) => b.totalS - a.totalS || `${a.service} ${a.method} ${a.op}`.localeCompare(`${b.service} ${b.method} ${b.op}`));
+}
+
 /** Decide how a connection's destination is shown (design 9, phase 3). */
 export function peerKindOf(via: Via | null, peer: string, services: ReadonlySet<string>): PeerKind {
   if (via === Via.Db) return PeerKind.Database;

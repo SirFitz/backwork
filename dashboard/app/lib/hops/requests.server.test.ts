@@ -19,6 +19,16 @@ describe("inboundEndQuery", () => {
   test("one service, quoted", () => {
     expect(inboundEndQuery('a"b', HealthChecks.Shown)).toBe('{kind="hop",service="a\\"b"} |= "in_end" |~ "via\\\\W{1,6}http"');
   });
+  test("one route: a quoted line filter after the via filter (BAC-75)", () => {
+    expect(inboundEndQuery("shop-api", HealthChecks.Shown, false, "/orders/:id"))
+      .toBe('{kind="hop",service="shop-api"} |= "in_end" |~ "via\\\\W{1,6}http" |= "/orders/:id"');
+  });
+  test("the route filter is escaped", () => {
+    expect(inboundEndQuery(null, HealthChecks.Shown, false, '/a"b\\c')).toBe('{kind="hop"} |= "in_end" |~ "via\\\\W{1,6}http" |= "/a\\"b\\\\c"');
+  });
+  test("no route, no filter", () => {
+    expect(inboundEndQuery(null, HealthChecks.Shown, false, null)).toBe(inboundEndQuery(null, HealthChecks.Shown));
+  });
 });
 
 describe("line filters over stored envelopes", () => {

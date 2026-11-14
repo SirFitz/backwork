@@ -1,0 +1,77 @@
+GET /orders/:id: 120 requests in the last hour, median 311.1 ms, slowest 422.1 ms, fastest 186.0 ms
+
+=== GET /orders/:id slowest vs fastest
+A 67ebc987838634d551b8f3525af6570a (6 records)
+B 5a0a477f26258eef7c8315602793beb8 (6 records)
+  This request took 422 ms and the typical request 186 ms: 236 ms more.
+  Most of the difference, 236 ms, is select orders (416 ms against 180 ms).
+  split delta: db +234 ms, cache +1.8 ms, waiting 0.00 ms, own +0.5 ms
+  top (1):
+    slower      select orders                A 416 ms x1  B 180 ms x1  contribution +236 ms
+  rows: 3, differing: 2
+    shop-api GET /orders/:id | 422 ms x1 | 186 ms x1 | slower
+      select orders | 416 ms x1 | 180 ms x1 | slower
+      get redis.internal | 1.9 ms x3 | 1.9 ms x3 | same
+
+=== GET /orders/:id slowest vs typical (nearest median)
+A 67ebc987838634d551b8f3525af6570a (6 records)
+B 8d2541251f7259e765942f75af68a5ef (6 records)
+  This request took 422 ms and the typical request 314 ms: 108 ms more.
+  Most of the difference, 108 ms, is select orders (416 ms against 308 ms).
+  split delta: db +105 ms, cache +1.3 ms, waiting 0.00 ms, own +1.0 ms
+  top (1):
+    slower      select orders                A 416 ms x1  B 308 ms x1  contribution +108 ms
+  rows: 3, differing: 2
+    shop-api GET /orders/:id | 422 ms x1 | 314 ms x1 | slower
+      select orders | 416 ms x1 | 308 ms x1 | slower
+      get redis.internal | 1.9 ms x3 | 1.9 ms x3 | same
+
+GET /shop: 120 requests in the last hour, median 35.7 ms
+
+=== GET /shop two similar requests
+A d64794e42f9d19bd11993ffb25c18920 (24 records)
+B aad56cff4c9c9786094bcb8af9c024a5 (24 records)
+  This request took 35.7 ms and the typical request 35.8 ms: about the same.
+  They made the same calls, and none took 10.0 ms more or less.
+  split delta: db -1.2 ms, cache 0.00 ms, waiting 0.00 ms, own +1.1 ms
+  top (0):
+  rows: 10, differing: 0
+    shop-api GET /shop | 35.7 ms x1 | 35.8 ms x1 | same
+      select products | 3.2 ms x1 | 3.2 ms x1 | same
+      select plans | 16.1 ms x14 | 16.2 ms x14 | same
+      select categories | 1.1 ms x1 | 1.1 ms x1 | same
+      select banners | 0.9 ms x1 | 0.9 ms x1 | same
+      select stock | 1.8 ms x1 | 1.8 ms x1 | same
+      select prices | 1.6 ms x1 | 1.6 ms x1 | same
+      select reviews | 2.4 ms x1 | 2.4 ms x1 | same
+      select carts | 0.8 ms x1 | 0.8 ms x1 | same
+      update sessions | 0.7 ms x1 | 0.7 ms x1 | same
+
+=== Different routes: GET /orders/:id vs GET /shop
+A 67ebc987838634d551b8f3525af6570a (6 records)
+B d64794e42f9d19bd11993ffb25c18920 (24 records)
+  This request took 422 ms and the typical request 35.7 ms: 386 ms more.
+  Most of the difference, 416 ms, is select orders, which only this request ran (416 ms).
+  It also ran get redis.internal, which the typical request did not, and did not run select plans, which the typical request did.
+  warning: These are different routes (GET /orders/:id and GET /shop), so their calls line up only in part.
+  split delta: db +400 ms, cache +1.9 ms, waiting 0.00 ms, own -15.2 ms
+  top (6):
+    only_a      select orders                A 416 ms x1  B -  contribution +416 ms
+    only_b      select plans                 A -  B 16.1 ms x14  contribution -16.1 ms
+    only_b      select products              A -  B 3.2 ms x1  contribution -3.2 ms
+    only_b      select reviews               A -  B 2.4 ms x1  contribution -2.4 ms
+    only_a      get redis.internal           A 1.9 ms x3  B -  contribution +1.9 ms
+    only_b      select stock                 A -  B 1.8 ms x1  contribution -1.8 ms
+  rows: 12, differing: 12
+    shop-api GET /orders/:id | 422 ms x1 | 35.7 ms x1 | slower
+      select orders | 416 ms x1 | - | only_a
+      get redis.internal | 1.9 ms x3 | - | only_a
+      select products | - | 3.2 ms x1 | only_b
+      select plans | - | 16.1 ms x14 | only_b
+      select categories | - | 1.1 ms x1 | only_b
+      select banners | - | 0.9 ms x1 | only_b
+      select stock | - | 1.8 ms x1 | only_b
+      select prices | - | 1.6 ms x1 | only_b
+      select reviews | - | 2.4 ms x1 | only_b
+      select carts | - | 0.8 ms x1 | only_b
+      update sessions | - | 0.7 ms x1 | only_b
