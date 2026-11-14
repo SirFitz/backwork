@@ -84,6 +84,18 @@ describe("why was this request slow", () => {
     expect(v.sentence).toStartWith("43 percent of the 36.0 ms went on select plans, run 14 times");
   });
 
+  test("calls one after another whose end records came in a burst still count their summed time", () => {
+    // As in the fixture's real GET /shop: nine of the plans lookups were written within 0.3 ms.
+    const ends = [...Array.from({ length: 9 }, (_, i) => 1.4 + 0.03 * i), 4, 6, 8, 10, 13];
+    const calls = ends.map((e, i) => db(100 + i, e, 1200, { table: "plans", stmt: PLANS }));
+    const v = verdict([...request(36), ...calls, db(10, 20, 3000)]);
+    expect(v.kind).toBe(VerdictKind.RepeatedCalls);
+    expect(v.share).toBeCloseTo(16.8 / 36, 3);
+    expect(v.sentence).toBe("47 percent of the 36.0 ms went on select plans, run 14 times one after another (16.8 ms in all).");
+    // Own code is what the calls' summed time leaves: 36 - 16.8 - 3 ms.
+    expect(v.detail).toBe("The next biggest is shop-api's own code (45 percent, 16.2 ms).");
+  });
+
   test("one 900 ms query is the slow call", () => {
     const v = verdict([...request(1000), db(10, 902, 900_000), db(11, 905, 1000)]);
     expect(v.kind).toBe(VerdictKind.SlowCall);

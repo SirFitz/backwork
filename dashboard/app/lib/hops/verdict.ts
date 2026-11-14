@@ -16,9 +16,12 @@
  * 8. Otherwise Fast. A request under FAST_US is Fast too unless rules 3 to 6 name a culprit that
  *    took at least FAST_MIN_CULPRIT_US: own time on a fast request is no news.
  *
- * Shares are of the head hop's duration and use wall-clock time (the union of the calls' intervals,
- * clipped to the head), so overlapping calls never make a share pass 100 percent; summed call time
- * is only ever named as "call time".
+ * Shares are of the head hop's duration and use wall-clock time, so overlapping calls never make a
+ * share pass 100 percent; summed call time is only ever named as "call time". Calls that ran
+ * together count their union (clipped to the head); calls that ran one after another count their
+ * summed time, because stored end times are written in bursts and their intervals can look
+ * overlapped (BAC-68 "As built"). Own code is the head's time less its calls' summed time when they
+ * fit inside it, for the same reason.
  */
 import { headHop, isFailed, lengthUs, mergeIntervals, timeSplit, type IntervalMs } from "./tree";
 import { Repetition, type RepeatGroup, type RepeatReport } from "./repeated";
@@ -182,8 +185,11 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
   const grouped = new Set<string>();
   const groupC: Array<Contributor & { group: RepeatGroup }> = groups.map((g) => {
     for (const id of g.hopIds) grouped.add(id);
+    // Calls that ran one after another took their summed time (stored end times come in bursts,
+    // so their intervals can look overlapped); calls that ran together took their union.
     const members = g.hopIds.map((id) => byId.get(id)).filter((h): h is Hop => h !== undefined);
-    return { key: `group:${g.key}`, us: clippedUs(members, startMs, endMs), hopId: g.hopIds[0] ?? null, name: groupName(g), showUs: false, group: g };
+    const us = g.repetition === Repetition.Sequential ? Math.min(g.totalUs, headUs) : clippedUs(members, startMs, endMs);
+    return { key: `group:${g.key}`, us, hopId: g.hopIds[0] ?? null, name: groupName(g), showUs: false, group: g };
   });
   // Single database and cache calls not already in a group.
   const storeC: Contributor[] = path
@@ -202,7 +208,11 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
     const longest = calls.reduce((a, c) => ((c.durationUs ?? 0) > (a.durationUs ?? 0) ? c : a));
     return { key: `dest:${d}`, us: clippedUs(calls, startMs, endMs), hopId: longest.hopId, name: `waiting on ${d}`, showUs: true };
   });
-  const ownC: Contributor = { key: "own", us: split.ownUs, hopId: head.hopId, name: `${head.service}'s own code`, showUs: true };
+  // Own code: the head's time less its calls' summed time when those fit inside it, else the split's
+  // union-based figure (which bursty end times inflate when calls ran one after another).
+  const callSumUs = split.dbSumUs + split.cacheSumUs + split.waitingUs;
+  const ownUs = callSumUs <= headUs ? Math.min(split.ownUs, headUs - callSumUs) : split.ownUs;
+  const ownC: Contributor = { key: "own", us: ownUs, hopId: head.hopId, name: `${head.service}'s own code`, showUs: true };
 
   const biggest = <T extends Contributor>(list: readonly T[]): T | null =>
     list.reduce<T | null>((a, c) => (a === null || c.us > a.us || (c.us === a.us && c.key < a.key) ? c : a), null);
@@ -245,10 +255,10 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
     const name = topDest.name.slice("waiting on ".length);
     sentence = `One call took ${pct(share(topDest.us))} percent of the ${total}: ${name}, ${fmtUs(topDest.us)}.`;
     excluded = new Set([topDest.key]);
-  } else if (share(split.ownUs) >= OWN_SHARE) {
+  } else if (share(ownUs) >= OWN_SHARE) {
     kind = VerdictKind.OwnTime;
     culprit = ownC;
-    sentence = `Most of the ${total} (${pct(share(split.ownUs))} percent, ${fmtUs(split.ownUs)}) was spent inside ${head.service} itself, not waiting on anything.`;
+    sentence = `Most of the ${total} (${pct(share(ownUs))} percent, ${fmtUs(ownUs)}) was spent inside ${head.service} itself, not waiting on anything.`;
     excluded = new Set([ownC.key]);
   }
 
