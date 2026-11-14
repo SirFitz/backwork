@@ -26,6 +26,7 @@ import { candidatesByHop, parallelCandidates, parallelSentence, PARALLEL_CHIP, t
 import { CHATTY_BADGE, chattyRequest, chattySentence } from "~/lib/hops/chatty";
 import { ParallelChip } from "~/components/insights/parallel-chip";
 import { WhyLine } from "~/components/insights/why-line";
+import { CompareButton } from "~/components/insights/diff-table";
 import { whyItWasSlow } from "~/lib/hops/verdict";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
@@ -541,6 +542,7 @@ function Header({ tree, head, d, pin, repeats, onShowRepeat }: { tree: RequestTr
             </span>
           ) : null}
           <span className={cn(fact, faults ? "text-err" : "hidden md:inline")}><b className={cn("font-medium", faults ? "text-err" : "text-fg")}>{faults}</b> {faults === 1 ? "gap" : "gaps"}</span>
+          <CompareButton traceId={d.traceId} head={head} />
         </div>
       </div>
       <div className="hidden md:block"><IdList tree={tree} d={d} /></div>
