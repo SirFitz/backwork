@@ -18,7 +18,19 @@ import { inboundServices, servicesTable, type ServiceRow } from "~/lib/hops/metr
 import { PerfRange } from "~/lib/hops/figures";
 import { hopRequestPage, type RequestListRow } from "~/lib/hops/requests.server";
 import { serviceJumps, stalledRequests, unreceivedCalls } from "~/lib/hops/attention.server";
-import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type StalledRequest, type UnreceivedCall } from "~/lib/hops/attention";
+import {
+  ATTENTION_GROUPS,
+  AttentionGroup,
+  JumpKind,
+  LIST_LIMIT,
+  type RecordScan,
+  type ServiceJump,
+  type ServiceRegression,
+  type StalledRequest,
+  type UnreceivedCall,
+} from "~/lib/hops/attention";
+import { serviceRegressions } from "~/lib/hops/compare.server";
+import { MIN_REQUESTS as COMPARE_MIN_REQUESTS } from "~/lib/hops/compare";
 import { cn, fmtMs, fmtNum } from "~/lib/utils";
 import { seo, TAGLINE } from "~/components/marketing";
 import { MarketingLanding } from "~/components/site/landing";
@@ -56,8 +68,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // One promise for the three "Needs attention" panels, made here and not in render: a promise
   // created during render is new on every render, so <Await> suspends again each time and the
   // Overview re-renders without end (a full CPU core in the browser).
-  const attention: Promise<[Panel<ServiceJump[]>, Panel<RecordScan<StalledRequest>>, Panel<RecordScan<UnreceivedCall>>]> =
-    Promise.all([jumps, stalled, unreceived]);
+  const regressed: Promise<Panel<ServiceRegression[]>> = safe(() => serviceRegressions(t, undefined, now), []);
+  const attention: Promise<[Panel<ServiceJump[]>, Panel<RecordScan<StalledRequest>>, Panel<RecordScan<UnreceivedCall>>, Panel<ServiceRegression[]>]> =
+    Promise.all([jumps, stalled, unreceived, regressed]);
   const services: Promise<Panel<ServiceRow[]>> = safe(() => servicesTable(SERVICES_RANGE, t), []);
   const failed: Promise<Panel<RequestListRow[]>> = safe(
     async () => (await hopRequestPage(t, { service: null, sinceMs: now - FAILED_WINDOW_MS, before: now, onlyFailed: true, limit: 200 })).rows.slice(0, LIST_LIMIT),
@@ -162,6 +175,38 @@ function JumpsBody({ panel }: { panel: Panel<ServiceJump[]> }) {
   );
 }
 
+function ratioText(r: number | null): string {
+  if (r === null) return "";
+  return ` (about ${r >= 10 ? Math.round(r) : r.toFixed(1)}x)`;
+}
+
+/** "shop-api p95 740 ms, last week 310 ms (about 2.4x), 1,820 requests, deploy 22 minutes ago". */
+function RegressionsBody({ panel }: { panel: Panel<ServiceRegression[]> }) {
+  if (panel.error) return <ErrorNote error={panel.error} />;
+  if (!panel.data.length) return <AllClear>No service is slower or failing more than the same hour last week.</AllClear>;
+  return (
+    <ul className="divide-y divide-border/60">
+      {panel.data.map((r) => (
+        <li key={r.service} className="flex items-baseline gap-3 px-4 py-2 text-[13px]">
+          <span className="min-w-0 flex-1">
+            <b className="font-semibold">{r.service}</b>{" "}
+            <span className="text-warn">
+              {r.verdict === "more_errors"
+                ? `${fmtShare(r.errorNow)} of requests failing, last week ${fmtShare(r.errorBefore)}`
+                : `p95 ${fmtLatency(r.p95Now)}, last week ${fmtLatency(r.p95Before)}${ratioText(r.p95Ratio)}`}
+            </span>
+            <span className="text-muted">, {fmtNum(Math.round(r.requests), 0)} requests</span>
+            {r.deployAt !== null ? (
+              <span className="text-muted">, deploy {r.deployLabel} <Ago ts={r.deployAt} /></span>
+            ) : null}
+          </span>
+          <Link to={`/performance?range=1h&compare=1&service=${encodeURIComponent(r.service)}`} className={OPEN}>routes</Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function StalledBody({ panel }: { panel: Panel<RecordScan<StalledRequest>> }) {
   if (panel.error) return <ErrorNote error={panel.error} />;
   if (!panel.data.rows.length) return <AllClear>Every request and job that started finished.</AllClear>;
@@ -233,17 +278,10 @@ function UnreceivedBody({ panel }: { panel: Panel<RecordScan<UnreceivedCall>> })
   );
 }
 
-/** The three "needs attention" groups, in page order. */
-const AttentionGroup = {
-  Jumps: "jumps",
-  Stalled: "stalled",
-  Unreceived: "unreceived",
-} as const;
-type AttentionGroup = (typeof AttentionGroup)[keyof typeof AttentionGroup];
-
 /** How each group is named when it has nothing in it, and what it checks (hover text). */
 const CLEAR_TEXT: Record<AttentionGroup, { clear: string; checks: string }> = {
   [AttentionGroup.Jumps]: { clear: "nothing failing or slower than usual", checks: "Slower or failing more than usual, compared with the 3 hours before" },
+  [AttentionGroup.Regressions]: { clear: "nothing slower than last week", checks: "Slower or failing more in the last hour than the same hour last week" },
   [AttentionGroup.Stalled]: { clear: "no stopped requests", checks: "Requests that started over a minute ago and never finished" },
   [AttentionGroup.Unreceived]: { clear: "no missing calls", checks: "Calls a service made to another that no service recorded arriving" },
 };
@@ -270,17 +308,20 @@ function AttentionBody({
   jumps,
   stalled,
   unreceived,
+  regressed,
 }: {
   jumps: Panel<ServiceJump[]>;
   stalled: Panel<RecordScan<StalledRequest>>;
   unreceived: Panel<RecordScan<UnreceivedCall>>;
+  regressed: Panel<ServiceRegression[]>;
 }) {
   const isClear: Record<AttentionGroup, boolean> = {
     [AttentionGroup.Jumps]: !jumps.error && jumps.data.length === 0,
+    [AttentionGroup.Regressions]: !regressed.error && regressed.data.length === 0,
     [AttentionGroup.Stalled]: !stalled.error && stalled.data.rows.length === 0,
     [AttentionGroup.Unreceived]: !unreceived.error && unreceived.data.rows.length === 0,
   };
-  const order: AttentionGroup[] = [AttentionGroup.Jumps, AttentionGroup.Stalled, AttentionGroup.Unreceived];
+  const order: readonly AttentionGroup[] = ATTENTION_GROUPS;
   const clear = order.filter((g) => isClear[g]);
   if (clear.length === order.length) return <ClearLine groups={clear} all />;
   return (
@@ -289,6 +330,12 @@ function AttentionBody({
         <section aria-label="Services slower or failing more than usual" className="border-b border-border last:border-b-0">
           <SubHead title="Slower or failing more than usual" sub="compared with the 3 hours before" />
           <JumpsBody panel={jumps} />
+        </section>
+      )}
+      {isClear[AttentionGroup.Regressions] ? null : (
+        <section aria-label="Services slower than last week" className="border-b border-border last:border-b-0">
+          <SubHead title="Slower than last week" sub={`the last hour against the same hour last week, at least ${COMPARE_MIN_REQUESTS} requests in each`} />
+          <RegressionsBody panel={regressed} />
         </section>
       )}
       {isClear[AttentionGroup.Stalled] ? null : (
@@ -347,9 +394,9 @@ export default function Index() {
           sub="the last 15 minutes, health checks left out"
           right={
             <Deferred resolve={d.attention} fallback={<Skeleton className="h-5 w-24" />}>
-              {([j, s, u]) => {
-                if (j.error || s.error || u.error) return <span className="text-2xs text-faint">partly unknown</span>;
-                const n = j.data.length + s.data.total + u.data.total;
+              {([j, s, u, r]) => {
+                if (j.error || s.error || u.error || r.error) return <span className="text-2xs text-faint">partly unknown</span>;
+                const n = j.data.length + s.data.total + u.data.total + r.data.length;
                 return n === 0 ? (
                   <span className="inline-flex items-center gap-1 text-2xs font-medium text-ok"><CheckCircle2 className="h-3.5 w-3.5" />all clear</span>
                 ) : (
@@ -360,7 +407,7 @@ export default function Index() {
           }
         />
         <Deferred resolve={d.attention} fallback={<RowsSkeleton rows={3} />}>
-          {([j, s, u]) => <AttentionBody jumps={j} stalled={s} unreceived={u} />}
+          {([j, s, u, r]) => <AttentionBody jumps={j} stalled={s} unreceived={u} regressed={r} />}
         </Deferred>
       </Card>
 

@@ -69,6 +69,7 @@ export function ServicesTable({
   hrefFor,
   onOpen,
   compact = false,
+  extra,
 }: {
   rows: readonly ServiceRow[];
   selected?: string | null;
@@ -78,6 +79,8 @@ export function ServicesTable({
   onOpen?: (service: string) => void;
   /** Leaves out p50, the trend and in-progress columns (Overview). */
   compact?: boolean;
+  /** One more column after p95 (BAC-73: "vs last week"). */
+  extra?: { head: string; cell: (row: ServiceRow) => ReactNode };
 }) {
   return (
     <div className="overflow-x-auto scroll-thin">
@@ -89,6 +92,7 @@ export function ServicesTable({
             <Th num>Errors</Th>
             {compact ? null : <Th num className="hidden md:table-cell">p50</Th>}
             <Th num>p95</Th>
+            {extra ? <Th num>{extra.head}</Th> : null}
             <Th num className="hidden sm:table-cell">p99</Th>
             <Th num className={compact ? "hidden sm:table-cell" : undefined}>{compact ? "Time in databases" : "DB + cache"}</Th>
             {compact ? null : <Th num className="hidden lg:table-cell">p95 trend</Th>}
@@ -117,6 +121,7 @@ export function ServicesTable({
                 <td className={cn(TD, NUM, errorTone(s.errorShare))}>{fmtShare(s.errorShare)}</td>
                 {compact ? null : <td className={cn(TD, NUM, "hidden md:table-cell")}>{fmtLatency(s.p50)}</td>}
                 <td className={cn(TD, NUM)}>{fmtLatency(s.p95)}</td>
+                {extra ? <td className={cn(TD, "text-right")}>{extra.cell(s)}</td> : null}
                 <td className={cn(TD, NUM, "hidden sm:table-cell", latencyTone(s.p99, waited))}>{fmtLatency(s.p99)}</td>
                 <td className={cn(TD, NUM, compact && "hidden sm:table-cell")} title={s.storeCallsPerRequest !== null ? `${s.storeCallsPerRequest.toFixed(1)} data-store calls per request` : undefined}>
                   {s.storeShare === null ? "—" : fmtShare(s.storeShare, 0)}
