@@ -31,6 +31,7 @@ import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
+import { MONITOR_BADGE, MONITOR_TITLE } from "~/lib/hops/health";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
 import { fmtUs, plural } from "~/lib/hops/time-format";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopId, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
@@ -492,9 +493,17 @@ function Title({ head, size = "lg", pinned = false }: { head: Hop; size?: "lg" |
           {label}
         </span>
         <Badge tone={status.tone}>{status.text}</Badge>
+        {head.synthetic ? <span title={MONITOR_TITLE}><Badge tone="neutral">{MONITOR_BADGE}</Badge></span> : null}
         {pinned ? <Badge>Pinned</Badge> : null}
       </h1>
-      {route ? <div className="mt-0.5 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">route {route}</div> : null}
+      {/* The domain (HOP-27) next to the route; neither line when the records have neither. */}
+      {route || head.host ? (
+        <div className="mt-0.5 flex flex-wrap gap-x-2 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">
+          {head.host ? <span className="min-w-0 text-muted" title="Domain">{head.host}</span> : null}
+          {head.host && route ? <span aria-hidden>·</span> : null}
+          {route ? <span className="min-w-0">route {route}</span> : null}
+        </div>
+      ) : null}
     </>
   );
 }

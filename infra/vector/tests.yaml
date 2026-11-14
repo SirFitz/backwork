@@ -173,6 +173,7 @@ tests:
               assert_eq!(.tags.peer, "")
               assert_eq!(.tags.outcome, "ok")
               assert_eq!(.tags.status_class, "2xx")
+              assert_eq!(.tags.synthetic, "")
       - extract_from: bw_hop_store
         conditions:
           - type: vrl
@@ -181,6 +182,32 @@ tests:
               assert!(.tags.store == "db" || .tags.store == "cache")
               assert_eq!(.tags.op, "/charges")
               true
+
+  - name: monitor hops (synthetic=1, HOP-28) get synthetic="1" in kv and json; host is never a label
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f9 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=GET op=/cart host=binary.fleeksite.com synthetic=1 outcome=ok status=200 duration_us=14800"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in","hop_id":"5d9e0b3347c1a2fa","parent_id":"b7ad6b7169203331","service":"shop-api","adapter":"hono","via":"http","method":"GET","op":"/cart","host":"binary.fleeksite.com","synthetic":1,"msg":"hop"}'
+    outputs:
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.dir, "in")
+              assert_eq!(.tags.synthetic, "1")
+              assert!(!exists(.tags.host))
+      - extract_from: bw_hop_started
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.synthetic, "1")
 
   - name: start record counts as started; data-store hop feeds the histogram; label limits
     inputs:
@@ -195,7 +222,7 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.name, "backwork_hop_started_total")
-              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http", "op": ""})
+              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http", "op": "", "synthetic": ""})
 
   - name: data-store hop and an oversized op label
     inputs:
@@ -358,7 +385,7 @@ tests:
               assert_eq!(.tags.status_class, "")
               assert!(!exists(.tags.table))
               assert!(!exists(.tags.stmt))
-              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "synthetic", "via"])
 
   - name: a repeated trace_id (host metadata and the record) is still a hop record
     inputs:
@@ -431,7 +458,7 @@ tests:
             source: |
               assert_eq!(.tags.op, "/api/v1/public/m/:merchant_username/products")
               assert!(!exists(.tags.path))
-              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "synthetic", "via"])
 
   - name: NestJS logger level read from the line, with or without colour codes (BAC-41 row 9)
     inputs:

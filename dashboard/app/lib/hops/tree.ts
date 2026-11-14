@@ -68,6 +68,8 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     method: base.method,
     op: base.op,
     path: base.path ?? end?.path ?? null,
+    host: base.host ?? end?.host ?? null,
+    synthetic: base.synthetic === true || end?.synthetic === true,
     peer: base.peer,
     // Data-store hops have an end record only (HOP-19); the end record carries both fields.
     table: end?.table ?? base.table,

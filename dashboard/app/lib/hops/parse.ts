@@ -16,6 +16,7 @@ import {
   Via,
 } from "./types";
 import { PATH_FIELD } from "./paths";
+import { MonitorField } from "./health";
 import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
@@ -107,16 +108,30 @@ function tryJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Top-level scalars first, then one level down under the nested keys; first value found wins. */
+/** Fields read only from the object that holds the record itself (the one with `trace_id`):
+ *  loggers and collectors put their own `host` (a machine or container name) beside a record
+ *  nested under `metadata`, and that is not the request's host (HOP-27). */
+const RECORD_OWN_KEYS = [MonitorField.Host] as const;
+
+/** Top-level scalars first, then one level down under the nested keys; first value found wins,
+ *  except for RECORD_OWN_KEYS. */
 function bagFromJson(obj: Record<string, unknown>): Map<string, Scalar> {
   const bag = new Map<string, Scalar>();
   const take = (o: Record<string, unknown>): void => {
     for (const [k, v] of Object.entries(o)) if (isScalar(v) && !bag.has(k)) bag.set(k, v);
   };
   take(obj);
+  let own: Record<string, unknown> | null = "trace_id" in obj ? obj : null;
   for (const key of NESTED_KEYS) {
     const inner = obj[key];
-    if (isRecord(inner)) take(inner);
+    if (!isRecord(inner)) continue;
+    take(inner);
+    if (own === null && "trace_id" in inner) own = inner;
+  }
+  for (const key of RECORD_OWN_KEYS) {
+    const v = own?.[key];
+    if (isScalar(v)) bag.set(key, v);
+    else bag.delete(key);
   }
   return bag;
 }
@@ -232,6 +247,25 @@ function pathOf(bag: FieldBag): string | null {
   return typeof v === "string" && v.startsWith("/") && isPrintableValue(v) ? v : null;
 }
 
+/** `host` (HOP-27): 1 to 200 bytes of 0x21..0x7E, read lower case; null otherwise. A port the
+ *  writer left on is dropped, so `Host:3000` and `host` read alike. */
+function hostOf(bag: FieldBag): string | null {
+  const v = bag.get(MonitorField.Host);
+  if (typeof v !== "string" || !isPrintableValue(v)) return null;
+  const lower = v.toLowerCase();
+  const colon = lower.lastIndexOf(":");
+  // Only a trailing numeric port is dropped; an IPv6 literal ("[::1]") keeps its colons.
+  const host = colon > 0 && !lower.includes("]", colon) && /^\d{1,5}$/.test(lower.slice(colon + 1)) ? lower.slice(0, colon) : lower;
+  const trimmed = host.endsWith(".") ? host.slice(0, -1) : host;
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** `synthetic` (HOP-28): `1` in either form (JSON number or string, key=value), or `true`. */
+function syntheticOf(bag: FieldBag): boolean {
+  const v = bag.get(MonitorField.Synthetic);
+  return v === 1 || v === "1" || v === true || v === "true";
+}
+
 /** `table` (STM-5, HOP-12); null when absent or out of bounds. */
 function tableOf(bag: FieldBag): string | null {
   const v = bag.get(StatementField.Table);
@@ -320,6 +354,8 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     method: str(bag, "method"),
     op: str(bag, "op"),
     path: via === Via.Http && !isOut ? pathOf(bag) : null,
+    host: via === Via.Http && !isOut ? hostOf(bag) : null,
+    synthetic: !isOut && syntheticOf(bag),
     peer: isOut ? str(bag, "peer") : null,
     table: via === Via.Db && isOut ? tableOf(bag) : null,
     stmt: via === Via.Db && isOut ? stmtOf(bag) : null,

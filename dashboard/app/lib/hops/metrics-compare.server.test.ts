@@ -1,6 +1,7 @@
 // BAC-67: the offset and lookback parameters, the all-routes scope and the generalised window
 // queries. The snapshot file holds the strings the builders produced on main before they gained
-// these parameters; with default arguments they must stay byte-identical.
+// these parameters; with default arguments they must stay byte-identical. BAC-80 added `synthetic!="1"`
+// after every health-check matcher (monitors left out with health checks); nothing else changed.
 import { describe, expect, test } from "bun:test";
 import snapshot from "./query-defaults.snapshot.json";
 import { COUNTER_LOOKBACK_SECONDS, windowIncrease, windowPerSecond } from "./counter-window";

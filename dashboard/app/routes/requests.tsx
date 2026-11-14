@@ -11,7 +11,8 @@ import { tenantOf } from "~/lib/tenant.server";
 import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/hops/metrics.server";
 import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
 import { pathTitle } from "~/lib/hops/paths";
-import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
+import { HEALTH_PARAM, HEALTH_TOGGLE_LABEL, HEALTH_TOGGLE_SHORT, HealthChecks, MONITOR_BADGE, MONITOR_TITLE, healthChecksFrom } from "~/lib/hops/health";
+import { matchesRequestText } from "~/lib/hops/request-filter";
 import { CHATTY_BADGE, byMostCalls, chattyRows, chattySentence, type ChattyVerdict } from "~/lib/hops/chatty";
 import { cn, fmtMs, fmtPct } from "~/lib/utils";
 import { listPinsPage } from "~/lib/pins.server";
@@ -221,10 +222,7 @@ function Feed({
     if (method !== "all") r = r.filter((x) => x.method === method);
     if (chattyOnly) r = r.filter((x) => chatty.get(rowKey(x))?.chatty === true);
     if (exactRoute !== null) r = r.filter((x) => x.route === exactRoute);
-    else if (q.trim()) {
-      const t = q.trim().toLowerCase();
-      r = r.filter((x) => x.route.toLowerCase().includes(t) || (x.path ?? "").toLowerCase().includes(t) || x.service.toLowerCase().includes(t));
-    }
+    else if (q.trim()) r = r.filter((x) => matchesRequestText(x, q));
     if (sort.key === "calls") r = sort.dir === "desc" ? byMostCalls(r) : [...byMostCalls(r)].reverse();
     else if (sort.key) {
       const m = sort.dir === "asc" ? 1 : -1;
@@ -234,6 +232,8 @@ function Feed({
     return r;
   }, [all, statusFilter, method, q, exactRoute, sort, chattyOnly, chatty]);
 
+  // The Domain column (HOP-27) only when a loaded row has a host: older records show no empty column.
+  const hasHosts = useMemo(() => all.some((r) => !!r.host), [all]);
   const filtered = statusFilter !== "all" || method !== "all" || exactRoute !== null || q.trim() !== "" || chattyOnly;
   const chattyControls = (
     <ChattyControls
@@ -289,7 +289,7 @@ function Feed({
         <details className="group rounded-lg border border-border bg-surface">
           <summary className="flex h-9 cursor-pointer list-none items-center justify-between px-3 text-[13px] text-muted">
             More filters
-            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === "calls" ? "most calls" : null, health === HealthChecks.Shown ? "health checks" : null].filter(Boolean).join(" · ") || "last 1h"}</span>
+            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === "calls" ? "most calls" : null, health === HealthChecks.Shown ? HEALTH_TOGGLE_SHORT : null].filter(Boolean).join(" · ") || "last 1h"}</span>
           </summary>
           <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border p-2">
             <Form method="get" className="flex min-w-0 flex-wrap items-center gap-2">
@@ -330,7 +330,7 @@ function Feed({
                   </div>
                   {r.path && r.route && r.route !== r.path ? <div className="mt-0.5 truncate font-mono text-2xs text-faint" title={`route ${r.route}`}>{r.route}</div> : null}
                   <div className="mt-[3px] flex min-w-0 items-center justify-between gap-2.5 font-mono text-[11px]">
-                    <span className="flex min-w-0 items-center gap-1.5"><span className="min-w-0 truncate text-accent">{r.service}</span><ChattyBadge verdict={chatty.get(rowKey(r))} /></span>
+                    <span className="flex min-w-0 items-center gap-1.5"><span className={cn("min-w-0 truncate text-accent", r.host && "shrink-0")}>{r.service}</span>{r.host ? <span className="min-w-0 truncate text-faint" title={r.host}>{r.host}</span> : null}<MonitorBadge row={r} /><ChattyBadge verdict={chatty.get(rowKey(r))} /></span>
                     <span className={cn("shrink-0 tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-faint")}>
                       <Clock ts={r.startMs} seconds /> · {fmtMs(r.durationMs)}
                     </span>
@@ -345,6 +345,7 @@ function Feed({
                 <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
                   <th className="px-4 py-2 font-medium"><button onClick={() => toggleSort("time")} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-fg">Time{sort.key === "time" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
                   <th className="px-4 py-2 font-medium">Service</th>
+                  {hasHosts ? <th className="px-4 py-2 font-medium">Domain</th> : null}
                   <th className="px-4 py-2 font-medium">Method</th>
                   <th className="px-4 py-2 font-medium">Route</th>
                   <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort("status")} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Status{sort.key === "status" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
@@ -357,7 +358,8 @@ function Feed({
                   <tr key={`${r.traceID}|${r.service}|${r.startMs}`} onClick={() => navigate(`/requests/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
                     <td className="px-4 py-1.5 tabular-nums text-faint"><Clock ts={r.startMs} /></td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
-                    <td className="whitespace-nowrap px-4 py-1.5 font-semibold text-muted">{r.method || "—"}<ChattyBadge verdict={chatty.get(rowKey(r))} className="ml-1.5" /></td>
+                    {hasHosts ? <td className="max-w-[220px] px-4 py-1.5 text-muted" title={r.host ?? undefined}><span className="block truncate">{r.host ?? ""}</span></td> : null}
+                    <td className="whitespace-nowrap px-4 py-1.5 font-semibold text-muted">{r.method || "—"}<MonitorBadge row={r} className="ml-1.5" /><ChattyBadge verdict={chatty.get(rowKey(r))} className="ml-1.5" /></td>
                     <td className="max-w-[360px] px-4 py-1.5 text-fg/90" title={pathTitle(r.path, r.route)}>
                       {r.path ? (
                         <>
@@ -404,6 +406,16 @@ function ChattyBadge({ verdict, className }: { verdict: ChattyVerdict | undefine
   return (
     <span title={chattySentence(verdict)} className={cn("shrink-0", className)}>
       <Badge tone="neutral" className="py-0 font-sans leading-[1.4]">{CHATTY_BADGE}</Badge>
+    </span>
+  );
+}
+
+/** "Monitor" on a monitor's row (HOP-28): only seen with health checks and monitors shown. */
+function MonitorBadge({ row, className }: { row: RequestListRow; className?: string }) {
+  if (!row.synthetic) return null;
+  return (
+    <span title={MONITOR_TITLE} className={cn("shrink-0", className)}>
+      <Badge tone="neutral" className="py-0 font-sans leading-[1.4]">{MONITOR_BADGE}</Badge>
     </span>
   );
 }
@@ -473,7 +485,7 @@ function HealthBox({ health }: { health: HealthChecks }) {
   return (
     <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted">
       <input type="checkbox" name={HEALTH_PARAM} value="1" defaultChecked={health === HealthChecks.Shown} onChange={(e) => submit(e.currentTarget.form)} className="accent-brand" />
-      Show health checks
+      {HEALTH_TOGGLE_LABEL}
     </label>
   );
 }
@@ -493,8 +505,8 @@ function RouteSearch({ q, exactRoute, onChange, onClear }: { q: string; exactRou
       <input
         value={q}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Filter by path, route or service"
-        aria-label="Filter by path, route or service"
+        placeholder="Filter by path, route, domain or service"
+        aria-label="Filter by path, route, domain or service"
         className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-9 text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
       />
       {exactRoute !== null ? (

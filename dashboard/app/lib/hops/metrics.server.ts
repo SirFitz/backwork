@@ -11,7 +11,7 @@ import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { Via } from "~/lib/hops/types";
-import { HealthChecks, PROM_NOT_HEALTH_CHECK } from "~/lib/hops/health";
+import { HealthChecks, PROM_NOT_HEALTH_OR_MONITOR } from "~/lib/hops/health";
 export { HealthChecks };
 
 // ---------------------------------------------------------------- fixed sets
@@ -80,9 +80,10 @@ export interface RouteKey {
 
 type Matchers = Record<string, string>;
 
-/** Health-check operations are left out of inbound figures unless shown (`health.ts`). */
+/** Health-check operations and monitor series (`synthetic="1"`, BAC-80) are left out of inbound
+ *  figures unless shown (`health.ts`). */
 function healthMatchers(dir: "in" | "out" | null, health: HealthChecks): string[] {
-  return dir !== "out" && health === HealthChecks.Hidden ? [PROM_NOT_HEALTH_CHECK] : [];
+  return dir !== "out" && health === HealthChecks.Hidden ? [...PROM_NOT_HEALTH_OR_MONITOR] : [];
 }
 
 function selector(metric: string, matchers: Matchers, raw: readonly string[] = []): string {

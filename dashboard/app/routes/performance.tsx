@@ -22,7 +22,7 @@ import {
 } from "~/lib/hops/metrics.server";
 import { cn } from "~/lib/utils";
 import { NUM, ServicesTable, TD, TIGHT, Th, errorTone, fmtLatency, fmtRate, fmtShare, latencyTone } from "~/components/services-table";
-import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
+import { HEALTH_PARAM, HEALTH_TOGGLE_LABEL, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
 import { compareRoutes, compareServices, serviceTrend } from "~/lib/hops/compare.server";
 import { canCompare, compareKey, type CompareRow } from "~/lib/hops/compare";
 import { deploysBetween } from "~/lib/deploys.server";
@@ -190,7 +190,7 @@ export default function Performance() {
         sub="Request rate, errors and latency for every service that reports hops, by service, route and connection."
         right={
           <>
-            <ToggleLink to={perfHref(range, d.requested, otherHealth, compare)} on={health === HealthChecks.Shown} label="Show health checks" short="Health" />
+            <ToggleLink to={perfHref(range, d.requested, otherHealth, compare)} on={health === HealthChecks.Shown} label={HEALTH_TOGGLE_LABEL} short="Health" />
             <ToggleLink
               to={perfHref(range, d.requested, health, !compare)}
               on={compare}

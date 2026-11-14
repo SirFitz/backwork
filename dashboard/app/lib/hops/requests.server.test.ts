@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { inboundEndQuery, isFailedRow, rowsFromRecords } from "./requests.server";
-import { HealthChecks, LOGQL_NOT_HEALTH_CHECK } from "./health";
+import { HealthChecks, LOGQL_NOT_HEALTH_OR_MONITOR } from "./health";
 import { parseHopRecord } from "./parse";
 import type { HopRecord } from "./types";
 
@@ -35,7 +35,7 @@ describe("health checks", () => {
   const HC = `trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/healthz outcome=ok status=200 duration_us=900`;
   const ORDER = `trace_id=${T} hop=in_end hop_id=2f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=fastify via=http method=GET op=/health/db outcome=ok status=200 duration_us=900`;
   test("left out of the query and the rows by default", () => {
-    expect(inboundEndQuery(null)).toBe(`{kind="hop"} |= "in_end" |~ "via\\\\W{1,6}http" ${LOGQL_NOT_HEALTH_CHECK}`);
+    expect(inboundEndQuery(null)).toBe(`{kind="hop"} |= "in_end" |~ "via\\\\W{1,6}http" ${LOGQL_NOT_HEALTH_OR_MONITOR}`);
     expect(rowsFromRecords([rec(HC), rec(ORDER)]).map((r) => r.route)).toEqual(["/health/db"]);
   });
   test("brought back when shown", () => {
@@ -56,7 +56,7 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240`),
     ]);
     expect(rows).toEqual([
-      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false, totals: null },
+      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, host: null, synthetic: false, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false, totals: null },
     ]);
   });
   test("the actual path rides along; the route stays the template (BAC-52)", () => {
@@ -88,5 +88,24 @@ describe("rowsFromRecords", () => {
     expect(row.error).toBe(true);
     expect(row.status).toBeNull();
     expect(row.durationMs).toBe(30000);
+  });
+});
+
+describe("monitors (BAC-80)", () => {
+  const line = (id: string, extra: string) => `trace_id=${T} hop=in_end hop_id=${id} parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=GET op=/cart ${extra} outcome=ok status=200 duration_us=900`;
+  const MONITOR = line("1f0a6c2e9b7d4406", "host=binary.fleeksite.com synthetic=1");
+  const SHOPPER = line("2f0a6c2e9b7d4406", "host=shop.example.com");
+  const OLD = line("3f0a6c2e9b7d4406", "");
+  test("left out by default; the shopper and the old record stay, with and without a domain", () => {
+    const rows = rowsFromRecords([rec(MONITOR), rec(SHOPPER), rec(OLD)]);
+    expect(rows.map((r) => [r.host, r.synthetic])).toEqual([["shop.example.com", false], [null, false]]);
+  });
+  test("shown with the toggle, marked", () => {
+    const rows = rowsFromRecords([rec(MONITOR), rec(SHOPPER)], HealthChecks.Shown);
+    expect(rows.map((r) => [r.host, r.synthetic])).toEqual([["binary.fleeksite.com", true], ["shop.example.com", false]]);
+  });
+  test("the query narrows by both filters only when hidden", () => {
+    expect(inboundEndQuery(null)).toContain("synthetic");
+    expect(inboundEndQuery(null, HealthChecks.Shown)).not.toContain("synthetic");
   });
 });

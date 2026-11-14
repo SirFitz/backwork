@@ -188,6 +188,10 @@ if !match(bw_l, r'^[\\x21-\\x7e]{1,200}$') { bw_l = "" }
 bw_m.service = bw_l
 bw_m.dir = if starts_with(bw_hk, "in") { "in" } else { "out" }
 ${labelVrl("via", 'get(bw_h, ["via"])')}${labelVrl("method", 'get(bw_h, ["method"])')}${labelVrl("op", 'get(bw_h, ["op"])')}${labelVrl("peer", 'get(bw_h, ["peer"])')}${labelVrl("outcome", 'get(bw_h, ["outcome"])')}bw_st = to_int(get(bw_h, ["status"]) ?? 0) ?? 0
+# HOP-28 (BAC-80): inbound hops of a monitor's request carry synthetic=1. "1" or "" (an empty
+# label is no label, so series without it, and older collectors, stay one series as before).
+bw_sy = get(bw_h, ["synthetic"]) ?? null
+bw_m.synthetic = if bw_m.dir == "in" && (bw_sy == 1 || bw_sy == "1" || bw_sy == true || bw_sy == "true") { "1" } else { "" }
 bw_m.status_class = if bw_st >= 200 && bw_st < 300 { "2xx" } else if bw_st >= 300 && bw_st < 400 { "3xx" } else if bw_st >= 400 && bw_st < 500 { "4xx" } else if bw_st >= 500 && bw_st < 600 { "5xx" } else { "" }
 bw_d = to_float(get(bw_h, ["duration_us"]) ?? -1) ?? -1.0
 if bw_d >= 0.0 { bw_m.duration_s = bw_d / 1000000.0 }
@@ -419,11 +423,12 @@ export function inlineVrl(vrl: string, indent: number): string {
     .join("\n");
 }
 
+// `synthetic` (BAC-80) on all three, so monitors are left out wherever health checks are.
 const TAGS = {
-  duration: ["service", "dir", "via", "method", "op", "peer", "outcome", "status_class"],
+  duration: ["service", "dir", "via", "method", "op", "peer", "outcome", "status_class", "synthetic"],
   // op so health checks can be left out of "in progress" (started minus finished) as well.
-  started: ["service", "dir", "via", "op"],
-  store: ["service", "via", "method", "op"],
+  started: ["service", "dir", "via", "op", "synthetic"],
+  store: ["service", "via", "method", "op", "synthetic"],
 } as const;
 
 function tagsYaml(keys: readonly string[], indent: number, extra: Record<string, string> = {}): string {

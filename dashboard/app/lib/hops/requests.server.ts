@@ -1,13 +1,13 @@
 // Requests list rows from inbound HTTP hop records (design 8 and 20: hop records only). A row is
 // one inbound HTTP hop: a request that crossed four services shows as one row per service, all
-// opening the same request view. Health checks are left out unless shown (`health.ts`).
+// opening the same request view. Health checks and monitors are left out unless shown (`health.ts`).
 
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { parseHopRecord } from "~/lib/hops/parse";
 import { HopKind, Outcome, Via, type HopRecord, type StoreTotals } from "~/lib/hops/types";
 import { isLabelValue } from "~/lib/hops/metrics.server";
-import { HealthChecks, LOGQL_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
+import { HealthChecks, LOGQL_NOT_HEALTH_OR_MONITOR, shownUnder } from "~/lib/hops/health";
 
 /** One inbound HTTP hop, as listed. */
 export interface RequestListRow {
@@ -18,6 +18,10 @@ export interface RequestListRow {
   route: string;
   /** The path this request actually called (HOP-24), when recorded. */
   path: string | null;
+  /** The request's host (HOP-27), when recorded; older records have none. */
+  host?: string | null;
+  /** Marked `synthetic=1` (HOP-28): an uptime monitor's request or one downstream of it. */
+  synthetic?: boolean;
   status: number | null;
   durationMs: number;
   startMs: number;
@@ -33,7 +37,7 @@ export const PAGE_SIZE = 100;
  *  narrow the scan; `parseHopRecord` decides. */
 export function inboundEndQuery(service: string | null, health: HealthChecks = HealthChecks.Hidden, onlyFailed = false): string {
   const sel = service ? `{kind="hop",service=${JSON.stringify(service)}}` : `{kind="hop"}`;
-  const notHealth = health === HealthChecks.Hidden ? ` ${LOGQL_NOT_HEALTH_CHECK}` : "";
+  const notHealth = health === HealthChecks.Hidden ? ` ${LOGQL_NOT_HEALTH_OR_MONITOR}` : "";
   const failed = onlyFailed ? ` ${LOGQL_FAILED}` : "";
   return `${sel} |= "in_end" |~ "via\\\\W{1,6}http"${notHealth}${failed}`;
 }
@@ -51,7 +55,7 @@ export function rowsFromRecords(records: readonly HopRecord[], health: HealthChe
   const out: RequestListRow[] = [];
   for (const r of records) {
     if (r.hop !== HopKind.InEnd || r.via !== Via.Http || r.durationUs === null) continue;
-    if (health === HealthChecks.Hidden && isHealthCheckOp(r.op)) continue;
+    if (!shownUnder(health, r)) continue;
     const durationMs = r.durationUs / 1000;
     out.push({
       traceID: r.traceId,
@@ -59,6 +63,8 @@ export function rowsFromRecords(records: readonly HopRecord[], health: HealthChe
       method: r.method ?? "",
       route: r.op ?? "",
       path: r.path,
+      host: r.host ?? null,
+      synthetic: r.synthetic === true,
       status: r.status,
       durationMs,
       startMs: r.timeMs - durationMs,

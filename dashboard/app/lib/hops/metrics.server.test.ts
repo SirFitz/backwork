@@ -169,7 +169,7 @@ describe("query builders (design 8.1)", () => {
     );
   });
   test("health checks are left out of inbound figures by default", () => {
-    const not = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"';
+    const not = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)",synthetic!="1"';
     expect(rateQuery("in", servicesScope(), PerfRange.H6)).toBe(
       `${wi(`backwork_hop_duration_seconds_count{dir="in",${not}}`, "6h", ["service"])} / 21600`
     );
