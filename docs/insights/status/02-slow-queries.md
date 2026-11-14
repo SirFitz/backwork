@@ -24,3 +24,21 @@ Branch `bac-69-slow-queries`, worktree `backwork-wt/ins-slowq`, cut from origin/
   `components/insights/query-table.tsx`, tab flipped in `routes/insights.tsx`, tab test made
   independent of which tabs are on.
 - `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (475 pass, 4 skip, 0 fail).
+
+## 3. Exercised on the dev server (:3492, `bw_ins_69`, signed-in platform org, shared Loki): done
+- `/insights/queries` 200: orders shape first by total (7.9 s, 26 calls, p95 405 ms, 91% of shop-api's
+  database time); `?sort=calls`: plans shape first (364 calls). JSON (shop-api, commerce-api) and
+  key=value (commerce-payments) rows on one board. Tab strip shows Fix first and Slow queries.
+- Expanded orders row: Called by `GET /orders/:id` 26 calls, "Open a slow example" to a trace that
+  opens (200). Plans row: Called by `GET /shop`, 200 calls sampled.
+- `slowQueries` from a script: 1 h board 150 ms (15 rows), 6 h 72 ms; routes 35 to 45 ms.
+- Not the platform org: "No database queries recorded in the last hour." Query text off at org level
+  (row in `data_controls`, removed after): the switched-off message. Loki unreachable: the error
+  note with Retry, page still 200.
+- Same statement from two formats merging: proven by unit tests only; on the stack the orders and
+  plans statements are written by shop-api in JSON only.
+
+## 4. Final
+- `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (475 pass, 4 skip, 0 fail); with the database
+  URLs: exit 0 (478 pass, 1 skip, 0 fail).
+- Not done here (no browser tool): 1440 and 390 screenshots, sideways scroll, top gap, card head height.
