@@ -127,14 +127,15 @@ function elapsedUs(hop: Hop, now: number): number {
   return hop.durationUs ?? Math.max(0, Math.round((now - hop.startMs) * 1000));
 }
 
-type IntervalMs = [number, number];
+/** A time interval `[startMs, endMs]` in epoch milliseconds. */
+export type IntervalMs = [number, number];
 
 /** Log timestamps are whole milliseconds: a call that ends within this of its request's end
  *  record ended with it, not after it. */
 const AFTER_RESPONSE_SLACK_MS = 1;
 
 /** Overlapping or touching intervals joined, in start order. */
-function mergeIntervals(intervals: readonly IntervalMs[]): IntervalMs[] {
+export function mergeIntervals(intervals: readonly IntervalMs[]): IntervalMs[] {
   const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
   const out: IntervalMs[] = [];
   for (const [a, b] of sorted) {
@@ -146,7 +147,7 @@ function mergeIntervals(intervals: readonly IntervalMs[]): IntervalMs[] {
 }
 
 /** Parts of `from` not covered by `cut` (both merged). */
-function subtractIntervals(from: readonly IntervalMs[], cut: readonly IntervalMs[]): IntervalMs[] {
+export function subtractIntervals(from: readonly IntervalMs[], cut: readonly IntervalMs[]): IntervalMs[] {
   const out: IntervalMs[] = [];
   for (const [a0, b] of from) {
     let a = a0;
@@ -161,7 +162,8 @@ function subtractIntervals(from: readonly IntervalMs[], cut: readonly IntervalMs
   return out;
 }
 
-function lengthUs(intervals: readonly IntervalMs[]): number {
+/** Total length of the intervals, in microseconds (the intervals are in milliseconds). */
+export function lengthUs(intervals: readonly IntervalMs[]): number {
   return Math.round(intervals.reduce((t, [a, b]) => t + (b - a), 0) * 1000);
 }
 
@@ -446,10 +448,13 @@ export function storeCallCounts(tree: RequestTree): { db: number; cache: number 
     db += kids.filter((c) => c.via === Via.Db).length + missing(StoreKind.Db);
     cache += kids.filter((c) => c.via === Via.Cache).length + missing(StoreKind.Cache);
   }
-  // Data-store hops whose inbound hop is missing still count once each.
+  // Data-store hops whose inbound hop is missing still count once each. Indexed by hop id (first
+  // hop with an id wins, as the earlier `find` did) so a request with many calls stays linear.
+  const byId = new Map<string, Hop>();
+  for (const h of tree.hops) if (!byId.has(h.hopId)) byId.set(h.hopId, h);
   for (const h of tree.hops) {
     if (!h.isStore) continue;
-    const parent = h.parentHop ? tree.hops.find((p) => p.hopId === h.parentHop) : undefined;
+    const parent = h.parentHop ? byId.get(h.parentHop) : undefined;
     if (parent && parent.dir === HopDir.In) continue;
     if (h.via === Via.Db) db++;
     else cache++;
