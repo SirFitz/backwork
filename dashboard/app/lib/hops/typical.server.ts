@@ -24,9 +24,6 @@ export const TYPICAL_LOW_SHARE = 0.8;
 /** ...to this share of it. */
 export const TYPICAL_HIGH_SHARE = 1.25;
 
-/** The page's empty state when nothing qualifies. */
-export const NO_TYPICAL_SENTENCE = "No other requests of this route in the last hour to compare with.";
-
 export interface TypicalPick {
   traceId: string;
   durationMs: number;

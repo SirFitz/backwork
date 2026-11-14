@@ -59,6 +59,12 @@ export type DiffKind = (typeof DiffKind)[keyof typeof DiffKind];
 
 /** The comparison as the page names it in sentences. */
 export const DEFAULT_OTHER_NAME = "the typical request";
+/** B when the viewer chose it by ID. */
+export const CHOSEN_OTHER_NAME = "the other request";
+/** `/requests/:id/vs/typical`: compare with a typical request of the same route, found by the loader. */
+export const TYPICAL_PARAM = "typical";
+/** The comparison page's empty state when no typical request qualifies (`typicalRequest`). */
+export const NO_TYPICAL_SENTENCE = "No other requests of this route in the last hour to compare with.";
 
 // ---------------------------------------------------------------- types
 
