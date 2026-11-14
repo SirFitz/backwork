@@ -8,6 +8,7 @@ import { defer } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { Card, CardHead } from "~/components/ui";
 import { Deferred } from "~/components/defer";
+import { Building } from "~/components/insights/building";
 import { FixList, FixListSkeleton, SourceNotes } from "~/components/insights/fix-list";
 import { requireOrg } from "~/lib/auth/context.server";
 import { safe } from "~/lib/config.server";
@@ -28,6 +29,7 @@ import {
   type FixKind,
   type FixWindow,
 } from "~/lib/insights/fix-first";
+import { withBudget } from "~/lib/with-budget";
 import { cn } from "~/lib/utils";
 
 export const meta: MetaFunction = () => [{ title: "Fix first · Insights · backwork" }];
@@ -35,12 +37,18 @@ export const meta: MetaFunction = () => [{ title: "Fix first · Insights · back
 /** Search parameter of the page. */
 const WINDOW_PARAM = "window";
 const ALL_KINDS = "all";
+/** The first list of an organisation reads four sources; past this the page shows "building" instead
+ *  of waiting (Remix gives up on a slow stream after 5 seconds) and asks again until it is ready. */
+const FIX_BUDGET_MS = 3_500;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
   const w = new URL(request.url).searchParams.get(WINDOW_PARAM);
   const window: FixWindow = isFixWindow(w) ? w : DEFAULT_FIX_WINDOW;
-  const list: Promise<{ data: FixFirstResult | null; error: string | null }> = safe(() => fixFirst(tenantOf(ctx.org.id), window), null);
+  const list = safe<{ result: FixFirstResult | null }>(
+    async () => ({ result: await withBudget(fixFirst(tenantOf(ctx.org.id), window), FIX_BUDGET_MS) }),
+    { result: null },
+  );
   return defer({ window, now: Date.now(), list });
 }
 
@@ -128,7 +136,7 @@ export default function FixFirst() {
         sub={
           <span className="hidden sm:inline">
             <Deferred resolve={d.list} fallback={FIX_WINDOW_PHRASE[d.window]}>
-              {(panel) => <Meta result={panel.data} window={d.window} now={d.now} />}
+              {(panel) => <Meta result={panel.data.result} window={d.window} now={d.now} />}
             </Deferred>
           </span>
         }
@@ -141,7 +149,9 @@ export default function FixFirst() {
       />
       <Deferred resolve={d.list} fallback={<FixListSkeleton />}>
         {(panel) =>
-          panel.error || !panel.data ? (
+          panel.data.result === null && !panel.error ? (
+            <Building what="the list" />
+          ) : panel.error || !panel.data.result ? (
             <div className="px-4 py-10 text-center text-[13px]">
               <p className="text-warn">The list could not be built{panel.error ? `: ${panel.error.slice(0, 160)}` : "."}</p>
               <Link to={windowHref(d.window)} replace preventScrollReset reloadDocument className="mt-2 inline-block text-xs font-medium text-brand hover:underline">Retry</Link>
@@ -149,13 +159,13 @@ export default function FixFirst() {
           ) : (
             <>
               <FixList
-                items={filterFixItems(panel.data.items, kind)}
+                items={filterFixItems(panel.data.result.items, kind)}
                 window={d.window}
                 shown={shown}
                 onMore={() => setShown((n) => n + FIX_PAGE_ROWS)}
                 filtered={kind !== null}
               />
-              <SourceNotes sources={panel.data.sources} errors={panel.data.errors} repeatsSampled={panel.data.repeatsSampled} />
+              <SourceNotes sources={panel.data.result.sources} errors={panel.data.result.errors} repeatsSampled={panel.data.result.repeatsSampled} />
             </>
           )
         }
