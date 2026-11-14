@@ -1,0 +1,79 @@
+
+GET /orders/:id  trace 38685226c70110069caaa3f5e09f37c4  took 363 ms  records 6
+  chatty: false (4 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 4 calls [select orders, get redis.internal, get redis.internal, get redis.internal] serial 358 ms parallel 357 ms saved 0.6 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /orders/:id  trace 264a4feee3bfacb6809e5a3ca88f6d4a  took 364 ms  records 6
+  chatty: false (4 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 4 calls [select orders, get redis.internal, get redis.internal, get redis.internal] serial 359 ms parallel 358 ms saved 0.1 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /orders/:id  trace f54659c7d41733b111f4db05d9913055  took 407 ms  records 6
+  chatty: false (4 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 4 calls [select orders, get redis.internal, get redis.internal, get redis.internal] serial 401 ms parallel 401 ms saved 0.1 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /feed  trace 446e53664a4d0d374723e3055c0f9901  took 3.4 ms  records 14
+  chatty: false (12 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 0
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /feed  trace ce38a3a38c0460670637e9acb278a1a6  took 3.4 ms  records 14
+  chatty: false (12 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 0
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /feed  trace 645b1d06d680ce837348fb67d732cc09  took 3.4 ms  records 14
+  chatty: false (12 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 0
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+POST /checkout  trace e20de673be356923ce425e8467236eb8  took 83.6 ms  records 10
+  chatty: false (0 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 2 calls [POST commerce-payments, POST commerce-risk] serial 80.4 ms parallel 50.1 ms saved 30.3 ms
+  reported (saved >= 20 ms, <= 12 calls): 1
+    > 2 calls from shop-api ran one after another (POST commerce-payments, POST commerce-risk, 80.4 ms). If they do not depend on each other, running them together could take about 50.1 ms and save 30.3 ms.
+
+POST /checkout  trace 55fb5e28e7e1e427794da7346af1dfd5  took 86.6 ms  records 10
+  chatty: false (0 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 2 calls [POST commerce-payments, POST commerce-risk] serial 82.6 ms parallel 47.6 ms saved 35.1 ms
+  reported (saved >= 20 ms, <= 12 calls): 1
+    > 2 calls from shop-api ran one after another (POST commerce-payments, POST commerce-risk, 82.6 ms). If they do not depend on each other, running them together could take about 47.6 ms and save 35.1 ms.
+
+POST /checkout  trace 9f9c2de11eb3b38e76aa328f0a739eb1  took 98.2 ms  records 10
+  chatty: false (0 database and cache calls in one request (50 or more is a lot).)  repeat groups: 0
+  chains found (no floor): 1
+    - 2 calls [POST commerce-payments, POST commerce-risk] serial 94.3 ms parallel 56.5 ms saved 37.8 ms
+  reported (saved >= 20 ms, <= 12 calls): 1
+    > 2 calls from shop-api ran one after another (POST commerce-payments, POST commerce-risk, 94.3 ms). If they do not depend on each other, running them together could take about 56.5 ms and save 37.8 ms.
+
+GET /shop  trace bb78cc2d556684434ef250ff4b137c44  took 35.2 ms  records 24
+  chatty: false (22 database and cache calls in one request (50 or more is a lot).)  repeat groups: 1
+  chains found (no floor): 1
+    - 7 calls [select categories, select banners, select stock, select prices, select reviews, select carts, update sessions] serial 9.0 ms parallel 2.4 ms saved 6.6 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /shop  trace 63c8c012d9410362ce0f24673b7caa39  took 35.6 ms  records 24
+  chatty: false (22 database and cache calls in one request (50 or more is a lot).)  repeat groups: 1
+  chains found (no floor): 1
+    - 7 calls [select categories, select banners, select stock, select prices, select reviews, select carts, update sessions] serial 10.9 ms parallel 2.4 ms saved 8.5 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+GET /shop  trace 34c1bbafbd2640bf1c883f631cab0f4c  took 35.5 ms  records 24
+  chatty: false (22 database and cache calls in one request (50 or more is a lot).)  repeat groups: 1
+  chains found (no floor): 2
+    - 2 calls [select categories, select banners] serial 3.1 ms parallel 1.1 ms saved 2.0 ms
+    - 5 calls [select stock, select prices, select reviews, select carts, update sessions] serial 9.3 ms parallel 2.4 ms saved 6.9 ms
+  reported (saved >= 20 ms, <= 12 calls): 0
+
+List rows (shop-api, last hour, up to 400 end records):
+  POST /checkout: 89 rows, calls per row 0 to 0, chatty 0
+  GET /feed: 89 rows, calls per row 12 to 12, chatty 0
+  GET /orders/:id: 89 rows, calls per row 4 to 4, chatty 0
+  GET /shop: 89 rows, calls per row 22 to 22, chatty 0

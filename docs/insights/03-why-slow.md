@@ -68,3 +68,13 @@ The tree is rebuilt when logs arrive; the verdict must not flicker between build
 
 ## Out of scope
 Natural-language summaries of logs, cross-request comparison (feature 8).
+
+## As built (deviations settled in the BAC-70 PR)
+- **Fast requests.** Rule 3 as planned ("under `FAST_US` and no group over 20 percent: hidden") hid `POST /checkout` (about 85 ms, all of it waiting on two services) and let `GET /feed` (3.4 ms) through to "own time". As built, rules 5 to 8 run first; a request under `FAST_US` keeps its verdict only when it names a repeat group, a call or waiting that took at least `FAST_MIN_CULPRIT_US = 10_000` (10 ms). Own time on a fast request is never shown.
+- **Order of rules.** Repeated calls, then a slow database or cache call, then waiting (`WAITING_SHARE = 0.5`), then a single call to another service (`CULPRIT_SHARE`), then own time (`OWN_SHARE = 0.5`). With a call to another service checked before waiting, a request that waited on two services one after the other read as "one call took 55 percent" instead of naming the waiting.
+- **Shares of calls that ran one after another.** A sequential repeat group counts its summed time (`totalUs`, capped at the head's time); a concurrent group counts the union of its intervals. Stored end times come in bursts (BAC-68 "As built"), so in the fixture's real `GET /shop` the union of 14 sequential plans lookups was about a third of their time and the group fell under 40 percent.
+- **Own time** is the head's time less its calls' summed time (database, cache, waiting) when that fits inside it, else `TimeSplit.ownUs`; for the same reason the union-based figure overstated it (73 percent instead of 19 percent on `GET /shop`). `timeSplit` itself is unchanged.
+- **Waiting** names destinations among the head's own outbound calls (receiving service, else peer); one destination reads "was spent waiting on commerce-payments (300 ms)", several "waiting on other services, the longest on ...".
+- **Clock note** looks at the culprit's callers and at the service that answered it (an outbound call's receiving hop is where the shifted clock shows).
+- **Notes** (fetch cut, clock skew) are appended to `sentence`; `detail` holds only the next biggest clause. `verdictShown(v)` says whether the line is drawn; `Unknown` is shown.
+- **Placement.** One mount, after the Alert box and before the Path card: on desktop that is directly above "Where the time went"; on a phone, where the time bar sits below the Path card, the line stays above the Path card so it is seen first. Clicking reuses the repeat finding's focus (`pathKeysTo`), so the culprit's row opens and scrolls into view.
