@@ -34,3 +34,6 @@ Branch `bac-76-service-map`, worktree `backwork-wt/ins-map`, cut from origin/mai
 ## Final
 - `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (482 pass, 5 skip, 0 fail); with the database URLs on `bw_ins_76`: exit 0 (486 pass, 1 skip, 0 fail).
 - Not run here (no browser tool): 1440 and 390 visual checks, top gap, card header height. Listed in the PR.
+
+- PR https://github.com/SirFitz/backwork/pull/33. Cleanup: dev server stopped, /tmp/bw_ins_76* removed, bw_ins_76 dropped.
+DONE
