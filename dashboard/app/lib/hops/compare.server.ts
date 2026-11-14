@@ -105,6 +105,9 @@ export const TREND_CHART_POINTS = 48;
 /** The shortest step of the Trend chart. */
 export const TREND_CHART_MIN_STEP_SECONDS = 60;
 
+/** The Trend chart's end is rounded down to this, ms. */
+export const TREND_END_ROUND_MS = 60_000;
+
 export function trendChartStepSeconds(range: PerfRange): number {
   return Math.max(TREND_CHART_MIN_STEP_SECONDS, Math.floor(rangeSeconds(range) / TREND_CHART_POINTS));
 }
@@ -156,7 +159,8 @@ export function serviceTrend(
   health: HealthChecks = HealthChecks.Hidden,
 ): Promise<ServiceTrend> {
   const step = trendChartStepSeconds(range);
-  const end = Math.floor(now / (step * 1000)) * step * 1000;
+  // the end on the minute (a cache key per minute), not on the step: a 7d step is 3.5 hours
+  const end = Math.floor(now / TREND_END_ROUND_MS) * TREND_END_ROUND_MS;
   const start = end - rangeSeconds(range) * 1000;
   const empty: ServiceTrend = { service, range, start, end, now: [], lastWeek: canCompare(range) ? [] : null };
   if (!isLabelValue(service)) return Promise.resolve(empty);
