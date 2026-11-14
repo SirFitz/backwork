@@ -27,3 +27,6 @@ Database `bw_ins_77` (local socket). Dev server port 3508.
 
 ## 6. Final checks (after merging origin/main): done
 - `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (891 pass, 13 skip, 0 fail); with `DATABASE_URL`/`USAGE_TEST_DATABASE_URL` on `bw_ins_77`: exit 0 (903 pass, 1 skip, 0 fail); `npx remix vite:build` exit 0 (build directory removed).
+## 7. PR and cleanup: done
+- PR https://github.com/SirFitz/backwork/pull/48. Dev servers and webhook receiver stopped, /tmp/bw_ins_77* removed, bw_ins_77 dropped.
+DONE
