@@ -3,7 +3,7 @@
 Branch `bac-80-domain-and-monitors`, worktree `backwork-wt/domain-monitors`, cut from origin/main 66a6a21.
 Fields built against (COR-26, spec 0.13): `host` (HOP-27) on inbound HTTP start/end, `synthetic=1` (HOP-28).
 
-## 0. Setup: in progress
+## 0. Setup: done
 - Worktree created off origin/main 66a6a21. `npm ci` running.
 - `npm ci` exit 0. Baseline on 66a6a21: `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (669 tests, 9 skip, 0 fail).
 
@@ -27,3 +27,8 @@ Fields built against (COR-26, spec 0.13): `host` (HOP-27) on inbound HTTP start/
 ## 5. Browser check: done
 - Dev server :3580 on `bw_bac80` against the shared Loki :3191 and VM :8491, org "Fixture Org" as platform org. `qa/bac-80-check.mjs` in Playwright-launched Chrome (pipe, no debugging port), 1440x900 and 390x844 at DPR 2: 29 passed, 0 failed (`docs/bac-80/check-output.txt`, screenshots `docs/bac-80/*.webp`). Header to first card 60 px (1440) and 56 px (390).
 - Fixed on the way: phone card truncated the service name to "shop-…"/"comme…"; now the service keeps its width and the host truncates.
+
+## 6. Merge and final gate: done
+- Merged origin/main (793acec: BAC-72 alerts, BAC-74 fix-first, BAC-75 request diff): no conflicts. The request diff's typical-request pick (`typical.server.ts`) used the health-check rule; now a monitor's request is compared with its own kind (`isHealthOrMonitor`), with a test.
+- `npx tsc --noEmit` exit 0. `npx bun test` exit 0 (804 pass, 10 skip, 0 fail); with `DATABASE_URL`/`USAGE_TEST_DATABASE_URL` on `bw_bac80` exit 0 (813 pass, 1 skip, 0 fail). `npx remix vite:build` exit 0 (`build/` removed). `qa/fixtures` `bun test` exit 0 (4 pass). `infra/vector/test.sh` exit 0. `bun infra/vector/generate.ts --check`: up to date.
+- Browser check re-run after the merge: 29 passed, 0 failed; `/requests/<monitor>/vs/typical` 200.

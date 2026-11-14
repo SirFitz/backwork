@@ -70,6 +70,17 @@ describe("typicalRequest", () => {
     // Head (1) and the other route (4) left out; two candidates: the fastest.
     expect(pick).toEqual({ traceId: trace(3), durationMs: 90 });
   });
+  test("a monitor's request is compared with monitors too; a real one leaves them out (BAC-80)", async () => {
+    const queries: string[] = [];
+    const read = async (query: string) => {
+      queries.push(query);
+      return [];
+    };
+    await typicalRequest(tenant, { ...HEAD, synthetic: true }, NOW, read);
+    await typicalRequest(tenant, HEAD, NOW, read);
+    expect(queries[0]).not.toContain("synthetic");
+    expect(queries[1]).toContain("synthetic");
+  });
   test("null when the log store has none", async () => {
     expect(await typicalRequest(tenant, HEAD, NOW, async () => [])).toBeNull();
   });

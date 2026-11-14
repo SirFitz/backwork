@@ -478,6 +478,8 @@ export interface RequestSummary {
   via: Via;
   status: number | null;
   failed: boolean;
+  /** The head hop is a monitor's (HOP-28); missing on summaries stored before BAC-80. */
+  synthetic?: boolean;
   state: HopState;
   services: number;
   durationUs: number | null;
@@ -495,6 +497,7 @@ export function requestSummary(tree: RequestTree): RequestSummary | null {
     via: head.via,
     status: head.status,
     failed: isFailed(head),
+    synthetic: head.synthetic === true,
     state: head.state,
     services: tree.services.length,
     durationUs: head.durationUs,
