@@ -24,3 +24,7 @@ Baseline before changes: `tsc --noEmit` exit 0; `bun test` 588 tests, 0 fail, 7 
 
 ## 5. Final
 - After merging origin/main: `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (660 pass, 9 skip, 0 fail); with the database URL exit 0 (668 pass, 1 skip, 0 fail); `npx remix vite:build` exit 0.
+- Cleanup: dev servers on :3504/:3505 stopped, `bw-ins-78-loki` removed, `/tmp/bw_ins_78*` removed, `bw_ins_78` dropped.
+- PR https://github.com/SirFitz/backwork/pull/41
+
+DONE
