@@ -56,3 +56,15 @@ A 2 MB cap and 500 pins per org bound table size; `jsonb` TOAST keeps rows out o
 
 ## Out of scope
 Sharing a pin by public link, exporting, pinning log searches, keeping Loki lines past retention for anything but pinned requests.
+
+## As built (deviations settled in the BAC-78 PR)
+- **Whole trace, not one part.** A pin is keyed by trace id, so it stores every request in the trace (the records `progressiveLookup` returns, before `splitRequests`); the request switcher then works on a pinned copy exactly as on a live one. The title and summary describe the first request.
+- **Pure types live in `lib/pins.ts`.** `PinReason`, `PinIntent`, `PinnedRequest`, `PinSnapshot`, the labels and the caps are in the pure module so the request view, the list and Settings can use them in the browser; `pins.server.ts` re-exports them.
+- **`pinRequest(actor, traceId, snap, { reason, note?, title? }, now?)`** takes a `PinActor` (`{ orgId, userId | null }`) instead of `OrgContext`, so the auto-pin job (no user) uses the same function. The title is worked out from the snapshot unless given. The cap check and insert run in one transaction holding a row lock on the organisation.
+- **Snapshot envelope.** `pinned_requests.records` holds `{ v: 1, summary, trimmed, truncated, records }`, so the list and the request view read the summary and flags with `records -> 'summary'` without loading the records (no new column, no DDL change).
+- **Re-pinning** updates the note; a manual re-pin of an automatic pin also makes it manual, so it can no longer be evicted. Pinning an already pinned request whose records have left Loki only updates the note.
+- **Trimming** drops the oldest log lines first, then the oldest records (the newest lines hold the failure).
+- **Pin metadata on every view.** The loader reads the pin's metadata (`pinMeta`, a primary-key read) alongside the Loki lookup, for the button, the badge and the facts row; the full snapshot is read only when it is shown. A pin lookup that fails counts as no pin. `withPinFallback` in `pins.server.ts` wraps `progressiveLookup`; the pure rule is `pinnedCopyWanted`.
+- **Action answers, not throws.** A viewer gets a 403 JSON answer ("Viewers cannot pin requests.") rather than a thrown 403, so the page is not replaced by the error boundary; cross-origin still throws from `assertSameOrigin`.
+- **Automatic pins.** "Keep the slowest request of each day" keeps one slow pin per UTC day: a later, slower request replaces it. Failed requests take the rest of the daily three (`AUTO_PINS_PER_DAY`). The 5-row minimum applies per route (`AUTO_SLOW_MIN_ROWS`). The job runs 5 minutes after start, then hourly.
+- **Extra files.** `components/insights/pinned-list.tsx` (the Pinned chip and list) and `components/insights/auto-pin-card.tsx` (the Settings card) keep the mounts in `routes/requests.tsx` and `routes/settings.tsx` small. The chip sits in the Requests title row; the Pinned view replaces the feed (summary tiles and filters belong to the live feed). List paging uses a `pinnedAt.traceId` cursor so pins saved in the same millisecond are not skipped. Settings changes are audited as `pin.settings`.

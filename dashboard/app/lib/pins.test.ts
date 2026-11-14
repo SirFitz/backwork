@@ -8,7 +8,9 @@ import {
   describeSnapshot,
   fmtPinnedAt,
   overCapMessage,
+  parsePinCursor,
   pickAutoPins,
+  pinCursor,
   pinLimitFor,
   pinSlot,
   pinnedCopyWanted,
@@ -124,6 +126,15 @@ describe("describeSnapshot and notes", () => {
 
   test("pinned time reads as 14 Nov 12:00 in UTC", () => {
     expect(fmtPinnedAt(T0, false)).toBe("14 Nov 12:00");
+  });
+});
+
+describe("pin cursor", () => {
+  test("round-trips pinned time and trace id; anything else is no cursor", () => {
+    expect(parsePinCursor(pinCursor({ pinnedAt: T0, traceId: TRACE }))).toEqual({ pinnedAt: T0, traceId: TRACE });
+    expect(parsePinCursor("1")).toBeNull();
+    expect(parsePinCursor(`${T0}.NOTHEX`)).toBeNull();
+    expect(parsePinCursor(null)).toBeNull();
   });
 });
 
