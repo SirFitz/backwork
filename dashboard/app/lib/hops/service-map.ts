@@ -2,6 +2,7 @@
 // the learned peer-to-service pairs into a graph of services, data stores and external peers, and
 // lays it out left to right in layers. No Loki, Remix or database imports: the route renders it
 // and tests run it with plain objects.
+import { PerfRange } from "~/lib/hops/figures";
 import { Via } from "~/lib/hops/types";
 
 /** What a node on the map stands for. */
@@ -418,4 +419,16 @@ export function listRows(map: ServiceMap): MapEdge[] {
 /** True when two node boxes overlap (used by tests and as a guard in the graph). */
 export function boxesOverlap(a: Pick<MapNode, "x" | "y">, b: Pick<MapNode, "x" | "y">): boolean {
   return a.x < b.x + NODE_WIDTH_PX && b.x < a.x + NODE_WIDTH_PX && a.y < b.y + NODE_HEIGHT_PX && b.y < a.y + NODE_HEIGHT_PX;
+}
+
+// ---------------------------------------------------------------- ranges (pure: the page uses them too)
+
+/** Ranges the map offers (figures over 14 days of metrics at most; longer ranges are not offered). */
+export const MAP_RANGES: readonly PerfRange[] = [PerfRange.H1, PerfRange.H6, PerfRange.H24];
+export const DEFAULT_MAP_RANGE: PerfRange = PerfRange.H1;
+/** A computed map is served as is for this long, in milliseconds. */
+export const MAP_FRESH_MS = 30_000;
+
+export function parseMapRange(value: string | null | undefined): PerfRange {
+  return MAP_RANGES.find((r) => r === value) ?? DEFAULT_MAP_RANGE;
 }

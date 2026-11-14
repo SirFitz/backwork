@@ -7,13 +7,11 @@ import type { Tenant } from "~/lib/tenant.server";
 import { PerfRange } from "~/lib/hops/figures";
 import { connectionsTable, inboundServices, servicesTable, vmClient, type PromClient } from "~/lib/hops/metrics.server";
 import { learnPeers, peerServicesFor, peerStore, type LearnQueryFn, type PeerStore } from "~/lib/hops/peers.server";
-import { buildMap, type ServiceMap } from "~/lib/hops/service-map";
+import { DEFAULT_MAP_RANGE, MAP_FRESH_MS, MAP_RANGES, buildMap, parseMapRange, type ServiceMap } from "~/lib/hops/service-map";
 
-/** Ranges the map offers (figures over 14 days of metrics at most; longer ranges are not offered). */
-export const MAP_RANGES: readonly PerfRange[] = [PerfRange.H1, PerfRange.H6, PerfRange.H24];
-export const DEFAULT_MAP_RANGE: PerfRange = PerfRange.H1;
-/** A computed map is served as is for this long, in milliseconds. */
-export const MAP_FRESH_MS = 30_000;
+// MAP_RANGES, DEFAULT_MAP_RANGE, MAP_FRESH_MS and parseMapRange live in the pure module (the page
+// uses them in the browser too); re-exported here for the server callers and tests.
+export { DEFAULT_MAP_RANGE, MAP_FRESH_MS, MAP_RANGES, parseMapRange };
 /** Past this age a map is no longer served while the next one is computed, in milliseconds. */
 export const MAP_MAX_STALE_MS = 5 * 60_000;
 
@@ -22,10 +20,6 @@ export interface ServiceMapResult extends ServiceMap {
   computedAt: number;
   /** The peer scan or the peer store could not be read: unresolved peers may be services. */
   peersUnavailable: boolean;
-}
-
-export function parseMapRange(value: string | null | undefined): PerfRange {
-  return MAP_RANGES.find((r) => r === value) ?? DEFAULT_MAP_RANGE;
 }
 
 /** Compute the map once (no cache). Peer learning or reading failing never fails the map. */
