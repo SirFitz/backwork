@@ -9,7 +9,7 @@ import { Check, ChevronDown, ChevronUp, Copy, KeyRound, Plus, RefreshCw, Sliders
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { db } from "~/db/index.server";
 import { projects } from "~/db/schema";
-import { requireOrg, requireRole } from "~/lib/auth/context.server";
+import { hasRole, requireOrg, requireRole } from "~/lib/auth/context.server";
 import { getAuthSession, commitAuthSession } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { hashToken, tenantOf } from "~/lib/tenant.server";
@@ -29,6 +29,12 @@ import {
   type ControlsView,
 } from "~/lib/controls-view.server";
 import { safe } from "~/lib/config.server";
+import { DeployAuditAction, deleteDeploy, listDeploys } from "~/lib/deploys.server";
+import { markerLabel, type Deploy } from "~/lib/deploys";
+import { Ago } from "~/components/time";
+
+/** Deploys listed on the page for admins (BAC-73). */
+const RECENT_DEPLOYS = 5;
 
 function newToken(): string {
   return "bw_" + randomBytes(24).toString("hex");
@@ -63,6 +69,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
         null
       )
     : Promise.resolve({ data: null, error: null });
+  const admin = hasRole(ctx.role, "admin");
+  const deploys: Promise<{ data: Deploy[]; error: string | null }> = admin
+    ? safe(() => listDeploys(ctx.org.id, { service: null, sinceMs: null, limit: RECENT_DEPLOYS }), [])
+    : Promise.resolve({ data: [], error: null });
   return defer(
     {
       projects: rows.map((p) => ({ id: p.id, name: p.name, slug: p.slug, hasToken: !!p.hasToken })),
@@ -72,6 +82,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       created,
       openId: open?.id ?? null,
       controls,
+      deploys,
       gridHeads: GRID_HEAD,
     },
     { headers: { "Set-Cookie": await commitAuthSession(s) } }
@@ -124,6 +135,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return redirectWithToken(token, proj[0].slug);
   }
 
+  if (intent === "deploy.delete") {
+    const id = String(fd.get("id") || "");
+    const gone = await deleteDeploy(ctx.org.id, id);
+    if (gone) void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: DeployAuditAction.Delete, target: { id } });
+    return redirect("/projects");
+  }
+
   if (intent === "delete") {
     const id = String(fd.get("id"));
     await db.delete(projects).where(and(eq(projects.id, id), eq(projects.orgId, ctx.org.id)));
@@ -173,6 +191,7 @@ export default function Projects() {
   const tok = d.created?.token ?? null;
 
   const cmdFor = (t: string) => `curl -fsSL ${d.publicUrl}/install.sh | sh -s -- \\\n  --token ${t} \\\n  --name $(hostname)`;
+  const deployFor = (t: string) => `curl -fsS -X POST ${d.publicUrl}/ingest/deploys \\\n  -H "Authorization: Bearer ${t}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"service":"my-api","version":"v1.4.2","commit":"'"$GIT_COMMIT"'","environment":"production"}'`;
   const errFor = (t: string) => `curl -X POST ${d.publicUrl}/ingest/errors \\\n  -H "Authorization: Bearer ${t}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"type":"TypeError","message":"Cannot read x of undefined","service":"my-api","stack":"...","environment":"production"}'`;
 
   return (
@@ -190,6 +209,10 @@ export default function Projects() {
             <div>
               <div className="mb-1 text-2xs font-medium text-muted">Ship logs from a server</div>
               <CodeBlock>{cmdFor(tok)}</CodeBlock>
+            </div>
+            <div>
+              <div className="mb-1 text-2xs font-medium text-muted">Report deploys</div>
+              <CodeBlock>{deployFor(tok)}</CodeBlock>
             </div>
           </div>
         </Card>
@@ -267,6 +290,37 @@ export default function Projects() {
         </Card>
       ) : null}
 
+      {canManage ? (
+        <Card>
+          <CardHead title="Recent deploys" sub={`the last ${RECENT_DEPLOYS} reported`} />
+          <Deferred resolve={d.deploys} fallback={<RowsSkeleton rows={3} />}>
+            {(panel) =>
+              panel.error ? (
+                <div className="px-4 py-3 text-2xs text-warn">data source unavailable: {panel.error.slice(0, 180)}</div>
+              ) : panel.data.length === 0 ? (
+                <p className="px-4 py-3 text-[13px] text-muted">No deploys reported yet. Add the command below to your deploy step.</p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {panel.data.map((dep) => (
+                    <li key={dep.id} className="flex items-center gap-3 px-4 py-2 text-[13px]">
+                      <span className="font-semibold">{dep.service}</span>
+                      <span className="font-mono text-2xs text-muted">{markerLabel(dep)}</span>
+                      {dep.environment ? <span className="hidden text-2xs text-faint sm:inline">{dep.environment}</span> : null}
+                      {dep.actor ? <span className="hidden truncate text-2xs text-faint sm:inline">by {dep.actor}</span> : null}
+                      <span className="ml-auto text-2xs text-faint"><Ago ts={dep.deployedAt} /></span>
+                      <Form method="post" onSubmit={(e) => { if (!confirm(`Delete the deploy marker ${markerLabel(dep)} of ${dep.service}?`)) e.preventDefault(); }}>
+                        <input type="hidden" name="intent" value="deploy.delete" /><input type="hidden" name="id" value={dep.id} />
+                        <button className="text-faint hover:text-fg" aria-label="delete deploy marker"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </Form>
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+          </Deferred>
+        </Card>
+      ) : null}
+
       {/* Always-visible, secret-free reference so the install commands aren't lost after the one-time token reveal (H14). */}
       <Card>
         <CardHead title="Connect a project" sub="use the ingest token from when you created or regenerated a project" />
@@ -274,6 +328,11 @@ export default function Projects() {
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Ship logs from a server</div>
             <CodeBlock>{cmdFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-medium text-muted">Report deploys, marked on <a href="/performance" className="text-brand hover:underline">Performance</a></div>
+            <CodeBlock>{deployFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
+            <p className="mt-1 text-2xs text-faint">On Coolify, add it as a post-deployment command. Commit and version are optional; a commit reported twice for a service is stored once.</p>
           </div>
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Report an exception → <a href="/errors" className="text-brand hover:underline">Errors</a></div>

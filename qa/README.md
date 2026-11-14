@@ -67,5 +67,29 @@ long from the next cycle; with `BW_URL` and `BW_INGEST_TOKEN` set it also report
 shop-api to `POST /ingest/deploys` once that endpoint exists (feature 6). `deploy.sh <project> --reset`
 ends it.
 
+### Last week for the compare features
+
+A fresh stack has no data from last week, so "vs last week", the Trend card's dashed line and the
+Overview's "Slower than last week" have nothing to compare with. `qa/fixtures/backfill-last-week.ts`
+writes a week-old copy of the fixture hop series into the stack's VictoriaMetrics through its import
+API (`/api/v1/import/prometheus`, explicit timestamps): same names and labels, counters growing at
+the rate they grow now, from 8 hours before to 3 hours after the instant exactly 7 days ago. It only
+adds samples with old timestamps; nothing current is changed or deleted. Run it once the stack has
+run for about 15 minutes (the rates are read from the last 2 hours):
+
+```bash
+bun qa/fixtures/backfill-last-week.ts --vm http://localhost:8428                      # a plain copy
+bun qa/fixtures/backfill-last-week.ts --vm http://localhost:8428 --latency-scale 0.5  # last week twice as fast
+```
+
+`--latency-scale 0.5` stages a regression: last week's latencies at half (bucket counts and `_sum`
+moved), so a service's p95 is about twice last week's and the Overview group has something to list.
+The plain copy shows "about the same" everywhere until `deploy.sh` slows `GET /shop`, and that
+alone stays under the 100 ms rise a "slower" verdict needs. Other options: `--back 26h` to compare
+the 24h range, `--ahead`, `--step` (default 60s), `--dry-run`. Run it once per stack: it refuses
+when samples already exist 7 days back (`--force` writes a second copy anyway; VictoriaMetrics
+shows imported samples about a second after the import). The copy is good for `--ahead` (3 hours)
+after it was written; recreate the stack's VictoriaMetrics volume to start over.
+
 Without Docker: `SERVICE=shop-api FORMAT=json SCENARIO=insights CYCLE_S=10 bun qa/fixtures/emitter.ts`
 (and the same with `SERVICE=commerce-payments` and `SERVICE=commerce-risk` for the checkout receivers).
