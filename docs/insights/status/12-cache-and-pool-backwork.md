@@ -40,3 +40,10 @@ Baseline before changes: `tsc --noEmit` exit 0; `bun test` 636 tests (629 pass, 
 - Phase C (fixture with one long refund update): verdict on a real request "One call took 73 percent of the 68.2 ms: update refunds, 49.7 ms. Of the database time, 58 percent (37.8 ms) was spent waiting for a database connection." (in the request page HTML).
 - Phase D (collector with the Database and cache switch off, from 1794639985): 69 hop lines stored, 25 in_end, 0 data-store lines, 0 in_end lines with any store total; collector exporter has 11 duration series and 0 store series; VM store counters increase over 90 s: no series.
 - Stack, volumes and images removed.
+
+## Final (PR https://github.com/SirFitz/backwork/pull/46)
+- Merged origin/main (clean), then: `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (703 pass, 9 skip, 0 fail); `npx remix vite:build` exit 0 (build/ removed); `bun infra/vector/generate.ts --check` exit 0; `infra/vector/test.sh` exit 0 (27 passed, 0 failed).
+- Two earlier full runs each had one wall-clock test over its limit (repeated.test.ts 5000 calls 822 ms, concurrency.test.ts 5000 calls 326 ms, limit 100 ms) with host load 130 to 180; both pass alone and in the final run.
+- Not done here (no browser tool allowed): visual and responsive checks, listed in the PR under "What to look at".
+- Cleanup: dev server stopped, `bwins79` containers, volumes and images removed, `bw_ins_79` dropped, `/tmp/bw_ins_79*` removed.
+DONE
