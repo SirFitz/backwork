@@ -9,5 +9,8 @@ Database `bw_ins_77` (local socket). Dev server port 3508.
 ## 2. Pure content and schedule maths: done
 - `lib/digest/build.ts` + test (13), `lib/digest/schedule.ts` (pure maths and labels, so the card can use them) + test (13), `lib/digest/settings.ts` (intents, form parser), `lib/digest/delivery.ts` (per-destination outcomes).
 
-## 3. Store, inputs, job: in progress
-- `store.server.ts`, `inputs.server.ts`, `schedule.server.ts` written; `startDigestJobs` registered in `lib/jobs.server.ts` (+ jobs test updated). tsc 0.
+## 3. Store, inputs, job, action: done
+- `store.server.ts` + DB test (3: concurrent claims from this process and a second OS process, one winner; retry after an hour up to 3 attempts; sent runs never re-claimed; next week new; settings, recipients, error counts), `inputs.server.ts` + test (3), `schedule.server.ts` + test (8: fan-out, retry only failed, tick due/not due/claimed, failures), `action.server.ts` + test (6: member and viewer 403, admin and owner save and audit, other org's channel refused, test send). `startDigestJobs` in `lib/jobs.server.ts` (+ jobs test). tsc 0; digest tests 46 pass.
+- Found while testing: a source answering null (usage of an unmetered org) read as a timeout; values are now boxed inside the budget.
+
+## 4. Card and route: in progress
