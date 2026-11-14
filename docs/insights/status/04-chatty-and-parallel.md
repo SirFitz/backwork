@@ -19,3 +19,6 @@ Branch `bac-71-chatty-parallel`, worktree `backwork-wt/ins-chatty`, cut from ori
 - `/orders/:id`: one 4-call chain (select orders + 3 gets), saved 0.1 to 0.6 ms, not reported. `/feed`: no chain. `/checkout`: reported, 30.3 / 35.1 / 37.8 ms saved. `/shop`: chains of distinct selects saving 2 to 8.5 ms, not reported; no row chatty.
 - Signed-in dev server on :3502 (`bw_ins_71`): `/requests` 200 with the "Chatty only" and "Most calls" controls; a checkout request page renders "could run together" on both call rows; a feed request page has none.
 - Plan "As built" section written.
+
+## 5. PR
+- After `git merge origin/main` (already up to date): tsc 0; bun test 0 (611 pass, 7 skip, 0 fail); vite:build 0.
