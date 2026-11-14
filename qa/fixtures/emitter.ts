@@ -446,6 +446,8 @@ export const SEARCH_HIT_CHANCE = 0.2;
  *  waiting for a connection (between the two). */
 export const REFUND_CALLS = 3;
 export const REFUND_WAIT_SHARE: readonly [number, number] = [0.55, 0.85];
+/** Each POST /refunds call's duration, ms: a base and a random spread above it. */
+export const REFUND_CALL_MS: readonly (readonly [number, number])[] = [[8, 4], [48, 14], [6, 3]];
 
 /** `cache_hit_n` and `cache_miss_n` for an inbound end record: a total with no calls is left out
  *  (proposed HOP-25). */
@@ -476,7 +478,7 @@ export function productSearch(s: InsightsSeed): Emission[] {
   return [...inboundPair(S, 0, { rec, endAt: at + 0.9, statusCode: 200, extra: { cache_n: SEARCH_GETS, cache_us: cacheUs, ...readTotals(hits) } }), ...out];
 }
 
-/** POST /refunds on commerce-payments: three updates whose time is mostly waiting for a database
+/** POST /refunds on commerce-payments: three updates (one long) whose time is mostly waiting for a database
  *  connection from an exhausted pool (BAC-79). `wait_us` is part of each call's duration. */
 export function refundBatch(s: InsightsSeed): Emission[] {
   const P = Service.Payments;
@@ -489,7 +491,9 @@ export function refundBatch(s: InsightsSeed): Emission[] {
   let dbUs = 0;
   let waitUs = 0;
   for (let n = 0; n < REFUND_CALLS; n++) {
-    const ms = 18 + 14 * s.unit(`refunds:ms:${n}`);
+    // The middle update is the long one, so the request has a culprit the verdict names.
+    const [base, spread] = REFUND_CALL_MS[n % REFUND_CALL_MS.length];
+    const ms = base + spread * s.unit(`refunds:ms:${n}`);
     const [lo, hi] = REFUND_WAIT_SHARE;
     const wait = us(ms * (lo + (hi - lo) * s.unit(`refunds:wait:${n}`)));
     at += 0.2 + ms;

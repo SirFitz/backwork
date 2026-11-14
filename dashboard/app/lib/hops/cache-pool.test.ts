@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CACHE_READ_FACT, DB_WAIT_SHARE, NO_CACHE_HITS_TIP, NO_CONN_WAIT_TIP, WAITED_FACT,
-  cacheHitsCell, cacheReadOf, connWaitCell, connectionWait, connectionWaitClause, hitRatio, storeCallFacts, storeTotalsChips, waitShare, waitSuffix,
+  cacheHitsCell, cacheReadOf, waitSuffixOf, connWaitCell, connectionWait, connectionWaitClause, hitRatio, storeCallFacts, storeTotalsChips, waitShare, waitSuffix,
 } from "./cache-pool";
 import { detectRepeats } from "./repeated";
 import { buildRequestTree } from "./tree";
@@ -71,6 +71,10 @@ describe("request view", () => {
     const h = hopOf({ waitUs: 4100 });
     expect(waitSuffix(h)).toBe("waited 4.1 ms");
     expect(storeCallFacts(h)).toEqual([[WAITED_FACT, "4.1 ms, 68% of the call"]]);
+  });
+  test("a group row adds its calls' waits up", () => {
+    expect(waitSuffixOf([hopOf({ waitUs: 17_200 }), hopOf({ waitUs: 13_600 }), hopOf({ waitUs: null })])).toBe("waited 30.8 ms in all");
+    expect(waitSuffixOf([hopOf({ waitUs: 0 }), hopOf({ waitUs: null })])).toBeNull();
   });
   test("no wait, or not reported: nothing", () => {
     expect(waitSuffix(hopOf({ waitUs: 0 }))).toBeNull();

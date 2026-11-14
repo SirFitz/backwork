@@ -45,7 +45,7 @@ and on the two services it calls. Every cycle (`CYCLE_S`, 30 s) it writes:
 | `GET /feed` | shop-api | a plain Redis pipeline of 12 gets in one write (must not be flagged) |
 | `POST /checkout` | shop-api, commerce-payments, commerce-risk | two outbound HTTP calls one after the other that do not depend on each other |
 | `GET /search` | shop-api | the cache-miss-heavy route (BAC-79): 10 one-key cache gets with `hit`, about one in five a hit; `cache_hit_n` and `cache_miss_n` on its end record |
-| `POST /refunds` | commerce-payments | the pool-starved route (BAC-79): 3 updates with `wait_us` (55 to 85 percent of each call spent waiting for a connection) and `db_wait_us` on its end record |
+| `POST /refunds` | commerce-payments | the pool-starved route (BAC-79): 3 updates (the middle one about 55 ms) with `wait_us` (55 to 85 percent of each call spent waiting for a connection) and `db_wait_us` on its end record |
 
 `GET /orders/:id` also reports `hit` on its 3 gets (about three in four). The commerce-api routes and
 `GET /feed` report no hits or waits, so they show "no data" in the Cache hits and Conn. wait columns.

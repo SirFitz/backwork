@@ -70,6 +70,14 @@ export function waitSuffix(hop: Hop): string | null {
   return hop.via === Via.Db && hop.waitUs !== null && hop.waitUs > 0 ? `waited ${fmtUs(hop.waitUs)}` : null;
 }
 
+/** The same for a group of calls drawn as one row: their waits added up ("waited 44.8 ms in all"),
+ *  or null when none of them waited. */
+export function waitSuffixOf(hops: readonly Hop[]): string | null {
+  let us = 0;
+  for (const h of hops) if (h.via === Via.Db && h.waitUs !== null && h.waitUs > 0) us += h.waitUs;
+  return us > 0 ? `waited ${fmtUs(us)} in all` : null;
+}
+
 /** "hit" or "miss" for a one-key cache read that reported it. */
 export function cacheReadOf(hop: Hop): CacheRead | null {
   if (hop.via !== Via.Cache || hop.hit === null) return null;
