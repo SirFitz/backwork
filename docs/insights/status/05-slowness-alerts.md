@@ -29,3 +29,8 @@ Two dev servers (3503 and 3513) on one database `bw_ins_72`, shared fixture Loki
 - Limit put back to 300 ms: `pending_since` stored and the page shows a "pending" badge titled "over the limit since 14 Nov 06:28 UTC".
 - Five webhook POSTs in all, five `alert_events` rows, each `delivered` `{"<channel>": "ok"}`; audit rows `alert.channel_add`, `alert.rule_add`.
 - Incident: my first `pkill -f "remix vite:dev --port 35"` also stopped the BAC-74 dev server on 3505 (`ins-fixfirst`); it was back up a minute later. Later stops used exact process ids.
+
+## 5. Final (PR https://github.com/SirFitz/backwork/pull/42)
+- After merging origin/main: `npx tsc --noEmit` exit 0; `npx remix vite:build` exit 0; database run 721 pass, 1 skip, 0 fail, exit 0.
+- Plain `npx bun test`: exit 1, 711 pass, 10 skip, 1 fail. The failure is the timing budget in `lib/hops/concurrency.test.ts` (and at times `repeated.test.ts`), "5000 calls finish in well under 100 ms", measured 300 to 800 ms while the machine's load average was 95 to 140 (other agents building); both files are unchanged here and passed in isolation at 06:51 UTC. Not marked done until a plain run exits 0.
+- Cleanup: dev servers on 3503 and 3513 and the webhook receiver stopped, `/tmp/bw_ins_72*` removed, `bw_ins_72` dropped.
