@@ -30,3 +30,5 @@ Branch `bac-74-fix-first`, worktree `backwork-wt/ins-fixfirst`, cut from origin/
 - Merged origin/main (pins, alerts and others): no conflicts.
 - After the merge: `npx tsc --noEmit` exit 0; `npx remix vite:build` exit 0, `build/` removed; `npx bun test` exit 0 (692 pass, 9 skip, 0 fail). The machine was at a load average of 100 to 160 from other sessions: eight earlier runs failed only the two existing 5000-call timing tests (`repeated.test.ts`, `concurrency.test.ts`, 100 ms bound, 700 to 1900 ms under load); neither module is touched here.
 - Not run (no browser tool allowed): 1440 and 390 visual checks, top gap, row and header heights; listed in the PR for the owner.
+- PR https://github.com/SirFitz/backwork/pull/44. Cleanup: dev server stopped, /tmp/bw_ins_74* removed, bw_ins_74 dropped.
+DONE
