@@ -19,3 +19,10 @@ Branch `bac-68-repeated-calls`, worktree `backwork-wt/ins-repeated`, cut from or
 
 ## 4. Evidence on stored records: done
 - Real hop lines from the shared Loki through `parseHopRecord`, `splitRequests`, `buildRequestTree`, `detectRepeats`: 16 of 16 `GET /shop` requests give one N+1 group (plans lookup, 14, sequential, shapeId 5bcb6030); 16 of 16 `GET /feed` give no group.
+
+## Final (PR https://github.com/SirFitz/backwork/pull/32)
+- `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (478 pass, 4 skip, 0 fail); with `DATABASE_URL`/`USAGE_TEST_DATABASE_URL` on `bw_ins_68`: exit 0 (481 pass, 1 skip, 0 fail).
+- Rebased on origin/main 95a4b10 (no new commits).
+- Not run (no browser tool allowed here): 1440/390 screenshots, scroll-to, board error state; listed in the PR for the owner's check.
+- Cleanup: dev server stopped, `/tmp/bw_ins_68*` removed, `bw_ins_68` dropped.
+DONE
