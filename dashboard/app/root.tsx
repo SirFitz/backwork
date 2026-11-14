@@ -1,4 +1,4 @@
-import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { LinksFunction, LoaderFunctionArgs, MetaFunction, SerializeFrom } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Form,
@@ -9,13 +9,12 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-  isRouteErrorResponse,
   useFetcher,
   useLoaderData,
   useLocation,
   useNavigate,
   useRevalidator,
-  useRouteError,
+  useRouteLoaderData,
 } from "@remix-run/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
@@ -54,6 +53,7 @@ import { cn } from "~/lib/utils";
 import { readLivePaused, writeLivePaused } from "~/lib/live-pref";
 import type { LookupPreview } from "~/routes/lookup";
 import { Clock } from "~/components/time";
+import { ErrorScreen, useErrorCopy } from "~/components/error-screen";
 
 type AuthData = {
   user: { name: string; email: string };
@@ -643,8 +643,7 @@ function MobileNav() {
   );
 }
 
-function Document({ children }: { children: React.ReactNode }) {
-  const data = useLoaderData<typeof loader>();
+function Document({ children, ssrTheme, forceStyles = false }: { children: React.ReactNode; ssrTheme: boolean; forceStyles?: boolean }) {
   const [theme] = useTheme();
   return (
     <html lang="en" className={clsx(theme)} suppressHydrationWarning>
@@ -654,8 +653,10 @@ function Document({ children }: { children: React.ReactNode }) {
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
         <Meta />
-        <PreventFlashOnWrongTheme ssrTheme={Boolean(data.theme)} />
+        <PreventFlashOnWrongTheme ssrTheme={ssrTheme} />
         <Links />
+        {/* When the root route is itself the error boundary, Remix can drop the route links, so the error page names the stylesheet itself. */}
+        {forceStyles ? <link rel="stylesheet" href={tailwind} /> : null}
       </head>
       <body className="bg-bg text-fg antialiased">
         {children}
@@ -666,11 +667,22 @@ function Document({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The signed-in layout data, remembered in the browser. A failed client-side
+ * navigation clears the root route's loader data, so the error screen falls back
+ * to this to keep the sidebar and theme. Never set on the server (it would be
+ * shared between requests).
+ */
+let lastRootData: SerializeFrom<typeof loader> | null = null;
+
 export default function AppWithProviders() {
   const data = useLoaderData<typeof loader>();
+  useEffect(() => {
+    lastRootData = data;
+  }, [data]);
   return (
     <ThemeProvider specifiedTheme={data.theme} themeAction="/action/set-theme">
-      <Document>
+      <Document ssrTheme={Boolean(data.theme)}>
         {data.auth ? (
           <Shell auth={data.auth}>
             <Outlet />
@@ -684,28 +696,17 @@ export default function AppWithProviders() {
 }
 
 export function ErrorBoundary() {
-  const error = useRouteError();
-  const message = isRouteErrorResponse(error)
-    ? `${error.status} ${error.statusText}`
-    : error instanceof Error
-    ? error.message
-    : "Unknown error";
+  const copy = useErrorCopy();
+  // A signed-in customer keeps the sidebar so they can navigate away. After a
+  // failed client navigation Remix clears the root data, hence the remembered copy.
+  // On a first load whose root loader failed there is nothing to show but the error.
+  const root = useRouteLoaderData<typeof loader>("root") ?? lastRootData ?? undefined;
+  const screen = <ErrorScreen copy={copy} />;
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <title>backwork.dev — error</title>
-        <Meta />
-        <Links />
-      </head>
-      <body className="bg-bg text-fg">
-        <div className="mx-auto max-w-lg px-6 py-24">
-          <div className="text-sm font-semibold text-brand">backwork.dev</div>
-          <h1 className="mt-2 text-lg font-semibold">Something broke</h1>
-          <p className="mt-1 text-sm text-muted">{message}</p>
-        </div>
-        <Scripts />
-      </body>
-    </html>
+    <ThemeProvider specifiedTheme={root?.theme ?? null} themeAction="/action/set-theme">
+      <Document ssrTheme={Boolean(root?.theme)} forceStyles>
+        {root?.auth ? <Shell auth={root.auth}>{screen}</Shell> : screen}
+      </Document>
+    </ThemeProvider>
   );
 }

@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { isBusy, isSubmittingOwn } from "~/lib/pending";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
@@ -177,13 +178,14 @@ const btnSecondary = "inline-flex h-8 items-center justify-center rounded-lg bor
 
 function IntentForm({ intent, plan, billing: cycle, label, className, confirm }: { intent: Intent; plan?: PlanId; billing?: Billing; label: string; className: string; confirm?: string }) {
   const nav = useNavigation();
-  const busy = nav.state !== "idle";
+  // Only the pressed button says "Working"; the others just wait, disabled.
+  const mine = isSubmittingOwn(nav, { intent, plan, billing: cycle });
   return (
     <Form method="post" onSubmit={confirm ? (e) => { if (!window.confirm(confirm)) e.preventDefault(); } : undefined}>
       <input type="hidden" name="intent" value={intent} />
       {plan ? <input type="hidden" name="plan" value={plan} /> : null}
       {cycle ? <input type="hidden" name="billing" value={cycle} /> : null}
-      <button type="submit" disabled={busy} className={className}>{busy ? "Working…" : label}</button>
+      <button type="submit" disabled={isBusy(nav)} className={className}>{mine ? "Working…" : label}</button>
     </Form>
   );
 }

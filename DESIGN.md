@@ -80,7 +80,7 @@ a class swap.
 - Loading: skeleton rows/shimmer, never layout shift.
 - Empty: plain sentence + the reason (e.g. "No service reports requests yet. Add
   Correlator to a service and run the agent on its host.").
-- Error: inline note "data source unavailable — <reason>", panel degrades alone.
+- Error: a panel degrades alone with one plain line ("This section couldn't load. Reload to try again."); the raw reason never shows (tooltip only). A whole-page failure shows the error screen with Try again, never a raw message. Copy comes from `app/lib/error-copy.ts`.
 
 ## Motion
 
