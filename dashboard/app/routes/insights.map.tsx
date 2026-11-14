@@ -3,11 +3,12 @@
 // on a phone and by toggle. The figures load deferred with their own skeleton and error state.
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import { Link, useLoaderData, useNavigate } from "@remix-run/react";
+import { useState } from "react";
 import { Network } from "lucide-react";
 import { Card, CardHead, Empty, InfoTip } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
+import { Building } from "~/components/insights/building";
 import { MapDetails, MapGraph } from "~/components/insights/map-graph";
 import { MapList } from "~/components/insights/map-list";
 import { requireOrg } from "~/lib/auth/context.server";
@@ -32,9 +33,6 @@ interface MapPanel {
 /** The first map of an organisation scans recent records and reads several figures; past this the
  *  page shows "building" instead of waiting (Remix gives up on a slow stream after 5 seconds). */
 const MAP_BUDGET_MS = 3_500;
-/** How often the page asks again while the map is being built, and how many times it tries. */
-const BUILD_POLL_MS = 3_000;
-const BUILD_POLL_MAX = 10;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
@@ -129,30 +127,6 @@ function MapBody({ map, ageMs, view, range }: { map: ServiceMapResult; ageMs: nu
   );
 }
 
-/** Shown while the first computation runs; asks the loader again until the map is there. */
-function Building() {
-  const revalidator = useRevalidator();
-  const tries = useRef(0);
-  const [gaveUp, setGaveUp] = useState(false);
-  useEffect(() => {
-    if (gaveUp) return;
-    const id = setTimeout(() => {
-      tries.current += 1;
-      if (tries.current >= BUILD_POLL_MAX) setGaveUp(true);
-      else revalidator.revalidate();
-    }, BUILD_POLL_MS);
-    return () => clearTimeout(id);
-  });
-  return (
-    <>
-      <RowsSkeleton rows={4} />
-      <p className="px-4 pb-4 text-center text-[13px] text-muted">
-        {gaveUp ? "The map is still being built. Reload the page in a minute." : "Building the map for the first time. It takes a few seconds and will appear here."}
-      </p>
-    </>
-  );
-}
-
 export default function ServiceMapPage() {
   const d = useLoaderData<typeof loader>();
   const range = d.range as PerfRange;
@@ -183,7 +157,7 @@ export default function ServiceMapPage() {
       >
         {(panel) =>
           panel.data.building ? (
-            <Building />
+            <Building what="the map" />
           ) : panel.error || !panel.data.map ? (
             <p className="px-4 py-10 text-center text-[13px] text-err">The figures could not be read: {(panel.error ?? "no data").slice(0, 180)}</p>
           ) : (
