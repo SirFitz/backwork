@@ -24,3 +24,12 @@ Branch `bac-73-regressions-deploys`, worktree `backwork-wt/ins-regress`, cut fro
 - Performance 1h shop-api compare=1 (before regression took effect): shop-api 2.0x slower (p95 433 ms vs 214 ms); GET /shop "about the same" p95 50 ms vs 24 ms; Trend card heading, `now` and `lastWeek` points and the deploys in the HTML.
 - Overview: "Slower than last week" lists commerce-worker and shop-api ("p95 434 ms, last week 214 ms (about 2.0x), 164 requests, deploy v-fixture-73").
 - 7d: toggle disabled with the tooltip, no column, `lastWeek: null`, 2 shop-api markers (after fixing the end rounding).
+- With regression mode on (from 05:30 UTC), 05:35 UTC, Performance 1h shop-api compare=1: GET /shop p95 86 ms now against 24 ms the same hours last week (50 ms before the regression took effect); chip "about the same" (rise 62 ms, under the 100 ms floor). Trend card heading, last-week points and 2 deploy markers in the HTML. Overview group still lists shop-api with "deploy v-fixture-73".
+- Regression mode reset (`deploy.sh bwinsshared --reset`; trigger file gone).
+
+## 5. Final
+- Merged origin/main (repeated calls, service map, slow queries): no conflicts.
+- `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (577 pass, 7 skip, 0 fail); with `DATABASE_URL`/`USAGE_TEST_DATABASE_URL` on `bw_ins_73`: exit 0 (583 pass, 1 skip, 0 fail); `npx remix vite:build` exit 0, `build/` removed.
+- Not run (no browser tool allowed): 1440 and 390 visual checks, UI_ISSUES top gap and header height; listed in the PR for the owner.
+- Cleanup: dev server stopped, `/tmp/bw_ins_73*` removed, `bw_ins_73` dropped.
+DONE
