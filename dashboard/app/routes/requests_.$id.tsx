@@ -21,6 +21,8 @@ import { RepeatChip } from "~/components/insights/repeat-chip";
 import { candidatesByHop, parallelCandidates, parallelSentence, PARALLEL_CHIP, type ParallelCandidate } from "~/lib/hops/concurrency";
 import { CHATTY_BADGE, chattyRequest, chattySentence } from "~/lib/hops/chatty";
 import { ParallelChip } from "~/components/insights/parallel-chip";
+import { WhyLine } from "~/components/insights/why-line";
+import { whyItWasSlow } from "~/lib/hops/verdict";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
@@ -428,6 +430,8 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   // Calls that could run together (BAC-71), by hop id.
   const parallelOf = useMemo(() => candidatesByHop(parallelCandidates(tree, repeats)), [tree, repeats]);
   const [focus, setFocus] = useState<RepeatFocus | null>(null);
+  // Why it was slow (BAC-70): from hop records only, so the build with logs gives the same line.
+  const verdict = useMemo(() => whyItWasSlow(tree, repeats, d.now), [tree, repeats, d.now]);
   const head = headHop(tree);
   if (!head) return <LogsOnly d={d} />;
   const lastLog = logs.length ? logs[logs.length - 1].timeMs : null;
@@ -439,6 +443,7 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
     <>
       <Header tree={tree} head={head} d={d} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
+      <WhyLine verdict={verdict} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
       <PathCard ctx={ctx} />
       <div className="mt-4 space-y-4 md:hidden">
