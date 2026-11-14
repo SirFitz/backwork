@@ -1,6 +1,7 @@
 // BAC-67: the offset and lookback parameters, the all-routes scope and the generalised window
 // queries. The snapshot file holds the strings the builders produced on main before they gained
-// these parameters; with default arguments they must stay byte-identical.
+// these parameters; with default arguments they must stay byte-identical. BAC-80 added `synthetic!="1"`
+// after every health-check matcher (monitors left out with health checks); nothing else changed.
 import { describe, expect, test } from "bun:test";
 import snapshot from "./query-defaults.snapshot.json";
 import { COUNTER_LOOKBACK_SECONDS, windowIncrease, windowPerSecond } from "./counter-window";
@@ -29,7 +30,9 @@ describe("default arguments keep today's strings", () => {
     expect(quantileQuery(Quantile.P95, "in", routesScope("svc"), PerfRange.H1)).toBe(snapshot.q);
     expect(quantileQuery(Quantile.P50, "out", connectionsScope(), PerfRange.H24)).toBe(snapshot.qOut);
     expect(trendQuery(PerfRange.H6)).toBe(snapshot.trend);
-    expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(snapshot.share);
+    // BAC-79: the store share gains only `store=~"db|cache"` on its store selector (see
+    // metrics-cache-pool.server.test.ts); every other character is main's.
+    expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(snapshot.share.replaceAll("backwork_hop_store_seconds_total{", 'backwork_hop_store_seconds_total{store=~"db|cache",'));
   });
 
   test("counter windows", () => {

@@ -11,7 +11,9 @@ import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { Via } from "~/lib/hops/types";
-import { HealthChecks, PROM_NOT_HEALTH_CHECK } from "~/lib/hops/health";
+import { STORE_SHARE_MATCHER, StoreSeries } from "~/lib/hops/store-fields";
+import { hitRatio, waitShare } from "~/lib/hops/cache-pool";
+import { HealthChecks, PROM_NOT_HEALTH_OR_MONITOR } from "~/lib/hops/health";
 export { HealthChecks };
 
 // ---------------------------------------------------------------- fixed sets
@@ -80,9 +82,10 @@ export interface RouteKey {
 
 type Matchers = Record<string, string>;
 
-/** Health-check operations are left out of inbound figures unless shown (`health.ts`). */
+/** Health-check operations and monitor series (`synthetic="1"`, BAC-80) are left out of inbound
+ *  figures unless shown (`health.ts`). */
 function healthMatchers(dir: "in" | "out" | null, health: HealthChecks): string[] {
-  return dir !== "out" && health === HealthChecks.Hidden ? [PROM_NOT_HEALTH_CHECK] : [];
+  return dir !== "out" && health === HealthChecks.Hidden ? [...PROM_NOT_HEALTH_OR_MONITOR] : [];
 }
 
 function selector(metric: string, matchers: Matchers, raw: readonly string[] = []): string {
@@ -215,22 +218,52 @@ export function windowQueries(
   };
 }
 
-/** Share of inbound time spent in databases and caches (0..1). */
+/** Share of inbound time spent in databases and caches (0..1). Only the `db` and `cache` store
+ *  series count: `db_wait` is part of `db` (BAC-79) and would count twice. */
 export function storeShareQuery(scope: Scope, range: PerfRange): string {
   const w = windowOf(range);
   const hm = healthMatchers("in", scope.health);
-  const store = selector(HopMetric.StoreSeconds, scope.where, hm);
+  const store = selector(HopMetric.StoreSeconds, scope.where, [STORE_SHARE_MATCHER, ...hm]);
   const total = selector(`${HopMetric.Duration}_sum`, { dir: "in", ...scope.where }, hm);
   return `${windowIncrease(store, w, scope.by)} / ${windowIncrease(total, w, scope.by)}`;
 }
 
-/** Data-store calls per inbound request. */
+/** Data-store calls per inbound request. Only the `db` and `cache` series count: cache hits and
+ *  misses are some of the cache calls (BAC-79). */
 export function storeCallsPerRequestQuery(scope: Scope, range: PerfRange): string {
   const w = windowOf(range);
   const hm = healthMatchers("in", scope.health);
-  const calls = selector(HopMetric.StoreCalls, scope.where, hm);
+  const calls = selector(HopMetric.StoreCalls, scope.where, [STORE_SHARE_MATCHER, ...hm]);
   const reqs = selector(`${HopMetric.Duration}_count`, { dir: "in", ...scope.where }, hm);
   return `${windowIncrease(calls, w, scope.by)} / ${windowIncrease(reqs, w, scope.by)}`;
+}
+
+/** The two queries behind a cache hit ratio (BAC-79): one-key cache reads that found a value, and
+ *  all such reads (hits and misses). The ratio is taken in code (`hitRatio`): a route whose reads
+ *  all missed has no hit series at all (a request with no hits leaves `cache_hit_n` out), and a
+ *  PromQL division would drop it instead of giving 0. `cache_n` is not the denominator: it counts
+ *  writes too. */
+export interface CacheReadQueries {
+  hits: string;
+  reads: string;
+}
+
+export function cacheHitRatioQuery(scope: Scope, range: PerfRange): CacheReadQueries {
+  const w = windowOf(range);
+  const hm = healthMatchers("in", scope.health);
+  const hits = selector(HopMetric.StoreCalls, { ...scope.where, store: StoreSeries.CacheHit }, hm);
+  const reads = selector(HopMetric.StoreCalls, scope.where, [`store=~"${StoreSeries.CacheHit}|${StoreSeries.CacheMiss}"`, ...hm]);
+  return { hits: windowIncrease(hits, w, scope.by), reads: windowIncrease(reads, w, scope.by) };
+}
+
+/** Share of database time spent waiting for a connection (0..1, BAC-79): `db_wait` seconds over
+ *  `db` seconds. No result for a route whose services do not report the wait. */
+export function dbWaitShareQuery(scope: Scope, range: PerfRange): string {
+  const w = windowOf(range);
+  const hm = healthMatchers("in", scope.health);
+  const wait = selector(HopMetric.StoreSeconds, { ...scope.where, store: StoreSeries.DbWait }, hm);
+  const db = selector(HopMetric.StoreSeconds, { ...scope.where, store: StoreSeries.Db }, hm);
+  return `${windowIncrease(wait, w, scope.by)} / ${windowIncrease(db, w, scope.by)}`;
 }
 
 /** Inbound hops started and not yet finished over the last 15 minutes, by service, never
@@ -287,6 +320,11 @@ export interface RouteRow extends Figures {
   method: string;
   op: string;
   storeShare: number | null;
+  /** 0..1 of one-key cache reads that found a value; null when the route's services report no
+   *  hits or misses (BAC-79). Never 0 for "no data". */
+  cacheHitRatio: number | null;
+  /** 0..1 of database time spent waiting for a connection; null when not reported (BAC-79). */
+  dbWaitShare: number | null;
 }
 
 
@@ -471,19 +509,31 @@ export function routesTable(
   if (!isLabelValue(service)) return Promise.resolve([]);
   return cached(cacheKey(tenant, range, "routes", service, health), TTL_MS, async () => {
     const scope = routesScope(service, health);
-    const [base, share] = await Promise.all([
+    const reads = cacheHitRatioQuery(scope, range);
+    const [base, share, hits, readsN, wait] = await Promise.all([
       figuresFor(client, "in", scope, range, tenant),
       client.instant(storeShareQuery(scope, range), tenant),
+      client.instant(reads.hits, tenant),
+      client.instant(reads.reads, tenant),
+      client.instant(dbWaitShareQuery(scope, range), tenant),
     ]);
     const shareM = toMap(share, scope.by);
+    const hitsM = toMap(hits, scope.by);
+    const readsM = toMap(readsN, scope.by);
+    const waitM = toMap(wait, scope.by);
     return base
-      .map(({ metric, figures }): RouteRow => ({
-        service,
-        method: metric.method ?? "",
-        op: metric.op ?? "",
-        ...figures,
-        storeShare: finiteOrNull(shareM.get(keyOf(metric, scope.by))),
-      }))
+      .map(({ metric, figures }): RouteRow => {
+        const k = keyOf(metric, scope.by);
+        return {
+          service,
+          method: metric.method ?? "",
+          op: metric.op ?? "",
+          ...figures,
+          storeShare: finiteOrNull(shareM.get(k)),
+          cacheHitRatio: hitRatio(hitsM.get(k) ?? null, readsM.get(k) ?? null),
+          dbWaitShare: waitShare(waitM.get(k) ?? null),
+        };
+      })
       .sort((a, b) => (b.p95 ?? -1) - (a.p95 ?? -1) || b.rate - a.rate);
   });
 }

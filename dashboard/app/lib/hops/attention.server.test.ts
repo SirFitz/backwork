@@ -69,7 +69,7 @@ describe("detectJumps", () => {
 describe("windowQueries", () => {
   test("current window and the 3 hours before it, without health checks", () => {
     const c = windowQueries(null);
-    const sel = 'backwork_hop_duration_seconds_count{dir="in",op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"}';
+    const sel = 'backwork_hop_duration_seconds_count{dir="in",op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)",synthetic!="1"}';
     expect(c.requests).toBe(windowIncrease(sel, "15m", ["service"]));
     // The baseline: 3 hours ending where the current window starts.
     expect(windowQueries("15m").requests).toBe(windowIncrease(sel, "3h", ["service"], "15m"));

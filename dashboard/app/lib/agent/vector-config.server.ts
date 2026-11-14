@@ -9,6 +9,7 @@
  *   source(s) -> bw_normalize -> bw_detect -> bw_controls -> loki
  *                                                 \-> bw_metric_prep -> bw_hop_route
  *                                                       -> bw_hop_duration / bw_hop_started / bw_hop_store
+ *                                                          (+ bw_hop_store_cache_hit / _cache_miss / _db_wait, BAC-79)
  *                                                       -> bw_hop_cardinality -> prometheus (stack) | remote write (agent)
  *
  * bw_detect     design 5.1/5.2: `kind` label, parsed hop fields kept in event
@@ -27,6 +28,7 @@ import {
   type ControlsSnapshot,
   type Feature,
 } from "~/lib/controls.server";
+import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN, StoreSeries } from "~/lib/hops/store-fields";
 
 /** Histogram buckets in seconds, design 5.3. */
 export const HOP_BUCKETS: readonly number[] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900];
@@ -177,6 +179,19 @@ bw_m.${target} = bw_l
 `;
 }
 
+/** VRL that sets `bw_m.TARGET` to FIELD / DIVISOR only when the record carries FIELD as a number
+ *  of at least 0 (proposed HOP-25, HOP-26). A service that does not report it gets no value, so
+ *  its counter is never written and its figures read "no data", not 0. */
+function optionalTotalVrl(target: string, field: string, divisor: number): string {
+  const value = divisor === 1 ? "bw_x" : `bw_x / ${divisor.toFixed(1)}`;
+  return `  bw_x = get(bw_h, [${vrlString(field)}]) ?? null
+  if bw_x != null {
+    bw_x = to_float(bw_x) ?? -1.0
+    if bw_x >= 0.0 { bw_m.${target} = ${value} }
+  }
+`;
+}
+
 /** Design 5.3: the labels and values the metric transforms read, under `.bw_m`. */
 export const METRIC_PREP_VRL = `# Hop metrics input (design 5.3). Only hop records reach the metrics.
 if (to_string(%bw_type) ?? "") != "hop" || %bw_metrics == false { abort }
@@ -188,6 +203,10 @@ if !match(bw_l, r'^[\\x21-\\x7e]{1,200}$') { bw_l = "" }
 bw_m.service = bw_l
 bw_m.dir = if starts_with(bw_hk, "in") { "in" } else { "out" }
 ${labelVrl("via", 'get(bw_h, ["via"])')}${labelVrl("method", 'get(bw_h, ["method"])')}${labelVrl("op", 'get(bw_h, ["op"])')}${labelVrl("peer", 'get(bw_h, ["peer"])')}${labelVrl("outcome", 'get(bw_h, ["outcome"])')}bw_st = to_int(get(bw_h, ["status"]) ?? 0) ?? 0
+# HOP-28 (BAC-80): inbound hops of a monitor's request carry synthetic=1. "1" or "" (an empty
+# label is no label, so series without it, and older collectors, stay one series as before).
+bw_sy = get(bw_h, ["synthetic"]) ?? null
+bw_m.synthetic = if bw_m.dir == "in" && (bw_sy == 1 || bw_sy == "1" || bw_sy == true || bw_sy == "true") { "1" } else { "" }
 bw_m.status_class = if bw_st >= 200 && bw_st < 300 { "2xx" } else if bw_st >= 300 && bw_st < 400 { "3xx" } else if bw_st >= 400 && bw_st < 500 { "4xx" } else if bw_st >= 500 && bw_st < 600 { "5xx" } else { "" }
 bw_d = to_float(get(bw_h, ["duration_us"]) ?? -1) ?? -1.0
 if bw_d >= 0.0 { bw_m.duration_s = bw_d / 1000000.0 }
@@ -197,7 +216,7 @@ if bw_m.stores == true {
   bw_m.db_n = to_float(get(bw_h, ["db_n"]) ?? 0) ?? 0.0
   bw_m.cache_s = (to_float(get(bw_h, ["cache_us"]) ?? 0) ?? 0.0) / 1000000.0
   bw_m.cache_n = to_float(get(bw_h, ["cache_n"]) ?? 0) ?? 0.0
-}
+${optionalTotalVrl("cache_hit_n", "cache_hit_n", 1)}${optionalTotalVrl("cache_miss_n", "cache_miss_n", 1)}${optionalTotalVrl("db_wait_s", "db_wait_us", 1000000)}}
 . = { "service": .service, "bw_hk": bw_hk, "bw_m": bw_m, "timestamp": .timestamp }
 `;
 
@@ -297,7 +316,7 @@ if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q || bw_drop_p) {
     bw_box = to_string(%bw_box) ?? ""
     bw_c = bw_o
     if bw_box != "" { bw_c = object(get(bw_o, [bw_box]) ?? {}) ?? {} }
-    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
+    bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(${JSON.stringify(STORE_TOTAL_FIELDS).replace(/,/g, ", ")}, k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
     if bw_box == "" { bw_o = bw_c } else { bw_o = set(bw_o, [bw_box], bw_c) ?? bw_o }
     .message = encode_json(bw_o)
   } else {
@@ -307,7 +326,7 @@ if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q || bw_drop_p) {
     bw_head = to_string(get(bw_lp, ["head"]) ?? bw_line) ?? bw_line
     bw_tail = to_string(get(bw_lp, ["tail"]) ?? "") ?? ""
     if bw_drop_f { bw_head = replace(bw_head, r' f_[a-z0-9_]+=\\S*', "") }
-    if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us)=\\S*', "") }
+    if bw_drop_s { bw_head = replace(bw_head, ${vrlRegex(STORE_TOTALS_KV_PATTERN)}, "") }
     if bw_drop_p { bw_head = replace(bw_head, r' path=\\S*', "") }
     if bw_drop_q {
       bw_head = replace(bw_head, r' table=\\S*', "")
@@ -419,11 +438,12 @@ export function inlineVrl(vrl: string, indent: number): string {
     .join("\n");
 }
 
+// `synthetic` (BAC-80) on all three, so monitors are left out wherever health checks are.
 const TAGS = {
-  duration: ["service", "dir", "via", "method", "op", "peer", "outcome", "status_class"],
+  duration: ["service", "dir", "via", "method", "op", "peer", "outcome", "status_class", "synthetic"],
   // op so health checks can be left out of "in progress" (started minus finished) as well.
-  started: ["service", "dir", "via", "op"],
-  store: ["service", "via", "method", "op"],
+  started: ["service", "dir", "via", "op", "synthetic"],
+  store: ["service", "via", "method", "op", "synthetic"],
 } as const;
 
 function tagsYaml(keys: readonly string[], indent: number, extra: Record<string, string> = {}): string {
@@ -432,6 +452,24 @@ function tagsYaml(keys: readonly string[], indent: number, extra: Record<string,
   for (const [k, v] of Object.entries(extra)) rows.push(`${pad}${k}: ${v}`);
   return rows.join("\n");
 }
+
+/** A store counter fed by a total that only some services report (proposed HOP-25, HOP-26). Each
+ *  gets its own route and transform: log_to_metric drops the whole event when any one of its
+ *  metrics' fields is missing, which would take the existing db and cache counters with it. */
+interface OptionalStoreMetric {
+  route: string;
+  transform: string;
+  metric: MetricName;
+  /** Field under `.bw_m`, set by METRIC_PREP_VRL only when the record carries the total. */
+  field: string;
+  store: StoreSeries;
+}
+
+const OPTIONAL_STORE_METRICS: readonly OptionalStoreMetric[] = [
+  { route: "cache_hits", transform: "bw_hop_store_cache_hit", metric: MetricName.StoreCalls, field: "cache_hit_n", store: StoreSeries.CacheHit },
+  { route: "cache_misses", transform: "bw_hop_store_cache_miss", metric: MetricName.StoreCalls, field: "cache_miss_n", store: StoreSeries.CacheMiss },
+  { route: "db_waits", transform: "bw_hop_store_db_wait", metric: MetricName.StoreSeconds, field: "db_wait_s", store: StoreSeries.DbWait },
+];
 
 /** The metric transforms shared by both collectors (design 5.3). */
 export function metricTransformsYaml(): string {
@@ -455,7 +493,7 @@ ${inlineVrl(METRIC_PREP_VRL, 6)}
       ends: '(.bw_hk == "in_end" || .bw_hk == "out_end") && exists(.bw_m.duration_s)'
       starts: '.bw_hk == "in" || .bw_hk == "out"'
       stores: '.bw_m.stores == true'
-
+${OPTIONAL_STORE_METRICS.map((m) => `      ${m.route}: '.bw_m.stores == true && exists(.bw_m.${m.field})'\n`).join("")}
   bw_hop_duration:
     type: log_to_metric
     inputs: [bw_hop_route.ends]
@@ -484,10 +522,16 @@ ${storeMetric(MetricName.StoreSeconds, "db_s", "db")}
 ${storeMetric(MetricName.StoreSeconds, "cache_s", "cache")}
 ${storeMetric(MetricName.StoreCalls, "db_n", "db")}
 ${storeMetric(MetricName.StoreCalls, "cache_n", "cache")}
-
+${OPTIONAL_STORE_METRICS.map((m) => `
+  ${m.transform}:
+    type: log_to_metric
+    inputs: [bw_hop_route.${m.route}]
+    metrics:
+${storeMetric(m.metric, m.field, m.store)}
+`).join("")}
   bw_hop_cardinality:
     type: tag_cardinality_limit
-    inputs: [bw_hop_duration, bw_hop_started, bw_hop_store]
+    inputs: [bw_hop_duration, bw_hop_started, bw_hop_store, ${OPTIONAL_STORE_METRICS.map((m) => m.transform).join(", ")}]
     mode: exact
     value_limit: ${LABEL_VALUE_LIMIT}
     limit_exceeded_action: drop_tag

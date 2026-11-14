@@ -7,7 +7,7 @@ import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { parseHopRecord } from "./parse";
 import { inboundEndQuery, isFailedRow, rowsFromRecords, type RequestListRow } from "./requests.server";
-import { HealthChecks, isHealthCheckOp } from "./health";
+import { HealthChecks, isHealthOrMonitor } from "./health";
 import { isLabelValue } from "./metrics.server";
 import type { HopQueryFn } from "./query.server";
 import type { RequestSummary } from "./tree";
@@ -30,7 +30,7 @@ export interface TypicalPick {
 }
 
 /** The request being compared, as far as choosing its comparison needs. */
-export type TypicalHead = Pick<RequestSummary, "traceId" | "service" | "method" | "op" | "failed">;
+export type TypicalHead = Pick<RequestSummary, "traceId" | "service" | "method" | "op" | "failed" | "synthetic">;
 
 function median(sorted: readonly number[]): number {
   const mid = Math.floor(sorted.length / 2);
@@ -69,7 +69,8 @@ export async function typicalRequest(
   query: HopQueryFn = loki.queryRange,
 ): Promise<TypicalPick | null> {
   if (!head.op || !isLabelValue(head.service)) return null;
-  const health = isHealthCheckOp(head.op) ? HealthChecks.Shown : HealthChecks.Hidden;
+  // A health check or a monitor's request is compared with its own kind, which the default hides.
+  const health = isHealthOrMonitor(head) ? HealthChecks.Shown : HealthChecks.Hidden;
   const logql = inboundEndQuery(head.service, health, head.failed, head.op);
   const entries = await query(logql, { start: now - TYPICAL_WINDOW_MS, end: now, limit: TYPICAL_RECORD_LIMIT }, tenant);
   const records: HopRecord[] = [];

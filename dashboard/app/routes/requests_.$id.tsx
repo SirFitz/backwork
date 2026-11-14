@@ -32,8 +32,10 @@ import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
+import { MONITOR_BADGE, MONITOR_TITLE } from "~/lib/hops/health";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
 import { fmtUs, plural } from "~/lib/hops/time-format";
+import { storeCallFacts, storeTotalsChips, waitSuffix, waitSuffixOf } from "~/lib/hops/cache-pool";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopId, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
@@ -493,9 +495,17 @@ function Title({ head, size = "lg", pinned = false }: { head: Hop; size?: "lg" |
           {label}
         </span>
         <Badge tone={status.tone}>{status.text}</Badge>
+        {head.synthetic ? <span title={MONITOR_TITLE}><Badge tone="neutral">{MONITOR_BADGE}</Badge></span> : null}
         {pinned ? <Badge>Pinned</Badge> : null}
       </h1>
-      {route ? <div className="mt-0.5 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">route {route}</div> : null}
+      {/* The domain (HOP-27) next to the route; neither line when the records have neither. */}
+      {route || head.host ? (
+        <div className="mt-0.5 flex flex-wrap gap-x-2 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">
+          {head.host ? <span className="min-w-0 text-muted" title="Domain">{head.host}</span> : null}
+          {head.host && route ? <span aria-hidden>·</span> : null}
+          {route ? <span className="min-w-0">route {route}</span> : null}
+        </div>
+      ) : null}
     </>
   );
 }
@@ -850,7 +860,7 @@ function GapRow({ depth, title, text, note = false, icon }: { depth: number; tit
   );
 }
 
-function HopText({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
+function HopText({ hop, ctx, waited }: { hop: Hop; ctx: RowCtx; waited: string | null }) {
   const method = hop.isStore ? null : hop.method;
   const label = hop.dir === HopDir.In ? hop.op ?? hop.via : hop.isStore ? storeLabel(hop) : outLabel(hop);
   const inline = statementTail(hop);
@@ -867,6 +877,7 @@ function HopText({ hop, ctx }: { hop: Hop; ctx: RowCtx }) {
       {inline ? (
         <Mono className="min-w-0 truncate text-[12px] text-faint" title={hop.stmt ?? undefined}>{inline}</Mono>
       ) : null}
+      {waited ? <span className="shrink-0 text-2xs text-faint" title="Waited for a database connection">{waited}</span> : null}
     </>
   );
 }
@@ -911,6 +922,8 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
   const colour = ctx.colours.get(hop.service) as string;
   const toggle = () => (members ? onFold(!row.expanded) : ctx.setOpenHop(selected ? null : hop.hopId));
   const took = members ? fmtUs(rowUs(node)) : tookText(timed, ctx.now);
+  // A group row names its calls' waits added up, never one member's.
+  const waited = members ? waitSuffixOf(members) : waitSuffix(hop);
   return (
     <div
       role="button"
@@ -926,7 +939,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
       <div className="hidden min-w-0 items-center gap-[7px] whitespace-nowrap md:flex" style={{ paddingLeft: depth * 18 }}>
         {depth ? <CornerDownRight className="-ml-[17px] -mr-[3px] h-[13px] w-[13px] shrink-0 text-border-strong" /> : null}
         <FoldButton row={row} onFold={onFold} />
-        <HopText hop={hop} ctx={ctx} />
+        <HopText hop={hop} ctx={ctx} waited={waited} />
         {members ? <span className="shrink-0 font-mono text-[12px] font-medium text-muted">×{members.length}</span> : null}
         {repeat ? <RepeatChip group={repeat} /> : null}
         {parallel ? <ParallelChip candidate={parallel} /> : null}
@@ -953,7 +966,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
           <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt ?? undefined}>{statementTail(hop)}</div>
         ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
-          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null, parallel ? PARALLEL_CHIP : null].filter(Boolean).join(" · ")}
+          {[hop.via, members ? `${members.length} calls` : null, waited, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null, parallel ? PARALLEL_CHIP : null].filter(Boolean).join(" · ")}
         </div>
         <Bar hop={timed} colour={colour} geom={geom} thin />
       </div>
@@ -974,6 +987,7 @@ function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | nu
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
   }
+  if (hop.isStore) facts.push(...storeCallFacts(hop));
   const repeat = ctx.repeatOf.get(hop.hopId);
   if (repeat) {
     facts.push(["Repeated", repeatSentence(repeat)]);
@@ -988,12 +1002,7 @@ function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | nu
   else if (hop.afterResponse) facts.push(["Note", "ended after the response"]);
   if (hop.attempt !== null) facts.push(["Attempt", String(hop.attempt)]);
   if (hop.error) facts.push(["Failure", hop.error]);
-  const storeChip = hop.totals && (hop.totals.dbCalls || hop.totals.cacheCalls)
-    ? [
-        hop.totals.dbCalls ? `${plural(hop.totals.dbCalls, "database call", "database calls")} · ${fmtUs(hop.totals.dbUs)}` : null,
-        hop.totals.cacheCalls ? `${plural(hop.totals.cacheCalls, "cache call", "cache calls")} · ${fmtUs(hop.totals.cacheUs)}` : null,
-      ].filter((x): x is string => x !== null)
-    : [];
+  const storeChip = storeTotalsChips(hop.totals);
   const hasFields = hop.fields.length || hop.linkedIds.length || storeChip.length;
   const stopped = hop.gaps.some((g) => g.kind === GapKind.Stopped);
   const lineService = hop.service;

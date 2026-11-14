@@ -18,8 +18,13 @@
  *   FIXED     "1" (default) emits the two frame requests with their fixed IDs once
  *   SENSITIVE "1" (default) emits one line per cycle holding a card number,
  *             an email and a member number (for the sensitive-data filter test)
- *   SCENARIO  "insights" adds the insights requests (BAC-67) to every cycle: run it
- *             on shop-api, commerce-payments and commerce-risk (see qa/README.md)
+ *   SCENARIO  comma list. "insights" adds the insights requests (BAC-67) to every cycle: run it
+ *             on shop-api, commerce-payments and commerce-risk (see qa/README.md).
+ *             "monitors" (BAC-80) adds an uptime monitor's GET /cart and a shopper's: run
+ *             it on shop-api, commerce-api and commerce-payments
+ *   BASE      "1" (default) writes the frame requests, the generated POST /orders and the
+ *             ordinary lines; "0" writes the scenarios only (extra containers added to a
+ *             running stack, e.g. compose.monitors.yml, so nothing is written twice)
  *   REGRESSION_FILE  insights only: once this file exists, GET /shop takes twice as
  *             long (default /tmp/bw-regression; deploy.sh creates it)
  *
@@ -42,7 +47,7 @@ export const Format = { Json: "json", JsonNested: "json-nested", Kv: "kv" } as c
 export type Format = (typeof Format)[keyof typeof Format];
 
 /** Extra request sets a container can add to its cycle. */
-export const Scenario = { Insights: "insights" } as const;
+export const Scenario = { Insights: "insights", Monitors: "monitors" } as const;
 export type Scenario = (typeof Scenario)[keyof typeof Scenario];
 
 export type HopKind = "in" | "in_end" | "out" | "out_end";
@@ -65,6 +70,10 @@ export interface HopRecord {
   op?: string;
   /** Inbound HTTP hops: the path that was requested (spec 0.10, HOP-24). */
   path?: string;
+  /** Inbound HTTP hops: the request's host, lower case, no port (spec 0.13, HOP-27). */
+  host?: string;
+  /** Inbound hops of a monitor's request and its downstream requests (spec 0.13, HOP-28). */
+  synthetic?: 1;
   /** SQL data-store end records: the table (spec 0.9, section 13.2). */
   table?: string;
   peer?: string;
@@ -73,10 +82,19 @@ export interface HopRecord {
   status?: number;
   error?: string;
   duration_us?: number;
+  /** Cache end records of a one-key read: a value was found (proposed HOP-25, BAC-79). */
+  hit?: boolean;
+  /** Database end records: microseconds of duration_us spent waiting for a connection (proposed HOP-26). */
+  wait_us?: number;
   db_n?: number;
   db_us?: number;
+  /** Proposed HOP-26: the request's database calls' summed wait_us. */
+  db_wait_us?: number;
   cache_n?: number;
   cache_us?: number;
+  /** Proposed HOP-25: one-key reads that found a value, and that found none. Left out when 0 calls. */
+  cache_hit_n?: number;
+  cache_miss_n?: number;
   /** f_{name} named fields, in insertion order. */
   fields?: Record<string, string>;
   /** SQL data-store end records: the statement shape, always written last (spec HOP-14, 13.2). */
@@ -100,7 +118,8 @@ export type Emission =
 
 const FIELD_ORDER: readonly (keyof HopRecord)[] = [
   "trace_id", "hop", "hop_id", "parent_hop", "hop_sent", "tracer", "parent_id", "service", "adapter", "via",
-  "method", "op", "path", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
+  "method", "op", "path", "host", "synthetic", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "hit", "wait_us",
+  "db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n",
 ];
 
 /** Ordered [key, value] pairs of a record, exactly as HOP-8/HOP-14 list them. */
@@ -414,15 +433,85 @@ export function orderLookup(s: InsightsSeed): Emission[] {
   let at = 2 + slowMs;
   const out: Emission[] = [storeCall(S, { ...db, op: "select", table: "orders", stmt: SLOW_ORDERS_STMT }, s.id("order:db"), at, slowMs)];
   const gets = [0.6, 0.8, 0.5];
+  // BAC-79: each get reports whether it found a value; about three in four do.
+  const hits = gets.map((_, n) => s.unit(`order:hit:${n}`) < ORDER_HIT_CHANCE);
   gets.forEach((ms, n) => {
     at += 0.3 + ms;
-    out.push(storeCall(S, cache, s.id(`order:get:${n}`), at, ms));
+    out.push(storeCall(S, { ...cache, hit: hits[n] }, s.id(`order:get:${n}`), at, ms));
   });
   out.push({ at: at + 0.2, service: S, kind: "log", level: "info", msg: `order ${orderNo} loaded`, trace_id: t });
   const endAt = at + 1.1;
   const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/orders/:id", path: `/orders/${orderNo}` };
   const cacheUs = gets.reduce((a, ms) => a + us(ms), 0);
-  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: 1, db_us: us(slowMs), cache_n: gets.length, cache_us: cacheUs } }), ...out];
+  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: 1, db_us: us(slowMs), cache_n: gets.length, cache_us: cacheUs, ...readTotals(hits) } }), ...out];
+}
+
+/** Chance that a GET /orders/:id cache get finds a value (BAC-79). */
+export const ORDER_HIT_CHANCE = 0.75;
+/** Cache gets per GET /search, and the chance that one finds a value: the cache-miss-heavy route. */
+export const SEARCH_GETS = 10;
+export const SEARCH_HIT_CHANCE = 0.2;
+/** Database calls per POST /refunds, the pool-starved route, and the share of each call spent
+ *  waiting for a connection (between the two). */
+export const REFUND_CALLS = 3;
+export const REFUND_WAIT_SHARE: readonly [number, number] = [0.55, 0.85];
+/** Each POST /refunds call's duration, ms: a base and a random spread above it. */
+export const REFUND_CALL_MS: readonly (readonly [number, number])[] = [[8, 4], [48, 14], [6, 3]];
+
+/** `cache_hit_n` and `cache_miss_n` for an inbound end record: a total with no calls is left out
+ *  (proposed HOP-25). */
+export function readTotals(hits: readonly boolean[]): Partial<HopRecord> {
+  const n = hits.filter(Boolean).length;
+  const m = hits.length - n;
+  return { ...(n > 0 ? { cache_hit_n: n } : {}), ...(m > 0 ? { cache_miss_n: m } : {}) };
+}
+
+/** GET /search: ten one-key cache gets one after another, most of which find nothing (BAC-79). */
+export function productSearch(s: InsightsSeed): Emission[] {
+  const S = Service.Shop;
+  const t = s.trace("search");
+  const pid = s.id("search:pid");
+  const inId = s.id("search:in");
+  const cache = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "ioredis", via: "cache" as Via, peer: "redis.internal", op: "get" };
+  const hits = Array.from({ length: SEARCH_GETS }, (_, n) => s.unit(`search:hit:${n}`) < SEARCH_HIT_CHANCE);
+  const out: Emission[] = [];
+  let at = 0.8;
+  let cacheUs = 0;
+  hits.forEach((hit, n) => {
+    const ms = 0.4 + 0.3 * s.unit(`search:ms:${n}`);
+    at += 0.1 + ms;
+    out.push(storeCall(S, { ...cache, hit }, s.id(`search:get:${n}`), at, ms));
+    cacheUs += us(ms);
+  });
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/search", path: "/search" };
+  return [...inboundPair(S, 0, { rec, endAt: at + 0.9, statusCode: 200, extra: { cache_n: SEARCH_GETS, cache_us: cacheUs, ...readTotals(hits) } }), ...out];
+}
+
+/** POST /refunds on commerce-payments: three updates (one long) whose time is mostly waiting for a database
+ *  connection from an exhausted pool (BAC-79). `wait_us` is part of each call's duration. */
+export function refundBatch(s: InsightsSeed): Emission[] {
+  const P = Service.Payments;
+  const t = s.trace("refunds");
+  const pid = s.id("refunds:pid");
+  const inId = s.id("refunds:in");
+  const db = { trace_id: t, parent_hop: inId, parent_id: pid, service: P, adapter: "pg", via: "db" as Via, peer: "payments-db", op: "update", table: "refunds" };
+  const out: Emission[] = [];
+  let at = 1.0;
+  let dbUs = 0;
+  let waitUs = 0;
+  for (let n = 0; n < REFUND_CALLS; n++) {
+    // The middle update is the long one, so the request has a culprit the verdict names.
+    const [base, spread] = REFUND_CALL_MS[n % REFUND_CALL_MS.length];
+    const ms = base + spread * s.unit(`refunds:ms:${n}`);
+    const [lo, hi] = REFUND_WAIT_SHARE;
+    const wait = us(ms * (lo + (hi - lo) * s.unit(`refunds:wait:${n}`)));
+    at += 0.2 + ms;
+    out.push({ at, service: P, kind: "hop", rec: { ...db, hop: "out_end", hop_id: s.id(`refunds:db:${n}`), hop_sent: false, outcome: "ok", duration_us: us(ms), wait_us: wait, stmt: "update refunds set status = ?, settled_at = ? where refunds.id = ?" } });
+    dbUs += us(ms);
+    waitUs += wait;
+  }
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/refunds" };
+  return [...inboundPair(P, 0, { rec, endAt: at + 1.4, statusCode: 201, extra: { db_n: REFUND_CALLS, db_us: dbUs, db_wait_us: waitUs } }), ...out];
 }
 
 /** GET /feed: a plain Redis pipeline of 12 gets sent in one write. Must not be flagged as N+1 or
@@ -484,7 +573,55 @@ export function insightsCycle(seed: number, regression: boolean): Emission[] {
     ...shift(orderLookup(s), 1000),
     ...shift(cacheFeed(s), 2000),
     ...shift(checkout(s), 3000),
+    ...shift(productSearch(s), 4000),
+    ...shift(refundBatch(s), 5000),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Monitors scenario (BAC-80): an uptime monitor's cart check and a shopper's
+// ---------------------------------------------------------------------------
+
+/** The monitor's host (Possibug's one-minute cart check on a FleekSite site). */
+export const MONITOR_HOST = "binary.fleeksite.com";
+/** A real shopper's storefront host. */
+export const SHOPPER_HOST = "shop.example.com";
+/** The commerce API's own host, seen on its inbound hops. */
+export const API_HOST = "api.dev.example.com";
+/** The products route the cart page calls three times. */
+export const PRODUCTS_ROUTE = "/api/v1/public/m/:merchant_username/products";
+
+/**
+ * GET /cart on shop-api: three product calls to commerce-api and one discount lookup on
+ * commerce-payments, one after another. A monitor's request carries `synthetic=1` on every
+ * inbound hop of the trace (HOP-28); the shopper's carries hosts only.
+ */
+export function cartRender(s: InsightsSeed, who: "monitor" | "shopper"): Emission[] {
+  const S = Service.Shop, A = Service.Api, P = Service.Payments;
+  const t = s.trace(`cart:${who}`);
+  const pid = s.id(`cart:${who}:pid`);
+  const inId = s.id(`cart:${who}:in`);
+  const mark: Partial<HopRecord> = who === "monitor" ? { synthetic: 1 } : {};
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "hono", via: "http", method: "GET", op: "/cart", path: "/cart", host: who === "monitor" ? MONITOR_HOST : SHOPPER_HOST, ...mark };
+  const out: Emission[] = [];
+  let at = 1.5;
+  const call = (n: number, svc: Service, peer: string, op: string, path: string, ms: number): void => {
+    const outRec: HopRecord = { trace_id: t, hop: "out", hop_id: s.id(`cart:${who}:out:${n}`), parent_hop: inId, hop_sent: true, parent_id: pid, service: S, adapter: "undici", via: "http", method: "GET", peer };
+    const inRec: HopRecord = { trace_id: t, hop: "in", hop_id: s.id(`cart:${who}:in:${n}`), parent_hop: outRec.hop_id, parent_id: pid, service: svc, adapter: svc === A ? "plug" : "hono", via: "http", method: "GET", op, path, host: API_HOST, ...mark };
+    out.push({ at, service: S, kind: "hop", rec: outRec });
+    out.push(...inboundPair(svc, at + 0.4, { rec: inRec, endAt: at + ms - 0.4, statusCode: 200 }));
+    out.push({ at: at + ms, service: S, kind: "hop", rec: { ...outRec, hop: "out_end", outcome: "ok", status: 200, duration_us: us(ms) } });
+    at += ms + 0.6;
+  };
+  for (let n = 0; n < 3; n++) call(n, A, "api.dev.example.com", PRODUCTS_ROUTE, "/api/v1/public/m/binary/products", 18 + 10 * s.unit(`cart:${who}:p:${n}`));
+  call(3, P, "api.dev.example.com", "/api/v1/discounts/:code", "/api/v1/discounts/WELCOME10", 9 + 4 * s.unit(`cart:${who}:d`));
+  return [...inboundPair(S, 0, { rec, endAt: at + 1.2, statusCode: 200 }), ...out];
+}
+
+/** Every request of one monitors cycle: the monitor's check, then a shopper's cart. */
+export function monitorsCycle(seed: number): Emission[] {
+  const s = insightsSeed(seed);
+  return [...cartRender(s, "monitor"), ...cartRender(s, "shopper").map((e) => ({ ...e, at: e.at + 1500 }))];
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +638,16 @@ function isScenario(v: string): v is Scenario {
   return (Object.values(Scenario) as string[]).includes(v);
 }
 
+/** SCENARIO as a comma list ("insights,monitors"); empty for none. */
+export function scenariosOf(raw: string): Scenario[] {
+  const out: Scenario[] = [];
+  for (const part of raw.split(",").map((p) => p.trim()).filter(Boolean)) {
+    if (!isScenario(part)) throw new Error(`SCENARIO entries must be ${Object.values(Scenario).join(", ")}; got ${part}`);
+    out.push(part);
+  }
+  return out;
+}
+
 function schedule(list: Emission[], service: Service, format: Format, startMs: number): void {
   for (const e of list) {
     if (e.service !== service) continue;
@@ -515,10 +662,10 @@ function main(): void {
   if (!isService(svc)) throw new Error(`SERVICE must be one of ${Object.values(Service).join(", ")}`);
   if (!isFormat(fmt)) throw new Error(`FORMAT must be one of ${Object.values(Format).join(", ")}`);
   const cycleMs = Math.max(5, Number(process.env.CYCLE_S ?? "30")) * 1000;
-  const fixed = (process.env.FIXED ?? "1") === "1";
+  const base = (process.env.BASE ?? "1") === "1";
+  const fixed = base && (process.env.FIXED ?? "1") === "1";
   const sensitive = (process.env.SENSITIVE ?? "1") === "1";
-  const scenario = process.env.SCENARIO ?? "";
-  if (scenario && !isScenario(scenario)) throw new Error(`SCENARIO must be one of ${Object.values(Scenario).join(", ")}`);
+  const scenarios = scenariosOf(process.env.SCENARIO ?? "");
   const regressionFile = process.env.REGRESSION_FILE ?? "/tmp/bw-regression";
 
   // First boundary: every container started by one `compose up` agrees on it.
@@ -531,11 +678,14 @@ function main(): void {
   const tick = (start: number): void => {
     // Generated requests share the boundary as their seed so every container
     // derives the same IDs without talking to the others.
-    const ids = seededHealthyIds(start);
-    const status = (start / cycleMs) % 5 === 4 ? 422 : 201;
-    schedule(healthyOrder(ids, { status, orderId: String(8000 + (start / cycleMs) % 1000) }), svc, fmt, start + 1000);
-    schedule(ordinaryLines(svc, sensitive), svc, fmt, start + 500);
-    if (scenario === Scenario.Insights) schedule(insightsCycle(start, existsSync(regressionFile)), svc, fmt, start + 5000);
+    if (base) {
+      const ids = seededHealthyIds(start);
+      const status = (start / cycleMs) % 5 === 4 ? 422 : 201;
+      schedule(healthyOrder(ids, { status, orderId: String(8000 + (start / cycleMs) % 1000) }), svc, fmt, start + 1000);
+      schedule(ordinaryLines(svc, sensitive), svc, fmt, start + 500);
+    }
+    if (scenarios.includes(Scenario.Insights)) schedule(insightsCycle(start, existsSync(regressionFile)), svc, fmt, start + 5000);
+    if (scenarios.includes(Scenario.Monitors)) schedule(monitorsCycle(start), svc, fmt, start + 12000);
     setTimeout(() => tick(start + cycleMs), Math.max(0, start + cycleMs - Date.now()));
   };
   tick(boundary + cycleMs);
