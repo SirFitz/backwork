@@ -42,3 +42,6 @@ Branch `bac-69-slow-queries`, worktree `backwork-wt/ins-slowq`, cut from origin/
 - `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (475 pass, 4 skip, 0 fail); with the database
   URLs: exit 0 (478 pass, 1 skip, 0 fail).
 - Not done here (no browser tool): 1440 and 390 screenshots, sideways scroll, top gap, card head height.
+
+PR https://github.com/SirFitz/backwork/pull/34. Dev server stopped, /tmp/bw_ins_69* removed, bw_ins_69 dropped.
+DONE
