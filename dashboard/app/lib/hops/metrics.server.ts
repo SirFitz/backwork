@@ -6,7 +6,7 @@
 // organisation (`extra_filters[]`), and are cached for 10 seconds per organisation, range and
 // selection (design 13).
 
-import { windowIncrease, windowPerSecond, windowSeconds } from "./counter-window";
+import { COUNTER_LOOKBACK_SECONDS, windowIncrease, windowPerSecond, windowSeconds } from "./counter-window";
 import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
 import type { Tenant } from "~/lib/tenant.server";
@@ -95,8 +95,8 @@ function windowOf(range: PerfRange): string {
 }
 
 /** Per second over a window: see counter-window.ts for why this is not `rate()` or a bare `increase()`. */
-function perSecond(sel: string, window: string, labels: readonly string[]): string {
-  return windowPerSecond(sel, window, labels);
+function perSecond(sel: string, window: string, labels: readonly string[], offset: string | null = null, lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS): string {
+  return windowPerSecond(sel, window, labels, offset, lookbackSeconds);
 }
 
 // ---------------------------------------------------------------- query builders (pure)
@@ -123,21 +123,39 @@ export function connectionsScope(): Scope {
   return { by: ["service", "peer", "via"], where: {}, health: HealthChecks.Shown };
 }
 
+/** Every route of every service in one query (BAC-67: fix-first list, route alerts). */
+export function allRoutesScope(health: HealthChecks = HealthChecks.Hidden): Scope {
+  return { by: ["service", "method", "op"], where: {}, health };
+}
+
 function by(labels: readonly string[], extra: readonly string[] = []): string {
   return `by (${[...labels, ...extra].join(", ")})`;
 }
 
-/** Requests (or calls) per second over the range. */
-export function rateQuery(dir: "in" | "out", scope: Scope, range: PerfRange): string {
+/** Requests (or calls) per second over the range; `offset` moves the window into the past (BAC-67:
+ *  `offset 7d` is last week), with a `lookbackSeconds` short enough to stay inside retention. */
+export function rateQuery(
+  dir: "in" | "out",
+  scope: Scope,
+  range: PerfRange,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): string {
   const sel = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
-  return perSecond(sel, windowOf(range), scope.by);
+  return perSecond(sel, windowOf(range), scope.by, offset, lookbackSeconds);
 }
 
 /** Failed requests per second, as two queries whose results are added in code:
  *  `outcome="error"`, and `status_class="5xx"` on records whose outcome is not error. The two
  *  selectors are disjoint, so nothing is counted twice. (A PromQL `or` would keep only the left
  *  side for a key present in both, and `+` would drop keys present in one.) */
-export function errorRateQueries(dir: "in" | "out", scope: Scope, range: PerfRange): [string, string] {
+export function errorRateQueries(
+  dir: "in" | "out",
+  scope: Scope,
+  range: PerfRange,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): [string, string] {
   const w = windowOf(range);
   const hm = healthMatchers(dir, scope.health);
   const failed = selector(`${HopMetric.Duration}_count`, { dir, ...scope.where, outcome: "error" }, hm);
@@ -148,13 +166,53 @@ export function errorRateQueries(dir: "in" | "out", scope: Scope, range: PerfRan
     `status_class="5xx"`,
     ...hm,
   ].join(",")}}`;
-  return [perSecond(failed, w, scope.by), perSecond(fivexx, w, scope.by)];
+  return [perSecond(failed, w, scope.by, offset, lookbackSeconds), perSecond(fivexx, w, scope.by, offset, lookbackSeconds)];
 }
 
-/** Latency quantile in seconds over the range. */
-export function quantileQuery(q: Quantile, dir: "in" | "out", scope: Scope, range: PerfRange, window?: string): string {
+/** Latency quantile in seconds over the range (or the inner `window`), `offset` into the past. */
+export function quantileQuery(
+  q: Quantile,
+  dir: "in" | "out",
+  scope: Scope,
+  range: PerfRange,
+  window?: string,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): string {
   const sel = selector(`${HopMetric.Duration}_bucket`, { dir, ...scope.where }, healthMatchers(dir, scope.health));
-  return `histogram_quantile(${q}, ${windowIncrease(sel, window ?? windowOf(range), [...scope.by, "le"])})`;
+  return `histogram_quantile(${q}, ${windowIncrease(sel, window ?? windowOf(range), [...scope.by, "le"], offset, lookbackSeconds)})`;
+}
+
+/** The four queries that read one window of inbound figures: requests, failed (two disjoint
+ *  halves, added in code) and p95. */
+export interface WindowQueries {
+  requests: string;
+  errA: string;
+  errB: string;
+  p95: string;
+}
+
+/**
+ * Inbound figures for any window, grouped by `by` (BAC-67, generalised from the Overview's
+ * attention baselines): `window` long, ending `offset` before now. Used for "now against before"
+ * comparisons (regressions, alerts). Health checks are left out unless shown.
+ */
+export function windowQueries(
+  window: string,
+  offset: string | null,
+  by: readonly string[],
+  health: HealthChecks = HealthChecks.Hidden,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): WindowQueries {
+  const inbound = [`dir="in"`, ...healthMatchers("in", health)].join(",");
+  const count = `${HopMetric.Duration}_count`;
+  const bucket = `${HopMetric.Duration}_bucket`;
+  return {
+    requests: windowIncrease(`${count}{${inbound}}`, window, by, offset, lookbackSeconds),
+    errA: windowIncrease(`${count}{${inbound},outcome="error"}`, window, by, offset, lookbackSeconds),
+    errB: windowIncrease(`${count}{${inbound},outcome!="error",status_class="5xx"}`, window, by, offset, lookbackSeconds),
+    p95: `histogram_quantile(0.95, ${windowIncrease(`${bucket}{${inbound}}`, window, [...by, "le"], offset, lookbackSeconds)})`,
+  };
 }
 
 /** Share of inbound time spent in databases and caches (0..1). */

@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, bigint, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, smallint, bigint, doublePrecision, date, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
@@ -244,4 +244,101 @@ export const billingEvents = pgTable("billing_events", {
   orgId: text("org_id"),
   type: text("type").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------- Insights (BAC-67)
+// Created once by the foundation for the features that use them (docs/insights). The value sets
+// of `alert_events.kind` and `pinned_requests.reason` are owned by features 5 and 11.
+
+/** A deploy reported by a service's pipeline (feature 6): chart markers, "was it the deploy?". */
+export const deploys = pgTable("deploys", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  service: text("service").notNull(),
+  version: text("version"),
+  commitSha: text("commit_sha"),
+  environment: text("environment"),
+  url: text("url"),
+  actor: text("actor"),
+  deployedAt: timestamp("deployed_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("deploys_org_idx").on(t.orgId),
+  orgServiceAtIdx: index("deploys_org_service_at_idx").on(t.orgId, t.service, t.deployedAt.desc()),
+}));
+
+/** Whether an alert rule is firing, kept in Postgres so a restart or a second process neither
+ *  loses nor repeats a transition (feature 5). */
+export const alertState = pgTable("alert_state", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  ruleId: text("rule_id").notNull(),
+  firing: boolean("firing").notNull().default(false),
+  value: doublePrecision("value"),
+  since: timestamp("since", { withTimezone: true }),
+  lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+  pendingSince: timestamp("pending_since", { withTimezone: true }),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.ruleId] }) }));
+
+/** One row per alert transition (firing or resolved) with what each channel answered. */
+export const alertEvents = pgTable("alert_events", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  ruleId: text("rule_id").notNull(),
+  kind: text("kind").notNull(),
+  value: doublePrecision("value"),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  delivered: jsonb("delivered"),
+}, (t) => ({
+  orgIdx: index("alert_events_org_idx").on(t.orgId),
+  orgRuleAtIdx: index("alert_events_org_rule_at_idx").on(t.orgId, t.ruleId, t.at.desc()),
+}));
+
+/** Weekly digest settings per organisation (feature 10); weekday 0 = Sunday, hour in UTC. */
+export const digestSettings = pgTable("digest_settings", {
+  orgId: text("org_id").primaryKey().references(() => orgs.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  channelIds: jsonb("channel_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  emailRoles: text("email_roles"),
+  weekday: smallint("weekday").notNull().default(1),
+  hourUtc: smallint("hour_utc").notNull().default(8),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A digest week claimed before sending, so exactly one process sends it. */
+export const digestRuns = pgTable("digest_runs", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  periodStart: date("period_start").notNull(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  error: text("error"),
+  attempts: smallint("attempts").notNull().default(0),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.periodStart] }) }));
+
+/** A request copied out of Loki so it outlives retention (feature 11). */
+export const pinnedRequests = pgTable("pinned_requests", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  traceId: text("trace_id").notNull(),
+  title: text("title").notNull().default(""),
+  note: text("note"),
+  reason: text("reason").notNull(),
+  records: jsonb("records").notNull(),
+  lines: jsonb("lines").notNull().default(sql`'[]'::jsonb`),
+  links: jsonb("links").notNull().default(sql`'[]'::jsonb`),
+  bytes: integer("bytes").notNull().default(0),
+  pinnedBy: text("pinned_by").references(() => users.id, { onDelete: "set null" }),
+  pinnedAt: timestamp("pinned_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.orgId, t.traceId] }),
+  orgAtIdx: index("pinned_requests_org_at_idx").on(t.orgId, t.pinnedAt.desc()),
+}));
+
+/** Automatic pinning switches per organisation (feature 11), off by default. */
+export const pinSettings = pgTable("pin_settings", {
+  orgId: text("org_id").primaryKey().references(() => orgs.id, { onDelete: "cascade" }),
+  autoSlow: boolean("auto_slow").notNull().default(false),
+  autoFailed: boolean("auto_failed").notNull().default(false),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

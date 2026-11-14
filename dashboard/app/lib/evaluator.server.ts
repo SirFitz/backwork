@@ -73,6 +73,6 @@ export function ensureEvaluator() {
   globalThis.__bwEvaluatorStarted = true;
   // Seed first, then turn off any stored rule of a kind that can no longer run (BAC-49).
   void alerts.seedPlatformDefaults().then(() => alerts.retireContainerRules()).catch(() => {});
-  setTimeout(() => void tick(), 8000); // seed baseline shortly after boot
-  setInterval(() => void tick(), 60000);
+  setTimeout(() => void tick(), 8000).unref(); // seed baseline shortly after boot
+  setInterval(() => void tick(), 60000).unref();
 }

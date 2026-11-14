@@ -10,7 +10,6 @@
 //               service recorded receiving (the request view's "No record from" gap).
 // Health checks are left out (`health.ts`). The rules are pure functions, tested on their own.
 
-import { windowIncrease } from "./counter-window";
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { cached } from "~/lib/cache.server";
@@ -20,8 +19,8 @@ import { HopKind, Outcome, type HopId, type HopRecord } from "~/lib/hops/types";
 import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type ServiceWindow, type StalledRequest, type UnreceivedCall } from "~/lib/hops/attention";
 export { JumpKind, LIST_LIMIT };
 export type { RecordScan, ServiceJump, ServiceWindow, StalledRequest, UnreceivedCall };
-import { HopMetric, vmClient, type PromClient } from "~/lib/hops/metrics.server";
-import { LOGQL_NOT_HEALTH_CHECK, PROM_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
+import { HealthChecks, vmClient, windowQueries as inboundWindowQueries, type PromClient, type WindowQueries } from "~/lib/hops/metrics.server";
+import { LOGQL_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
 import { peerPairs } from "~/lib/hops/peers";
 import { knownPeersFor, peerStore, type PeerStore } from "~/lib/hops/peers.server";
 
@@ -83,20 +82,10 @@ export function detectJumps(current: readonly ServiceWindow[], baseline: readonl
 
 // ---------------------------------------------------------------- jumps (queries)
 
-const COUNT = `${HopMetric.Duration}_count`;
-const BUCKET = `${HopMetric.Duration}_bucket`;
-
 /** The four queries of one window: requests, failed (two disjoint halves), p95. */
-export function windowQueries(offset: string | null): { requests: string; errA: string; errB: string; p95: string } {
+export function windowQueries(offset: string | null): WindowQueries {
   // The baseline is the BASELINE-long window that ends where the current one starts.
-  const window = offset ? BASELINE : WINDOW;
-  const inbound = `dir="in",${PROM_NOT_HEALTH_CHECK}`;
-  return {
-    requests: windowIncrease(`${COUNT}{${inbound}}`, window, ["service"], offset),
-    errA: windowIncrease(`${COUNT}{${inbound},outcome="error"}`, window, ["service"], offset),
-    errB: windowIncrease(`${COUNT}{${inbound},outcome!="error",status_class="5xx"}`, window, ["service"], offset),
-    p95: `histogram_quantile(0.95, ${windowIncrease(`${BUCKET}{${inbound}}`, window, ["service", "le"], offset)})`,
-  };
+  return inboundWindowQueries(offset ? BASELINE : WINDOW, offset, ["service"], HealthChecks.Hidden);
 }
 
 async function readWindow(client: PromClient, tenant: Tenant, offset: string | null): Promise<ServiceWindow[]> {

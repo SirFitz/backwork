@@ -56,7 +56,7 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-api adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61240`),
     ]);
     expect(rows).toEqual([
-      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false },
+      { traceID: T, service: "commerce-api", method: "POST", route: "/orders", path: null, status: 201, durationMs: 61.24, startMs: 1_700_000_000_000 - 61.24, error: false, totals: null },
     ]);
   });
   test("the actual path rides along; the route stays the template (BAC-52)", () => {
@@ -74,6 +74,12 @@ describe("rowsFromRecords", () => {
       rec(`trace_id=${T} hop=out_end hop_id=3f0a6c2e9b7d4405 parent_hop=1f0a6c2e9b7d4405 hop_sent=false parent_id=b7ad6b7169203331 adapter=ecto via=db op=select peer=db outcome=ok duration_us=900`),
     ]);
     expect(rows).toEqual([]);
+  });
+  test("store totals from the end record ride along (BAC-67)", () => {
+    const [row] = rowsFromRecords([
+      rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=plug via=http method=GET op=/shop outcome=ok status=200 duration_us=90000 db_n=22 db_us=61000 cache_n=3 cache_us=900`),
+    ]);
+    expect(row.totals).toEqual({ dbCalls: 22, dbUs: 61000, cacheCalls: 3, cacheUs: 900 });
   });
   test("a failed request keeps its error flag and a missing status", () => {
     const [row] = rowsFromRecords([

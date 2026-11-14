@@ -21,6 +21,7 @@ import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
+import { fmtUs, plural } from "~/lib/hops/time-format";
 import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
@@ -95,19 +96,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 // ---------------------------------------------------------------- formatting
 
-/** Microseconds as the frames show them: 0.4 ms, 61.2 ms, 412 ms, 30.02 s, 4 m 12 s. */
-export function fmtUs(us: number): string {
-  const ms = us / 1000;
-  if (ms < 0.1) return `${ms.toFixed(2)} ms`;
-  if (ms < 100) return `${ms.toFixed(1)} ms`;
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(2)} s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} m ${Math.floor(s - m * 60)} s`;
-  const h = Math.floor(m / 60);
-  return `${h} h ${m - h * 60} m`;
-}
+/** Re-exported for existing importers; the formatter lives in lib/hops/time-format.ts. */
+export { fmtUs };
 
 function elapsedUs(hop: Hop, now: number): number {
   return hop.durationUs ?? Math.max(0, Math.round((now - hop.startMs) * 1000));
@@ -129,10 +119,6 @@ function dayWord(ts: number, now: number, local: boolean): string {
 function DayWord({ ts, now }: { ts: number; now: number }) {
   const local = useHydrated();
   return <span suppressHydrationWarning>{dayWord(ts, now, local)}</span>;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
 }
 
 // Service colours: stable per service name (DESIGN.md: "assigned by service, stable"), distinct within a request.

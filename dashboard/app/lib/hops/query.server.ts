@@ -12,8 +12,9 @@ const DAY = 24 * HOUR;
 
 /** Lines around the hop records: 5 s either side (design 7.2 step 2). */
 export const LOG_PAD_MS = 5000;
-/** Loki's default entry cap per query. */
-const HOP_LIMIT = 5000;
+/** Loki's default entry cap per query. A window that returns this many lines may have lost its
+ *  oldest records (`WindowResult.truncated`). */
+export const HOP_LIMIT = 5000;
 
 export { HOP_RETENTION_DAYS, LOG_PAGE, LOG_RETENTION_DAYS, SearchWindow, WINDOW_LABEL };
 
@@ -24,6 +25,9 @@ export interface WindowResult {
   links: LinkedId[];
   /** Earliest time searched so far, epoch ms. */
   searchedFromMs: number;
+  /** The window returned `HOP_LIMIT` lines, so older records may be missing: counts drawn from it
+   *  are "at least" (BAC-67). */
+  truncated: boolean;
 }
 
 /** Each window's bounds; windows do not overlap, so together they cover the whole retention once. */
@@ -73,7 +77,7 @@ export async function searchWindow(
     const link = parseLinkLine(raw);
     if (link && link.traceId === traceId) links.push(link);
   }
-  return { window, found: records.length > 0 || links.length > 0, records, links, searchedFromMs: start };
+  return { window, found: records.length > 0 || links.length > 0, records, links, searchedFromMs: start, truncated: entries.length >= HOP_LIMIT };
 }
 
 export interface ProgressiveLookup {

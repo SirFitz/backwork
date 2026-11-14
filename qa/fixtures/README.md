@@ -16,3 +16,8 @@ commerce-api `json` (pino style), commerce-payments `kv` (Elixir console style),
 (fields under `metadata`), commerce-worker `kv`.
 
 Without Docker: `SERVICE=commerce-api FORMAT=kv CYCLE_S=10 bun qa/fixtures/emitter.ts`.
+
+With `SCENARIO=insights` (BAC-67) a container adds the insights requests to each cycle: `shop-api` writes `GET /shop`
+(N+1), `GET /orders/:id` (slow query, sequential cache gets), `GET /feed` (plain Redis pipeline) and `POST /checkout`
+(two sequential calls to commerce-payments and commerce-risk, which also need the scenario on). `compose.insights.yml`
+turns it on; `deploy.sh` starts the regression mode. See `qa/README.md`, "Insights scenario".

@@ -32,6 +32,7 @@ import {
   Gauge,
   KeyRound,
   LayoutDashboard,
+  Lightbulb,
   LogOut,
   Moon,
   MoreHorizontal,
@@ -47,7 +48,7 @@ import {
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
-import { ensureEvaluator } from "~/lib/evaluator.server";
+import { startBackgroundJobs } from "~/lib/jobs.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
 import { readLivePaused, writeLivePaused } from "~/lib/live-pref";
@@ -76,7 +77,7 @@ const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 const MARKETING_PATHS = new Set(["/pricing", "/security", "/docs", "/about", "/privacy", "/terms", "/changelog"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  ensureEvaluator(); // start the background alert evaluator once
+  startBackgroundJobs(); // alert evaluator and plan jobs, once per process
   const path = new URL(request.url).pathname;
   const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite") || path.startsWith("/reset");
   const { getTheme } = await themeSessionResolver(request);
@@ -112,6 +113,7 @@ const NAV = [
   { to: "/requests", label: "Requests", icon: Network },
   { to: "/performance", label: "Performance", icon: Gauge },
   { to: "/logs", label: "Logs", icon: ScrollText },
+  { to: "/insights", label: "Insights", icon: Lightbulb },
   { to: "/errors", label: "Errors", icon: Bug },
   { to: "/alerts", label: "Alerts", icon: BellRing },
   { to: "/projects", label: "Projects", icon: FolderKanban },
@@ -423,54 +425,128 @@ function FindRequest() {
   );
 }
 
+/** The `popover="manual"` attribute, which React 18's types do not know. */
+const POPOVER_MANUAL: Record<string, string> = { popover: "manual" };
+
+/** Width of the organisation menu, px (Tailwind w-60). */
+const AUTH_MENU_WIDTH_PX = 240;
+/** Gap between the menu and the window edge, px. */
+const AUTH_MENU_EDGE_PX = 8;
+
+/**
+ * The organisation menu. It opens in the top layer (`popover="manual"`, as FindRequest does) so the
+ * sticky header's layer never clips or covers it (UI_ISSUES 2), positioned against the window
+ * under its button, right edges aligned, kept on screen; a long list scrolls inside it.
+ */
 function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+
+  const place = useCallback(() => {
+    const pop = popRef.current;
+    const box = anchorRef.current?.getBoundingClientRect();
+    if (!pop || !box) return;
+    const width = Math.min(AUTH_MENU_WIDTH_PX, window.innerWidth - 2 * AUTH_MENU_EDGE_PX);
+    const left = Math.max(AUTH_MENU_EDGE_PX, Math.min(box.right - width, window.innerWidth - width - AUTH_MENU_EDGE_PX));
+    const top = box.bottom + 6;
+    Object.assign(pop.style, { top: `${top}px`, left: `${left}px`, width: `${width}px`, maxHeight: `${Math.max(160, window.innerHeight - top - AUTH_MENU_EDGE_PX)}px` });
   }, []);
+
+  const show = useCallback(() => {
+    const pop = popRef.current;
+    if (!pop) return;
+    place();
+    if (!pop.matches(":popover-open")) pop.showPopover();
+    setOpen(true);
+  }, [place]);
+
+  const hide = useCallback(() => {
+    const pop = popRef.current;
+    if (pop?.matches(":popover-open")) pop.hidePopover();
+    setOpen(false);
+  }, []);
+
+  // Close on navigation.
+  useEffect(() => {
+    hide();
+  }, [location.pathname, hide]);
+
+  // Escape and a click outside close it; it follows its button on resize and scroll.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && popRef.current?.matches(":popover-open")) hide(); };
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (popRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      hide();
+    };
+    const onMove = () => { if (popRef.current?.matches(":popover-open")) place(); };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onMove, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onMove, true);
+    };
+  }, [hide, place]);
+
+  const close = (): void => hide();
   const link = "flex items-center gap-2 rounded px-2 py-1.5 text-[13px] text-fg hover:bg-surface-2";
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-2xs font-medium text-muted hover:bg-surface-2 hover:text-fg">
+    <div ref={anchorRef}>
+      <button
+        type="button"
+        onClick={() => (open ? hide() : show())}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-2xs font-medium text-muted hover:bg-surface-2 hover:text-fg"
+      >
         <Building2 className="h-3.5 w-3.5 shrink-0" />
         <span className="hidden max-w-[120px] truncate text-fg sm:inline">{auth.org.name}</span>
         <ChevronDown className="h-3 w-3 shrink-0" />
       </button>
-      {open ? (
-        <div className="absolute right-0 z-40 mt-1.5 w-60 rounded-lg border border-border bg-surface p-1 shadow-lg">
-          {auth.orgs.length > 1 ? (
-            <div className="mb-1 border-b border-border px-1 pb-1.5">
-              <div className="px-2 py-1 text-2xs uppercase tracking-wide text-faint">Organizations</div>
-              {auth.orgs.map((o) => (
-                // reloadDocument: switching organisation changes the whole tenant, so load the
-                // page fresh. A client-side navigation left the menu open and gave no sign it was working.
-                <Form key={o.id} method="post" action="/action/set-org" reloadDocument onSubmit={() => setOpen(false)}>
-                  <input type="hidden" name="orgId" value={o.id} />
-                  <button className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-surface-2", o.id === auth.org.id ? "text-brand" : "text-fg")}>
-                    <Building2 className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{o.name}</span>
-                  </button>
-                </Form>
-              ))}
-            </div>
-          ) : null}
-          <Link to="/projects" onClick={() => setOpen(false)} className={link}><FolderKanban className="h-3.5 w-3.5" /> Projects</Link>
-          <Link to="/members" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Members</Link>
-          <Link to="/teams" onClick={() => setOpen(false)} className={link}><Users className="h-3.5 w-3.5" /> Teams</Link>
-          {(auth.role === "owner" || auth.role === "admin") ? <Link to="/audit" onClick={() => setOpen(false)} className={link}><ScrollText className="h-3.5 w-3.5" /> Audit log</Link> : null}
-          {(auth.role === "owner" || auth.role === "admin") ? <Link to="/api-keys" onClick={() => setOpen(false)} className={link}><KeyRound className="h-3.5 w-3.5" /> API keys</Link> : null}
-          <Link to="/account" onClick={() => setOpen(false)} className={link}><CircleUser className="h-3.5 w-3.5" /> Account</Link>
-          <Link to="/onboarding" onClick={() => setOpen(false)} className={link}><Building2 className="h-3.5 w-3.5" /> New organization</Link>
-          <div className="mt-1 border-t border-border pt-1">
-            <div className="truncate px-2 py-1 text-2xs text-faint">{auth.user.email} · {auth.role}</div>
-            <Form method="post" action="/logout">
-              <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] text-err hover:bg-surface-2"><LogOut className="h-3.5 w-3.5" /> Sign out</button>
-            </Form>
+      <div
+        ref={popRef}
+        data-org-menu
+        // Rendered on the server too, so the closed menu is hidden before hydration. React 18 does
+        // not type the attribute, so it goes in through a spread.
+        {...POPOVER_MANUAL}
+        className="fixed m-0 overflow-auto rounded-lg border border-border bg-surface p-1 text-fg shadow-lg"
+        style={{ inset: "auto" }}
+      >
+        {auth.orgs.length > 1 ? (
+          <div className="mb-1 border-b border-border px-1 pb-1.5">
+            <div className="px-2 py-1 text-2xs uppercase tracking-wide text-faint">Organizations</div>
+            {auth.orgs.map((o) => (
+              // reloadDocument: switching organisation changes the whole tenant, so load the
+              // page fresh. A client-side navigation left the menu open and gave no sign it was working.
+              <Form key={o.id} method="post" action="/action/set-org" reloadDocument onSubmit={close}>
+                <input type="hidden" name="orgId" value={o.id} />
+                <button className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-surface-2", o.id === auth.org.id ? "text-brand" : "text-fg")}>
+                  <Building2 className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{o.name}</span>
+                </button>
+              </Form>
+            ))}
           </div>
+        ) : null}
+        <Link to="/projects" onClick={close} className={link}><FolderKanban className="h-3.5 w-3.5" /> Projects</Link>
+        <Link to="/members" onClick={close} className={link}><Users className="h-3.5 w-3.5" /> Members</Link>
+        <Link to="/teams" onClick={close} className={link}><Users className="h-3.5 w-3.5" /> Teams</Link>
+        {(auth.role === "owner" || auth.role === "admin") ? <Link to="/audit" onClick={close} className={link}><ScrollText className="h-3.5 w-3.5" /> Audit log</Link> : null}
+        {(auth.role === "owner" || auth.role === "admin") ? <Link to="/api-keys" onClick={close} className={link}><KeyRound className="h-3.5 w-3.5" /> API keys</Link> : null}
+        <Link to="/account" onClick={close} className={link}><CircleUser className="h-3.5 w-3.5" /> Account</Link>
+        <Link to="/onboarding" onClick={close} className={link}><Building2 className="h-3.5 w-3.5" /> New organization</Link>
+        <div className="mt-1 border-t border-border pt-1">
+          <div className="truncate px-2 py-1 text-2xs text-faint">{auth.user.email} · {auth.role}</div>
+          <Form method="post" action="/logout">
+            <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[13px] text-err hover:bg-surface-2"><LogOut className="h-3.5 w-3.5" /> Sign out</button>
+          </Form>
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
