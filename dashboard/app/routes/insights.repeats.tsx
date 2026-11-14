@@ -50,7 +50,7 @@ export default function RepeatedCalls() {
 }
 
 function ScanFailed({ error }: { error: string }) {
-  return <p className="px-4 py-10 text-center text-[13px] text-err">Request records unavailable: {error}. Reload to try again.</p>;
+  return <p title={error} className="px-4 py-10 text-center text-[13px] text-err">Request records couldn't load. Reload to try again.</p>;
 }
 
 function ScanBody({ scan, words }: { scan: RepeatScan; words: string }) {

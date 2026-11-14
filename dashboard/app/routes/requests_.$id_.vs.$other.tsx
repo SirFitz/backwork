@@ -167,7 +167,7 @@ function SideSkeleton({ title, note }: { title: string; note?: string }) {
 function SideError({ title, error }: { title: string; error: string }) {
   return (
     <SideFrame title={title}>
-      <p className="m-0 text-[13px] text-err">Hop records unavailable: the log store did not answer ({error}).</p>
+      <p title={error} className="m-0 text-[13px] text-err">Hop records couldn't load. Reload to try again.</p>
     </SideFrame>
   );
 }

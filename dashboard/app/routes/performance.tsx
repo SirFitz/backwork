@@ -160,7 +160,7 @@ function compareColumn<T>(compare: CompareByKey, keyOf: (row: T) => string): { h
 
 function CompareNote({ error }: { error: string | null }) {
   if (!error) return null;
-  return <p className="border-b border-warn/20 bg-warn/5 px-4 py-2 text-2xs text-warn">last week unavailable: {error.slice(0, 160)}</p>;
+  return <p className="border-b border-warn/20 bg-warn/5 px-4 py-2 text-2xs text-warn">Last week's figures couldn't load. Reload to try again.</p>;
 }
 
 // ---------------------------------------------------------------- table parts
