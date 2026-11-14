@@ -69,3 +69,13 @@ The heuristic can suggest things that truly depend on each other: the sentence s
 
 ## Out of scope
 Detecting actual data dependencies, auto-rewrite suggestions, per-route chatty baselines from figures (a metrics-based baseline could replace the loaded-row median later).
+
+## As built (deviations settled in the BAC-71 PR)
+- **Chatty sample key.** The relative test compares a row with loaded rows of the same service, method and route (rows are per service hop, and one route template can exist on two services). `chattyRow(row, rows)` is kept; `chattyRows(rows)` samples once for the whole list. The row type is matched structurally (`ChattyInput`), so the pure module never imports `requests.server.ts`. `CHATTY_RELATIVE_MIN_CALLS = 10` names the "and `calls >= 10`" floor.
+- **Chatty on the request view** counts `storeCallCounts(tree)` (every service's recorded calls plus those only in the totals), the same figure as the header fact; absolute test only. `dbShare` comes from the head hop's time split.
+- **Sort "Most calls"** is a toggle beside "Chatty only" in both control layouts (the table has no calls column to put a sort header on).
+- **Chain rule.** A call follows the previous one when it starts between `OVERLAP_SLACK_MS = 1` before and `GAP_US` after its end, and more than `STARTED_TOGETHER_MS = 0.1` after the previous call started (calls started together are a pipeline or `Promise.all`, not a chain). Calls in any feature 1 repeat group, and cache commands of one shape and client that `classifyRepetition` calls `Batched` (5 or more), break a chain rather than being skipped over, so two calls either side of a pipeline are never joined.
+- **Serial time** is the wall time from the first call's start to the last call's end (the small gaps included), not the summed durations.
+- `parallelChains(tree, repeats?)` returns every chain without the saving floor or the 12-call cap; `parallelCandidates(tree, repeats?, options?)` applies them. The request view passes the repeat report it already has.
+- Labels: store calls use `storeLabel`; HTTP calls are "POST commerce-payments" (method and the service reached, else the host).
+- **Fixture result.** `GET /orders/:id` is a chain of 4 calls (the slow select, then the 3 gets), but the gets take under 1 ms each, so the real saving is 0.1 to 0.6 ms: found by `parallelChains`, below the 20 ms floor, not shown. `POST /checkout` (two HTTP calls, 30 to 38 ms saved) is the case the request view shows. `GET /shop` makes 22 calls on every request: not chatty by the 50-call floor, and not relative to its own route median of 22; the thresholds are unit-tested instead.

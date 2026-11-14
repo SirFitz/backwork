@@ -9,11 +9,14 @@
 
 import { ensureEvaluator } from "~/lib/evaluator.server";
 import { startPlanJobs } from "~/lib/plans/retention.server";
+import { startAutoPins } from "~/lib/pins-auto.server";
 
 /** The jobs started here. Feature 10 adds the weekly digest. */
 export const JobName = {
   AlertEvaluator: "alert_evaluator",
   PlanJobs: "plan_jobs",
+  /** Hourly automatic pins (BAC-78). */
+  AutoPins: "auto_pins",
 } as const;
 export type JobName = (typeof JobName)[keyof typeof JobName];
 
@@ -26,6 +29,7 @@ export interface BackgroundJob {
 export const BACKGROUND_JOBS: readonly BackgroundJob[] = [
   { name: JobName.AlertEvaluator, start: ensureEvaluator },
   { name: JobName.PlanJobs, start: startPlanJobs },
+  { name: JobName.AutoPins, start: startAutoPins },
 ];
 
 /** Start each job, so that one that throws does not stop the others. Returns the names started. */

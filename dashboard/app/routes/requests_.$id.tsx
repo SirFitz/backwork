@@ -1,7 +1,7 @@
 // The request view (design 7, 8): one request, every hop, what each service logged.
 // The page returns at once; hop records (searched window by window) and log lines
 // each stream in on their own, with their own skeleton and error state.
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
 import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import { Fragment, Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
@@ -10,14 +10,23 @@ import {
 } from "lucide-react";
 import { Badge, Card, CardHeadText, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
-import { requireOrg } from "~/lib/auth/context.server";
+import { hasRole, requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
-import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
+import { logLinesFor, logsOnly, progressiveLookup } from "~/lib/hops/query.server";
+import { pinAction, withPinFallback, type PinnedLookupResult } from "~/lib/pins.server";
+import { PIN_REASON_LABEL, type PinnedCopyInfo, type PinnedRequest } from "~/lib/pins";
+import { PinButton } from "~/components/insights/pin-button";
+import { PinnedBanner } from "~/components/insights/pinned-banner";
 import { splitRequests, type RequestPart } from "~/lib/hops/split";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
 import { buildPathNodes, expandableKeys, pathKeysTo, rowUs, visibleRows, type PathNode, type VisibleRow } from "~/lib/hops/path-rows";
 import { detectRepeats, repeatChip, repeatHint, repeatNote, repeatSentence, repeatsByHop, type RepeatGroup, type RepeatReport } from "~/lib/hops/repeated";
 import { RepeatChip } from "~/components/insights/repeat-chip";
+import { candidatesByHop, parallelCandidates, parallelSentence, PARALLEL_CHIP, type ParallelCandidate } from "~/lib/hops/concurrency";
+import { CHATTY_BADGE, chattyRequest, chattySentence } from "~/lib/hops/chatty";
+import { ParallelChip } from "~/components/insights/parallel-chip";
+import { WhyLine } from "~/components/insights/why-line";
+import { whyItWasSlow } from "~/lib/hops/verdict";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
@@ -50,14 +59,18 @@ interface Found {
   knownPeers: string[] | null;
   /** The window hit the fetch limit: counts are floors (BAC-68 "at least"). */
   truncated: boolean;
+  /** This request's pin, if any (BAC-78). */
+  pin: PinnedRequest | null;
+  /** Set when the records are the pinned copy, not Loki's. */
+  copy: PinnedCopyInfo | null;
 }
 
 /** A found window, with the peers it calls looked up (and the pairs it links saved). */
-function toFound(orgId: string): (r: WindowResult) => Promise<Found | null> {
-  return async (r) => {
+function toFound(orgId: string): (l: PinnedLookupResult) => Promise<Found | null> {
+  return async ({ result: r, pin, copy }) => {
     if (!r.found) return null;
     const knownPeers = await knownPeersFor(orgId, peerPairs(r.records), calledPeers(r.records));
-    return { records: r.records, links: r.links, window: r.window, knownPeers, truncated: r.truncated };
+    return { records: r.records, links: r.links, window: r.window, knownPeers, truncated: r.truncated, pin, copy };
   };
 }
 
@@ -80,22 +93,29 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const now = Date.now();
   if (!traceId) throw new Response("Not a trace ID", { status: 404 });
 
-  const lookup = progressiveLookup(traceId, tenant, now);
+  // Loki first; a pinned copy when Loki no longer has the request (BAC-78).
+  const lookup = withPinFallback(progressiveLookup(traceId, tenant, now), ctx.org.id, traceId, now);
   const found = toFound(ctx.org.id);
-  const logs = lookup.retention.then((r) => (r.found ? logLinesFor(traceId, r, tenant, now) : []));
+  const logs = lookup.retention.then((l) => (l.lines ?? (l.result.found ? logLinesFor(traceId, l.result, tenant, now) : [])));
   // Hop records off: the lines alone, grouped by service (design 7.2).
-  const onlyLogs = lookup.retention.then((r) => (r.found ? null : logsOnly(traceId, tenant, now)));
+  const onlyLogs = lookup.retention.then((l) => (l.result.found ? null : logsOnly(traceId, tenant, now)));
   return defer({
     traceId,
     // The original input when it was not the trace ID itself (a request ID, a UUID, a traceparent).
     input: q && q.toLowerCase() !== traceId ? q.slice(0, 200) : null,
     now,
+    canPin: hasRole(ctx.role, "member"),
     hour: settle(lookup.hour.then(found)),
     day: settle(lookup.day.then(found)),
     retention: settle(lookup.retention.then(found)),
     logs: settle(logs),
     onlyLogs: settle(onlyLogs),
   });
+}
+
+/** Pin and unpin (BAC-78): same origin, member and above, records fetched again server side. */
+export async function action({ request, params }: ActionFunctionArgs) {
+  return pinAction(request, traceIdFromPath(params.id));
 }
 
 // ---------------------------------------------------------------- formatting
@@ -365,6 +385,7 @@ function Tree({ found, d, logs, logsState }: { found: Found; d: Data; logs: Trac
   const part = parts[Math.min(sel, parts.length - 1)];
   return (
     <>
+      {found.copy ? <PinnedBanner copy={found.copy} /> : null}
       {parts.length > 1 ? <RequestSwitcher parts={parts} sel={sel} onSelect={setSel} /> : null}
       <OneRequest key={sel} found={found} part={part} d={d} logsState={logsState} logsTotal={logs.length} />
     </>
@@ -422,18 +443,23 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   // Repeated calls (BAC-68): found once per tree; the header fact opens and scrolls to the first.
   const repeats = useMemo(() => detectRepeats(tree, found.truncated), [tree, found.truncated]);
   const repeatOf = useMemo(() => repeatsByHop(repeats), [repeats]);
+  // Calls that could run together (BAC-71), by hop id.
+  const parallelOf = useMemo(() => candidatesByHop(parallelCandidates(tree, repeats)), [tree, repeats]);
   const [focus, setFocus] = useState<RepeatFocus | null>(null);
+  // Why it was slow (BAC-70): from hop records only, so the build with logs gives the same line.
+  const verdict = useMemo(() => whyItWasSlow(tree, repeats, d.now), [tree, repeats, d.now]);
   const head = headHop(tree);
   if (!head) return <LogsOnly d={d} />;
   const lastLog = logs.length ? logs[logs.length - 1].timeMs : null;
   const ctx: RowCtx = {
-    tree, colours, now: d.now, openHop, setOpenHop, logsState, traceId: d.traceId, repeatOf, focus,
+    tree, colours, now: d.now, openHop, setOpenHop, logsState, traceId: d.traceId, repeatOf, parallelOf, focus,
     axisStart: head.startMs, axisMs: Math.max(elapsedUs(head, d.now) / 1000, 0.001),
   };
   return (
     <>
-      <Header tree={tree} head={head} d={d} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
+      <Header tree={tree} head={head} d={d} pin={found.pin} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
+      <WhyLine verdict={verdict} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
       <PathCard ctx={ctx} />
       <div className="mt-4 space-y-4 md:hidden">
@@ -452,7 +478,7 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
 
 // ---------------------------------------------------------------- header, facts, IDs
 
-function Title({ head, size = "lg" }: { head: Hop; size?: "lg" | "sm" }) {
+function Title({ head, size = "lg", pinned = false }: { head: Hop; size?: "lg" | "sm"; pinned?: boolean }) {
   const status = statusOf(head);
   // The path this request called (HOP-24) is the title; its route template goes under it.
   const label = requestPath(head) ?? (head.dir === HopDir.In ? head.service : outLabel(head));
@@ -466,15 +492,17 @@ function Title({ head, size = "lg" }: { head: Hop; size?: "lg" | "sm" }) {
           {label}
         </span>
         <Badge tone={status.tone}>{status.text}</Badge>
+        {pinned ? <Badge>Pinned</Badge> : null}
       </h1>
       {route ? <div className="mt-0.5 font-mono text-[12.5px] text-faint [overflow-wrap:anywhere]">route {route}</div> : null}
     </>
   );
 }
 
-function Header({ tree, head, d, repeats, onShowRepeat }: { tree: RequestTree; head: Hop; d: Data; repeats: RepeatReport; onShowRepeat: (hopId: HopId) => void }) {
+function Header({ tree, head, d, pin, repeats, onShowRepeat }: { tree: RequestTree; head: Hop; d: Data; pin: PinnedRequest | null; repeats: RepeatReport; onShowRepeat: (hopId: HopId) => void }) {
   const counts = storeCallCounts(tree);
   const stores = counts.db + counts.cache;
+  const chatty = chattyRequest(tree);
   const storeWord = counts.db && counts.cache ? ["database and cache call", "database and cache calls"] : counts.cache ? ["cache call", "cache calls"] : ["database call", "database calls"];
   const jobs = tree.hops.filter((h) => h.dir === HopDir.In && h.via === Via.Job).length;
   const hopCount = tree.hops.filter((h) => !h.isStore).length;
@@ -483,14 +511,19 @@ function Header({ tree, head, d, repeats, onShowRepeat }: { tree: RequestTree; h
   return (
     <div data-content className="mb-4 flex items-start justify-between gap-8">
       <div className="min-w-0">
-        <div className="hidden md:block"><Title head={head} /></div>
-        <div className="md:hidden"><Title head={head} size="sm" /></div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="hidden md:block"><Title head={head} pinned={pin !== null} /></div>
+            <div className="md:hidden"><Title head={head} size="sm" pinned={pin !== null} /></div>
+          </div>
+          {d.canPin ? <PinButton traceId={d.traceId} pinned={pin !== null} /> : null}
+        </div>
         <div className="mt-2 flex flex-wrap gap-x-[18px] gap-y-1 text-[12.5px] text-muted">
           <span className={fact}>Started <Mono className="font-medium text-fg"><Clock ts={head.startMs} /></Mono><span className="hidden md:inline"> <DayWord ts={head.startMs} now={d.now} /></span></span>
           <span className={fact}>Took <Mono className="font-medium text-fg">{tookText(head, d.now)}</Mono></span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{hopCount}</b> {hopCount === 1 ? "hop" : "hops"}</span>
-          {stores ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{stores}</b> {stores === 1 ? storeWord[0] : storeWord[1]}</span> : null}
+          {stores ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{stores}</b> {stores === 1 ? storeWord[0] : storeWord[1]}{chatty.chatty ? <> <span title={chattySentence(chatty)}><Badge tone="neutral">{CHATTY_BADGE}</Badge></span></> : null}</span> : null}
           {repeats.repeatedCalls ? (
             <button
               type="button"
@@ -502,6 +535,11 @@ function Header({ tree, head, d, repeats, onShowRepeat }: { tree: RequestTree; h
             </button>
           ) : null}
           {jobs ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{jobs}</b> {jobs === 1 ? "background job" : "background jobs"}</span> : null}
+          {pin ? (
+            <span className="min-w-0 max-w-full truncate" title={pin.note ?? undefined}>
+              {PIN_REASON_LABEL[pin.reason].replace(/^./, (c) => c.toUpperCase())}{pin.note ? <>: <span className="text-fg">{pin.note}</span></> : null}
+            </span>
+          ) : null}
           <span className={cn(fact, faults ? "text-err" : "hidden md:inline")}><b className={cn("font-medium", faults ? "text-err" : "text-fg")}>{faults}</b> {faults === 1 ? "gap" : "gaps"}</span>
         </div>
       </div>
@@ -646,6 +684,8 @@ interface RepeatFocus {
 interface RowCtx {
   /** Each repeated call's group (BAC-68). */
   repeatOf: ReadonlyMap<HopId, RepeatGroup>;
+  /** Each call that could run together with its siblings (BAC-71). */
+  parallelOf: ReadonlyMap<HopId, ParallelCandidate>;
   focus: RepeatFocus | null;
   tree: RequestTree;
   colours: Map<string, string>;
@@ -861,6 +901,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
   const timed: Hop = members ? groupSpan(members) : node.call ?? hop;
   // A group row carries its finding; a call inside an open group does not repeat it.
   const repeat = members ? members.map((m) => ctx.repeatOf.get(m.hopId)).find((g) => g !== undefined) ?? null : grouped ? null : ctx.repeatOf.get(hop.hopId) ?? null;
+  const parallel = members ? null : ctx.parallelOf.get(node.call?.hopId ?? hop.hopId) ?? null;
   const status = statusOf(hop);
   const note = [node.call ? callNote(node.call, hop) : "", members ? `${members.length} calls · ${fmtUs(rowUs(node))} in all` : noteOf(hop), !members && repeat ? repeatNote(repeat) : ""].filter(Boolean).join(" · ");
   const geom = geometry(timed, ctx.axisStart, ctx.axisMs, ctx.now);
@@ -886,6 +927,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
         <HopText hop={hop} ctx={ctx} />
         {members ? <span className="shrink-0 font-mono text-[12px] font-medium text-muted">×{members.length}</span> : null}
         {repeat ? <RepeatChip group={repeat} /> : null}
+        {parallel ? <ParallelChip candidate={parallel} /> : null}
         {note ? <span className="min-w-0 truncate text-2xs text-faint">{note}</span> : null}
         {row.summary && !members ? <span className="min-w-0 shrink-0 truncate rounded-full bg-surface-2 px-2 py-px text-2xs text-muted">{row.summary}</span> : null}
       </div>
@@ -909,7 +951,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
           <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt ?? undefined}>{statementTail(hop)}</div>
         ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
-          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null].filter(Boolean).join(" · ")}
+          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null, parallel ? PARALLEL_CHIP : null].filter(Boolean).join(" · ")}
         </div>
         <Bar hop={timed} colour={colour} geom={geom} thin />
       </div>
@@ -936,6 +978,8 @@ function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | nu
     const hint = repeatHint(repeat);
     if (hint) facts.push(["Suggestion", hint]);
   }
+  const parallel = ctx.parallelOf.get(call?.hopId ?? hop.hopId);
+  if (parallel) facts.push(["Could run together", parallelSentence(parallel)]);
   if (hop.pipeline) facts.push(["Commands", `${hop.pipeline.ops.join(", ")} · sent as one MULTI block`]);
   if (hop.skewMs > 0) facts.push(["Start", `drawn from its caller's start: its records put it ${fmtGap(hop.skewMs)} earlier`]);
   if (hop.handoff) facts.push(["Made", "in the background (handoff)"]);
