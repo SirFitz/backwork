@@ -51,6 +51,11 @@ export const REPEAT_MIN_CACHE_SEQUENTIAL = 5;
 export const SLACK_MS = 1;
 /** Calls are sequential when at least this share of consecutive pairs ran one after another. */
 export const SEQUENTIAL_SHARE = 0.8;
+/** Calls are also sequential when, on average, no more than this many were in flight at once (their
+ *  durations added up over the time from the first start to the last end). Log lines are often
+ *  written in bursts, so two calls that ran one after another can carry end times a few
+ *  microseconds apart and look overlapped pair by pair; over the whole group the overlap is small. */
+export const SEQUENTIAL_MAX_IN_FLIGHT = 1.5;
 /** Cache commands whose starts all fall within this many milliseconds were sent in one write. */
 export const BATCH_WINDOW_MS = 2;
 /** A pipeline needs at least this many commands to be told apart from chance. */
@@ -125,7 +130,8 @@ export function callShapeKey(h: Pick<Hop, "via" | "op" | "peer" | "table" | "stm
  * How a set of repeated calls ran. `batchable` is true for cache commands from one client: started
  * all within BATCH_WINDOW_MS, at least BATCH_MIN_CALLS of them, they were one pipeline.
  * Otherwise sequential when at least SEQUENTIAL_SHARE of consecutive pairs (in start order) ran
- * one after another, within SLACK_MS; concurrent when they did not.
+ * one after another, within SLACK_MS, or when on average at most SEQUENTIAL_MAX_IN_FLIGHT calls
+ * were in flight; concurrent when neither holds.
  */
 export function classifyRepetition(calls: readonly CallSpan[], batchable: boolean): Repetition {
   const sorted = [...calls].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
@@ -135,7 +141,10 @@ export function classifyRepetition(calls: readonly CallSpan[], batchable: boolea
   }
   let after = 0;
   for (let i = 1; i < sorted.length; i++) if (sorted[i].startMs >= sorted[i - 1].endMs - SLACK_MS) after++;
-  return after / (sorted.length - 1) >= SEQUENTIAL_SHARE ? Repetition.Sequential : Repetition.Concurrent;
+  if (after / (sorted.length - 1) >= SEQUENTIAL_SHARE) return Repetition.Sequential;
+  const spanMs = Math.max(...sorted.map((c) => c.endMs)) - sorted[0].startMs;
+  const busyMs = sorted.reduce((a, c) => a + Math.max(0, c.endMs - c.startMs), 0);
+  return spanMs > 0 && busyMs / spanMs <= SEQUENTIAL_MAX_IN_FLIGHT ? Repetition.Sequential : Repetition.Concurrent;
 }
 
 /** What doing the calls at once could save, microseconds (see `RepeatGroup.wastedUs`). `durationsUs`

@@ -199,6 +199,14 @@ describe("repetition and waste", () => {
     expect(classifyRepetition(spans, false)).toBe(Repetition.Sequential);
   });
 
+  test("calls one after another whose lines were written in bursts still read as one after another", () => {
+    // The plans lookups of a stored GET /shop: end times (ms from the first) and durations (us).
+    // Pair by pair 5 of 13 look overlapped; 14 calls of about 1.1 ms each spread over 13 ms.
+    const ends = [0.055, 0.057, 0.063, 0.067, 1.26, 3.148, 3.181, 5.278, 7.245, 7.253, 9.234, 9.247, 12.211, 12.231];
+    const durs = [1007, 999, 1092, 1008, 1214, 1220, 1285, 953, 1018, 1011, 1015, 1350, 1200, 1221];
+    expect(classifyRepetition(ends.map((e, i) => ({ startMs: e - durs[i] / 1000, endMs: e })), false)).toBe(Repetition.Sequential);
+  });
+
   test("batched needs a batchable client; a database burst is concurrent", () => {
     const spans = Array.from({ length: 6 }, (_, i) => ({ startMs: 0.1 * i, endMs: 2 + 0.1 * i }));
     expect(classifyRepetition(spans, true)).toBe(Repetition.Batched);
