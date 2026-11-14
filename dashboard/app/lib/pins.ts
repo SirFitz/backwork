@@ -79,8 +79,23 @@ export type PinActionData = { ok: true; intent: PinIntent; trimmed: boolean } | 
 /** One page of the pinned list. */
 export interface PinPage {
   rows: PinnedRequest[];
-  /** Pass as `before` for the next page; null when there is none. */
-  next: number | null;
+  /** Pass as `before` for the next page (`pinCursor`); null when there is none. */
+  next: string | null;
+}
+
+/** Where a page of pins ends: pinned time and trace id, so pins saved in the same millisecond are not skipped. */
+export interface PinCursor {
+  pinnedAt: number;
+  traceId: string;
+}
+
+export function pinCursor(p: PinCursor): string {
+  return `${p.pinnedAt}.${p.traceId}`;
+}
+
+export function parsePinCursor(raw: string | null | undefined): PinCursor | null {
+  const m = /^(\d{1,15})\.([0-9a-f]{32})$/.exec(raw ?? "");
+  return m ? { pinnedAt: Number(m[1]), traceId: m[2] } : null;
 }
 
 // ---------------------------------------------------------------- caps

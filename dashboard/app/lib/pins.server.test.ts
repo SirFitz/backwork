@@ -3,7 +3,7 @@ import type { OrgContext } from "~/lib/auth/context.server";
 import type { ProgressiveLookup, WindowResult } from "~/lib/hops/query.server";
 import { buildRequestTree, requestSummary } from "~/lib/hops/tree";
 import { SearchWindow, type HopId, type HopKind, type HopRecord, type TraceId, type TraceLogLine } from "~/lib/hops/types";
-import { PIN_SNAPSHOT_MAX_BYTES, PinReason, type PinSnapshot, type PinnedRequest } from "./pins";
+import { PIN_SNAPSHOT_MAX_BYTES, PinReason, parsePinCursor, type PinSnapshot, type PinnedRequest } from "./pins";
 import { pinAction, withPinFallback, type PinActionDeps, type PinFallbackDeps } from "./pins.server";
 
 const TRACE = "4bf92f3577b34da6a3ce929d0e0e4736" as TraceId;
@@ -250,7 +250,7 @@ describe("pinned requests in Postgres", () => {
       expect(list.map((p) => p.traceId)).toEqual([traceN(4), traceN(3), traceN(2), traceN(1), TRACE]);
       const page = await pins.listPinsPage(org, undefined, 2);
       expect(page.rows.map((p) => p.traceId)).toEqual([traceN(4), traceN(3)]);
-      const page2 = await pins.listPinsPage(org, page.next ?? undefined, 2);
+      const page2 = await pins.listPinsPage(org, parsePinCursor(page.next), 2);
       expect(page2.rows.map((p) => p.traceId)).toEqual([traceN(2), traceN(1)]);
       expect((await pins.pinUsage(org))).toEqual({ count: 5, limit: 5, plan: "Free" });
 

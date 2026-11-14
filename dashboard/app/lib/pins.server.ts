@@ -26,8 +26,10 @@ import {
   pinLimitFor,
   pinSlot,
   pinnedCopyWanted,
+  pinCursor,
   planLabel,
   trimSnapshot,
+  type PinCursor,
   type AutoPinSettings,
   type PinActionData,
   type PinPage,
@@ -255,11 +257,17 @@ export async function loadPin(orgId: string, traceId: string): Promise<(PinnedRe
   return { ...toPinned(r), records: env.records, lines, links };
 }
 
-/** Newest first; `before` (epoch ms of `pinnedAt`) continues from an earlier page. */
-export async function listPins(orgId: string, limit: number, before?: number): Promise<PinnedRequest[]> {
+/** Newest first; `before` continues after the last pin of an earlier page. */
+export async function listPins(orgId: string, limit: number, before?: PinCursor | null): Promise<PinnedRequest[]> {
   await ensureSchema();
-  const where = before !== undefined && Number.isFinite(before)
-    ? and(eq(pinnedRequests.orgId, orgId), lt(pinnedRequests.pinnedAt, new Date(before)))
+  const where = before
+    ? and(
+        eq(pinnedRequests.orgId, orgId),
+        or(
+          lt(pinnedRequests.pinnedAt, new Date(before.pinnedAt)),
+          and(eq(pinnedRequests.pinnedAt, new Date(before.pinnedAt)), lt(pinnedRequests.traceId, before.traceId)),
+        ),
+      )
     : eq(pinnedRequests.orgId, orgId);
   const rows = await db
     .select(metaColumns)
@@ -274,10 +282,10 @@ export async function listPins(orgId: string, limit: number, before?: number): P
 /** Rows per page of the Pinned list. */
 export const PIN_PAGE_SIZE = 50;
 
-export async function listPinsPage(orgId: string, before?: number, limit: number = PIN_PAGE_SIZE): Promise<PinPage> {
+export async function listPinsPage(orgId: string, before?: PinCursor | null, limit: number = PIN_PAGE_SIZE): Promise<PinPage> {
   const rows = await listPins(orgId, limit + 1, before);
   const page = rows.slice(0, limit);
-  return { rows: page, next: rows.length > limit ? page[page.length - 1].pinnedAt : null };
+  return { rows: page, next: rows.length > limit ? pinCursor(page[page.length - 1]) : null };
 }
 
 export interface PinUsage {
