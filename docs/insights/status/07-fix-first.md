@@ -16,3 +16,12 @@ Branch `bac-74-fix-first`, worktree `backwork-wt/ins-fixfirst`, cut from origin/
 
 ## 2. Page and component: done
 - `routes/insights._index.tsx`, `components/insights/fix-list.tsx`.
+
+## 3. Tests: done
+- `lib/insights/fix-first.test.ts` (19), `lib/insights/fix-first.server.test.ts` (9: query strings, row join, failing and off sources, stale cache refreshing once), `components/insights/fix-list.test.ts` (4: skeleton, empty, full, partial).
+- `npx tsc --noEmit` exit 0; `npx bun test` exit 0 (661 pass, 7 skip, 0 fail; one earlier run had the existing 5000-call timing test in `repeated.test.ts` at 115 ms against its 100 ms bound, passed on rerun twice); `npx remix vite:build` exit 0, `build/` removed.
+
+## 4. Dev server on the shared stack: done
+- :3505 on `bw_ins_74`, seeded org as platform org. `/insights` 200, unauthenticated 302 to `/login?next=%2Finsights`; 15 rows, "Show more" absent at 1 h (exactly 15 items within the first page plus more below 30 not reached), sampled note shown, "as of 06:22 UTC, from 3 minutes ago" on a stale serve; `?window=6h` 200 with the 6 h links.
+- Loki unreachable (script with a closed Loki port): queries and repeats unavailable with the reason, routes and regressions still ranked.
+- First cold load on the dev server took 45 s (Vite optimising dependencies and reloading); one cold `?window=6h` hit the 5 s SSR abort (`entry.server.tsx`) and returned 500 to curl. Each source alone: 1 h routes 0.5 s, queries 2.6 s, repeats 2.4 s, regressions 0.5 s.
