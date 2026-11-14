@@ -407,7 +407,7 @@ function FindRequest() {
             ) : null}
             <div className="flex gap-2 px-4 py-2.5 text-xs leading-normal text-muted sm:px-3.5">
               {data.error ? (
-                <span className="text-err">Hop records unavailable: {data.error}</span>
+                <span className="text-err">Request records couldn't load. Try the search again.</span>
               ) : data.found ? (
                 <>
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ok" />

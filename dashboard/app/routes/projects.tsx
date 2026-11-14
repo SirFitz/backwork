@@ -1,4 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { describePanelError } from "~/lib/error-copy";
 import { defer, json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
 import { Fragment, useState } from "react";
@@ -265,7 +266,7 @@ export default function Projects() {
                   <Deferred resolve={d.controls} fallback={<RowsSkeleton rows={6} className="p-0" />}>
                     {(panel) =>
                       panel.error || !panel.data ? (
-                        <div className="text-2xs text-warn">data source unavailable — {(panel.error ?? "no data").slice(0, 180)}</div>
+                        <div className="text-2xs text-warn">{panel.error ? describePanelError(panel.error) : "No data yet."}</div>
                       ) : (
                         <DataControlsPanel view={panel.data} heading="Collected from this project" gridHeads={d.gridHeads} />
                       )
@@ -296,7 +297,7 @@ export default function Projects() {
           <Deferred resolve={d.deploys} fallback={<RowsSkeleton rows={3} />}>
             {(panel) =>
               panel.error ? (
-                <div className="px-4 py-3 text-2xs text-warn">data source unavailable: {panel.error.slice(0, 180)}</div>
+                <div className="px-4 py-3 text-2xs text-warn">{describePanelError(panel.error)}</div>
               ) : panel.data.length === 0 ? (
                 <p className="px-4 py-3 text-[13px] text-muted">No deploys reported yet. Add the command below to your deploy step.</p>
               ) : (
