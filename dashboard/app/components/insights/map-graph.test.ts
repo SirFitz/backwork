@@ -1,7 +1,9 @@
 // Renders the service map graph and list to HTML and checks what a person would see: every node,
 // every drawn edge, boxes that do not overlap, keyboard-reachable buttons, and the list holding
-// the same edges as the graph.
+// the same edges as the graph. Plain `.ts` with createElement: `*.test.ts` stays out of the type check
+// like every other test, and Remix does not treat it as a route.
 import { describe, expect, test } from "bun:test";
+import { createElement as h, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { MapDetails, MapGraph } from "~/components/insights/map-graph";
@@ -37,11 +39,11 @@ const MAP = buildMap({
   ]),
 });
 
-const render = (el: JSX.Element): string => renderToStaticMarkup(<MemoryRouter>{el}</MemoryRouter>);
+const render = (el: ReactElement): string => renderToStaticMarkup(h(MemoryRouter, null, el));
 const attrs = (html: string, name: string): string[] => [...html.matchAll(new RegExp(`${name}="([^"]+)"`, "g"))].map((m) => m[1]);
 
 describe("MapGraph", () => {
-  const html = render(<MapGraph map={MAP} selected={null} onSelect={() => {}} />);
+  const html = render(h(MapGraph, { map: MAP, selected: null, onSelect: () => {} }));
 
   test("draws every node and every drawn edge", () => {
     expect(attrs(html, "data-node").sort()).toEqual(MAP.nodes.map((n) => n.id).sort());
@@ -90,14 +92,14 @@ describe("MapGraph", () => {
 
   test("a selected edge shows its p95 on the line", () => {
     const id = MAP.edges[0].id;
-    const sel = render(<MapGraph map={MAP} selected={{ kind: SelectionKind.Edge, id }} onSelect={() => {}} />);
+    const sel = render(h(MapGraph, { map: MAP, selected: { kind: SelectionKind.Edge, id }, onSelect: () => {} }));
     expect(sel).toContain("p95 40 ms");
   });
 });
 
 describe("MapDetails", () => {
   test("a picked service lists its callers and callees with a link to Performance", () => {
-    const html = render(<MapDetails map={MAP} selected={{ kind: SelectionKind.Node, id: "svc:commerce-payments" }} range={PerfRange.H1} />);
+    const html = render(h(MapDetails, { map: MAP, selected: { kind: SelectionKind.Node, id: "svc:commerce-payments" }, range: PerfRange.H1 }));
     expect(html).toContain("Called by");
     expect(html).toContain("shop-api");
     expect(html).toContain("commerce-api");
@@ -107,7 +109,7 @@ describe("MapDetails", () => {
 
   test("a picked edge shows its figures and a link to the caller's requests", () => {
     const e = MAP.edges.find((x) => x.to === "store:shop-db");
-    const html = render(<MapDetails map={MAP} selected={{ kind: SelectionKind.Edge, id: e?.id ?? "" }} range={PerfRange.H6} />);
+    const html = render(h(MapDetails, { map: MAP, selected: { kind: SelectionKind.Edge, id: e?.id ?? "" }, range: PerfRange.H6 }));
     expect(html).toContain("shop-api to shop-db");
     expect(html).toContain('href="/requests?service=shop-api&amp;range=6h"');
   });
@@ -115,7 +117,7 @@ describe("MapDetails", () => {
 
 describe("MapList", () => {
   test("lists the same edges as the graph, grouped by caller", () => {
-    const html = render(<MapList map={MAP} />);
+    const html = render(h(MapList, { map: MAP }));
     const listed = attrs(html, "data-edge");
     expect([...listed].sort()).toEqual(MAP.edges.map((e) => e.id).sort());
     const callers = listed.map((id) => id.split("|")[0]);
