@@ -3,7 +3,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { NavLink, Outlet } from "@remix-run/react";
-import { PageTitle } from "~/components/ui";
+import { InfoTip } from "~/components/ui";
 import { requireOrg } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
 
@@ -61,14 +61,23 @@ function InsightTabs() {
   );
 }
 
+/** One row on every width. On a phone the tab strip is the row (the page name is in the bottom bar
+ *  and the title stays for screen readers), so the first card sits within 56 px of the header
+ *  (UI_ISSUES 4); from `sm` the title and the tabs share the row as on other pages. */
 export default function Insights() {
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageTitle
-        title="Insights"
-        sub="Where your requests lose time, ranked from the request records backwork already keeps: slow queries, repeated calls and the calls between your services."
-        right={<InsightTabs />}
-      />
+      <div data-page-head className="flex items-center gap-x-4 sm:justify-between">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h1 className="sr-only truncate text-[17px] font-semibold leading-6 tracking-tight sm:not-sr-only">Insights</h1>
+          <span className="hidden sm:inline-flex">
+            <InfoTip text="Where your requests lose time, ranked from the request records backwork already keeps: slow queries, repeated calls and the calls between your services." />
+          </span>
+        </div>
+        <div className="flex min-w-0 flex-1 justify-end sm:flex-none">
+          <InsightTabs />
+        </div>
+      </div>
       <Outlet />
     </div>
   );
