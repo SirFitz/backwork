@@ -15,7 +15,7 @@ const CELL = "whitespace-nowrap border-b border-border px-3 first:pl-4 last:pr-4
 
 /** "about 12 ms" when the figure is an estimate. */
 function p95Text(row: QueryRow): string {
-  if (row.p95S === null) return "—";
+  if (row.p95S === null) return "none";
   return row.p95Approx ? `about ${fmtLatency(row.p95S)}` : fmtLatency(row.p95S);
 }
 
