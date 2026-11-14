@@ -47,6 +47,22 @@ CREATE TABLE IF NOT EXISTS org_buckets (
   bytes bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (org_id, bucket));
 
+CREATE TABLE IF NOT EXISTS org_billing (
+  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'none',
+  trial_plan text, trial_ends_at timestamptz,
+  plan text, billing text, subscription_uid text, period_end timestamptz,
+  pending_plan text, pending_billing text,
+  card_on_file boolean NOT NULL DEFAULT false,
+  cancel_at_period_end boolean NOT NULL DEFAULT false,
+  checkout_reference text, checkout_plan text, checkout_billing text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS org_billing_subscription_idx ON org_billing (subscription_uid);
+
+CREATE TABLE IF NOT EXISTS billing_events (
+  event_key text PRIMARY KEY, org_id text, type text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now());
+
 CREATE TABLE IF NOT EXISTS memberships (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -186,6 +202,80 @@ CREATE TABLE IF NOT EXISTS filter_patterns (
   updated_by text REFERENCES users(id) ON DELETE SET NULL,
   updated_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS filter_patterns_org_name_uniq ON filter_patterns (org_id, name);
+
+-- Insights (BAC-67): created once here for the twelve features that use them.
+CREATE TABLE IF NOT EXISTS deploys (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id text REFERENCES projects(id) ON DELETE SET NULL,
+  service text NOT NULL,
+  version text, commit_sha text, environment text, url text, actor text,
+  deployed_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS deploys_org_idx ON deploys (org_id);
+CREATE INDEX IF NOT EXISTS deploys_org_service_at_idx ON deploys (org_id, service, deployed_at DESC);
+
+CREATE TABLE IF NOT EXISTS alert_state (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  rule_id text NOT NULL,
+  firing boolean NOT NULL DEFAULT false,
+  value double precision,
+  since timestamptz,
+  last_notified_at timestamptz,
+  pending_since timestamptz,
+  PRIMARY KEY (org_id, rule_id));
+
+CREATE TABLE IF NOT EXISTS alert_events (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  rule_id text NOT NULL,
+  kind text NOT NULL,
+  value double precision,
+  at timestamptz NOT NULL DEFAULT now(),
+  delivered jsonb);
+CREATE INDEX IF NOT EXISTS alert_events_org_idx ON alert_events (org_id);
+CREATE INDEX IF NOT EXISTS alert_events_org_rule_at_idx ON alert_events (org_id, rule_id, at DESC);
+
+CREATE TABLE IF NOT EXISTS digest_settings (
+  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  enabled boolean NOT NULL DEFAULT false,
+  channel_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  email_roles text,
+  weekday smallint NOT NULL DEFAULT 1,
+  hour_utc smallint NOT NULL DEFAULT 8,
+  updated_by text REFERENCES users(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS digest_runs (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  period_start date NOT NULL,
+  claimed_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  error text,
+  attempts smallint NOT NULL DEFAULT 0,
+  PRIMARY KEY (org_id, period_start));
+
+CREATE TABLE IF NOT EXISTS pinned_requests (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  trace_id text NOT NULL,
+  title text NOT NULL DEFAULT '',
+  note text,
+  reason text NOT NULL,
+  records jsonb NOT NULL,
+  lines jsonb NOT NULL DEFAULT '[]'::jsonb,
+  links jsonb NOT NULL DEFAULT '[]'::jsonb,
+  bytes integer NOT NULL DEFAULT 0,
+  pinned_by text REFERENCES users(id) ON DELETE SET NULL,
+  pinned_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, trace_id));
+CREATE INDEX IF NOT EXISTS pinned_requests_org_at_idx ON pinned_requests (org_id, pinned_at DESC);
+
+CREATE TABLE IF NOT EXISTS pin_settings (
+  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  auto_slow boolean NOT NULL DEFAULT false,
+  auto_failed boolean NOT NULL DEFAULT false,
+  updated_by text REFERENCES users(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now());
 `;
 
 declare global {
