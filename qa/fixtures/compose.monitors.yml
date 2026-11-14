@@ -1,0 +1,26 @@
+# Monitors scenario (BAC-80), local testing only: an uptime monitor's GET /cart on shop-api
+# (host binary.fleeksite.com, synthetic=1 on every inbound hop of its trace: three product
+# calls to commerce-api, one discount lookup on commerce-payments) and a shopper's GET /cart
+# with hosts and no marker, every cycle. Extra containers that write the scenario only
+# (BASE=0), so they can be added to a running stack without writing anything twice:
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yml -f qa/fixtures/compose.insights.yml \
+#     -f qa/fixtures/compose.monitors.yml up -d --build
+# or, beside a stack that is already up: docker compose -p <project> --project-directory . \
+#     -f qa/fixtures/compose.monitors.yml up -d --build
+# Formats differ like the rest: shop-api json, commerce-api json, commerce-payments kv.
+services:
+  monitors-shop-api:
+    build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
+    environment: { SERVICE: shop-api, FORMAT: json, CYCLE_S: "30", SCENARIO: monitors, BASE: "0" }
+    restart: unless-stopped
+  monitors-commerce-api:
+    build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
+    environment: { SERVICE: commerce-api, FORMAT: json, CYCLE_S: "30", SCENARIO: monitors, BASE: "0" }
+    restart: unless-stopped
+  monitors-commerce-payments:
+    build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
+    environment: { SERVICE: commerce-payments, FORMAT: kv, CYCLE_S: "30", SCENARIO: monitors, BASE: "0" }
+    restart: unless-stopped

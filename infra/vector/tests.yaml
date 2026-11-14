@@ -173,6 +173,7 @@ tests:
               assert_eq!(.tags.peer, "")
               assert_eq!(.tags.outcome, "ok")
               assert_eq!(.tags.status_class, "2xx")
+              assert_eq!(.tags.synthetic, "")
       - extract_from: bw_hop_store
         conditions:
           - type: vrl
@@ -181,6 +182,126 @@ tests:
               assert!(.tags.store == "db" || .tags.store == "cache")
               assert_eq!(.tags.op, "/charges")
               true
+
+  - name: cache hits, misses and connection wait become store counters (BAC-79, kv and json)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-payments
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 adapter=hono via=http method=POST op=/refunds outcome=ok status=201 duration_us=90000 db_n=3 db_us=60000 db_wait_us=42000 cache_n=10 cache_us=900 cache_hit_n=3 cache_miss_n=7"
+    outputs:
+      - extract_from: bw_metric_prep
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bw_m.cache_hit_n, 3.0)
+              assert_eq!(.bw_m.cache_miss_n, 7.0)
+              assert_eq!(.bw_m.db_wait_s, 0.042)
+              assert_eq!(.bw_m.db_s, 0.06)
+      - extract_from: bw_hop_store
+        conditions:
+          - type: vrl
+            source: |
+              assert!(.tags.store == "db" || .tags.store == "cache")
+              assert_eq!(.tags.op, "/refunds")
+      - extract_from: bw_hop_store_cache_hit
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.name, "backwork_hop_store_calls_total")
+              assert_eq!(.tags, {"service": "commerce-payments", "via": "http", "method": "POST", "op": "/refunds", "synthetic": "", "store": "cache_hit"})
+      - extract_from: bw_hop_store_cache_miss
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.name, "backwork_hop_store_calls_total")
+              assert_eq!(.tags.store, "cache_miss")
+      - extract_from: bw_hop_store_db_wait
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.name, "backwork_hop_store_seconds_total")
+              assert_eq!(.tags.store, "db_wait")
+
+  - name: json totals as numbers; a service without the new totals gets no value for them (BAC-79)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in_end","hop_id":"1f0a6c2e9b7d4405","parent_id":"b7ad6b7169203331","adapter":"fastify","via":"http","method":"GET","op":"/search","outcome":"ok","status":200,"duration_us":12000,"cache_n":10,"cache_us":900,"cache_hit_n":0,"cache_miss_n":10,"msg":"hop"}'
+    outputs:
+      - extract_from: bw_metric_prep
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bw_m.cache_hit_n, 0.0)
+              assert_eq!(.bw_m.cache_miss_n, 10.0)
+              assert!(!exists(.bw_m.db_wait_s))
+
+  - name: totals that are not numbers, or absent, are left out of the counters (BAC-79)
+    no_outputs_from: [bw_hop_store_cache_hit, bw_hop_store_cache_miss, bw_hop_store_db_wait]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=plug via=http method=POST op=/orders outcome=ok status=201 duration_us=61200 db_n=2 db_us=6400 cache_hit_n=x db_wait_us=-5"
+    outputs:
+      - extract_from: bw_metric_prep
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bw_m.db_n, 2.0)
+              assert!(!exists(.bw_m.cache_hit_n))
+              assert!(!exists(.bw_m.cache_miss_n))
+              assert!(!exists(.bw_m.db_wait_s))
+      - extract_from: bw_hop_store
+        conditions:
+          - type: vrl
+            source: assert!(.tags.store == "db" || .tags.store == "cache")
+
+  - name: hit and wait_us on data-store end records stay on the stored line (BAC-79)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=out_end hop_id=e19c4d72b05a3f68 parent_hop=a7d03b5e9c2f4816 hop_sent=false parent_id=b7ad6b7169203331 adapter=ioredis via=cache op=get peer=redis.internal outcome=ok duration_us=400 hit=false"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert!(ends_with(to_string!(.message), " hit=false"))
+
+  - name: monitor hops (synthetic=1, HOP-28) get synthetic="1" in kv and json; host is never a label
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f9 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=GET op=/cart host=binary.fleeksite.com synthetic=1 outcome=ok status=200 duration_us=14800"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: shop-api
+          message: '{"trace_id":"6503f5f183b828139d5b143365ad72fa","hop":"in","hop_id":"5d9e0b3347c1a2fa","parent_id":"b7ad6b7169203331","service":"shop-api","adapter":"hono","via":"http","method":"GET","op":"/cart","host":"binary.fleeksite.com","synthetic":1,"msg":"hop"}'
+    outputs:
+      - extract_from: bw_hop_duration
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.dir, "in")
+              assert_eq!(.tags.synthetic, "1")
+              assert!(!exists(.tags.host))
+      - extract_from: bw_hop_started
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tags.synthetic, "1")
 
   - name: start record counts as started; data-store hop feeds the histogram; label limits
     inputs:
@@ -195,7 +316,7 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.name, "backwork_hop_started_total")
-              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http", "op": ""})
+              assert_eq!(.tags, {"service": "commerce-api", "dir": "out", "via": "http", "op": "", "synthetic": ""})
 
   - name: data-store hop and an oversized op label
     inputs:
@@ -358,7 +479,7 @@ tests:
               assert_eq!(.tags.status_class, "")
               assert!(!exists(.tags.table))
               assert!(!exists(.tags.stmt))
-              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "synthetic", "via"])
 
   - name: a repeated trace_id (host metadata and the record) is still a hop record
     inputs:
@@ -431,7 +552,7 @@ tests:
             source: |
               assert_eq!(.tags.op, "/api/v1/public/m/:merchant_username/products")
               assert!(!exists(.tags.path))
-              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "via"])
+              assert_eq!(keys(object!(.tags)), ["dir", "method", "op", "outcome", "peer", "service", "status_class", "synthetic", "via"])
 
   - name: NestJS logger level read from the line, with or without colour codes (BAC-41 row 9)
     inputs:

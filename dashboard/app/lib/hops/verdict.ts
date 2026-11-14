@@ -15,6 +15,8 @@
  * 7. The service's own code takes OWN_SHARE: OwnTime.
  * 8. Otherwise Fast. A request under FAST_US is Fast too unless rules 3 to 6 name a culprit that
  *    took at least FAST_MIN_CULPRIT_US: own time on a fast request is no news.
+ * A shown verdict gains "waiting for a database connection" when the request's database calls
+ * report a wait of at least DB_WAIT_SHARE of their time (BAC-79, `cache-pool.ts`).
  *
  * Shares are of the head hop's duration and use wall-clock time, so overlapping calls never make a
  * share pass 100 percent; summed call time is only ever named as "call time". Calls that ran
@@ -27,6 +29,7 @@ import { headHop, isFailed, lengthUs, mergeIntervals, timeSplit, type IntervalMs
 import { Repetition, type RepeatGroup, type RepeatReport } from "./repeated";
 import { storeLabel } from "./store-label";
 import { fmtUs } from "./time-format";
+import { connectionWait, connectionWaitClause } from "./cache-pool";
 import { HopDir, HopState, type Hop, type HopId, type RequestTree } from "./types";
 
 // ---------------------------------------------------------------- fixed values
@@ -268,6 +271,10 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
   const rest = [...groupC, ...storeC, ...destC, ownC].filter((c) => !excluded.has(c.key) && share(c.us) > DETAIL_MIN_SHARE);
   const next = biggest(rest);
   const notes: string[] = [];
+  // BAC-79: database calls that report a connection wait (proposed HOP-26) say how much of their
+  // time was waiting, once that is at least DB_WAIT_SHARE of it.
+  const waitClause = connectionWaitClause(connectionWait(path));
+  if (waitClause) notes.push(waitClause);
   if (repeats.truncated) notes.push(TRUNCATED_NOTE);
   if (skewed(culprit.hopId, tree)) notes.push(SKEW_NOTE);
   return {

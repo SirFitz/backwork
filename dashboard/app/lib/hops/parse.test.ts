@@ -164,3 +164,55 @@ describe("traceIdOfLine and toTraceLogLine", () => {
     expect(parseHopRecord(entry(JSON.stringify({ message: IN, kind: "hop" })))?.hopId).toBe("1f0a6c2e9b7d4405");
   });
 });
+
+describe("host and synthetic (spec 0.13, HOP-27 and HOP-28)", () => {
+  const T = "6503f5f183b828139d5b143365ad72fa";
+  const at = (line: string): RawLogEntry => ({ ts: 1_700_000_000_000, line, labels: { service: "shop-api" } });
+  test("key=value: host lower case, synthetic as a boolean", () => {
+    const r = parseHopRecord(at(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=GET op=/cart path=/cart host=binary.fleeksite.com synthetic=1 outcome=ok status=200 duration_us=900`));
+    expect(r?.host).toBe("binary.fleeksite.com");
+    expect(r?.synthetic).toBe(true);
+  });
+  test("JSON: number and string forms, nested under metadata, inside the stored envelope", () => {
+    const rec = { trace_id: T, hop: "in", hop_id: "1f0a6c2e9b7d4405", parent_id: "b7ad6b7169203331", adapter: "plug", via: "http", op: "/api/v1/public/m/:merchant_username/products", host: "Dev.Inkress.com", synthetic: 1 };
+    const top = parseHopRecord(at(JSON.stringify(rec)));
+    expect(top?.host).toBe("dev.inkress.com");
+    expect(top?.synthetic).toBe(true);
+    expect(parseHopRecord(at(JSON.stringify({ ...rec, synthetic: "1" })))?.synthetic).toBe(true);
+    expect(parseHopRecord(at(JSON.stringify({ msg: "hop", metadata: rec })))?.synthetic).toBe(true);
+    const stored = parseHopRecord(at(JSON.stringify({ message: JSON.stringify(rec) })));
+    expect(stored?.host).toBe("dev.inkress.com");
+    expect(stored?.synthetic).toBe(true);
+  });
+  test("a port left on is dropped, a trailing dot too; IPv6 keeps its colons", () => {
+    const line = (h: string) => `trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=hono via=http op=/ host=${h}`;
+    expect(parseHopRecord(at(line("binary.fleeksite.com:3000")))?.host).toBe("binary.fleeksite.com");
+    expect(parseHopRecord(at(line("binary.fleeksite.com.")))?.host).toBe("binary.fleeksite.com");
+    expect(parseHopRecord(at(line("[::1]")))?.host).toBe("[::1]");
+  });
+  test("old records: no host, not synthetic; other values are not synthetic", () => {
+    const base = `trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=plug via=http op=/orders outcome=ok status=201 duration_us=900`;
+    const old = parseHopRecord(at(base));
+    expect(old?.host).toBeNull();
+    expect(old?.synthetic).toBe(false);
+    expect(parseHopRecord(at(`${base} synthetic=0`))?.synthetic).toBe(false);
+    expect(parseHopRecord(at(`${base} synthetic=yes`))?.synthetic).toBe(false);
+  });
+  test("outbound records never carry either (peer names the other side)", () => {
+    const r = parseHopRecord(at(`trace_id=${T} hop=out hop_id=1f0a6c2e9b7d4405 parent_hop=2f0a6c2e9b7d4405 hop_sent=true parent_id=b7ad6b7169203331 adapter=finch via=http method=GET peer=api.internal host=x.example synthetic=1`));
+    expect(r?.host).toBeNull();
+    expect(r?.synthetic).toBe(false);
+  });
+  test("a logger's or collector's own host beside the record is never the request's host", () => {
+    const rec = { trace_id: T, hop: "in", hop_id: "1f0a6c2e9b7d4405", parent_id: "b7ad6b7169203331", adapter: "plug", via: "http", op: "/orders" };
+    expect(parseHopRecord(at(JSON.stringify({ host: "web-1", msg: "hop", metadata: rec })))?.host).toBeNull();
+    expect(parseHopRecord(at(JSON.stringify({ host: "web-1", msg: "hop", metadata: { ...rec, host: "shop.example.com" } })))?.host).toBe("shop.example.com");
+    // The collector's stored envelope (Vector adds the container's host name at the top).
+    expect(parseHopRecord(at(JSON.stringify({ host: "06872f263378", kind: "hop", message: JSON.stringify(rec) })))?.host).toBeNull();
+    expect(parseHopRecord(at(JSON.stringify({ host: "06872f263378", kind: "hop", message: `trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=hono via=http op=/ host=shop.example.com` })))?.host).toBe("shop.example.com");
+  });
+  test("an over-long host is left out", () => {
+    const r = parseHopRecord(at(`trace_id=${T} hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=hono via=http op=/ host=${"a".repeat(201)}`));
+    expect(r?.host).toBeNull();
+  });
+});

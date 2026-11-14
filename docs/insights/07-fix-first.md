@@ -60,3 +60,13 @@ Mixed units invite false precision: labels say what each number is. First page l
 
 ## Out of scope
 Assigning or tracking fixes, snoozing items, per-team ownership.
+
+## As built (deviations and details settled in the BAC-74 PR)
+- **Regression impact** is requests x (mean request time now - mean the same hours last week), read as `totalNow - totalBefore x requestsNow / requestsBefore` from the `_sum` increase of both windows (`totalTimeQuery`/`totalTimeBy` in `metrics.server.ts`, last week with `offset 7d` and `compareLookbackSeconds`), never below zero. The planned p95 rise x requests overstated it: on the fixture shop-api came out at 96 s added in an hour in which all its requests took 48 s.
+- **Route query**: `routesByTotalTime(scope, range, tenant, client, limit = 15)` sends six instant queries: `topk(limit, <_sum increase>)` and requests, the two error halves, p95 and store share each as `(<q>) and topk(...)`, so every row has all figures and nothing outside the top is read. A route is amber from 5 % failed requests with at least 20 requests (`ROUTE_ERROR_WARN_SHARE`, `ROUTE_ERROR_MIN_REQUESTS`).
+- **Inputs** are narrow pure types (`FixRouteInput`, `FixRepeatInput`, `FixRegressionInput`) plus the pure `QueryRow`, so `fix-first.ts` never imports a `.server` module. `FixItem` gains `mono`, `detail` (hover text) and `impactShort` (the figure alone, for narrow screens). At most 10 slow queries and 10 repeats are taken; the list keeps 30 items (two pages of 15), filtered by kind in the browser.
+- **Repeats** are scanned over the same window as the list (`scanRepeats(tenant, windowMs)`); when the scan hits its record cap the saving reads "could save at least" and a note says the repeats were sampled. `/insights/repeats` has no filter parameters, so repeat rows link to the board as it is.
+- **Query links** use the board's built parameters: `/insights/queries?window=&service=&open=<service>:<shapeId>` (not `q=`).
+- **Store share above 100 %** (concurrent cache calls, the plain Redis pipeline on `GET /feed`) reads "its database and cache calls overlap, adding up to more than its own time" instead of "286 %".
+- **Layout**: the controls (kind chips, window) sit in the card header, as on the other Insights pages; below `md` the chips become a select, the impact shows as the figure alone below `xl` (full label from `xl`), the why column shows from `lg` (from `md` the row is too narrow beside the 224 px sidebar). The meta ("last hour, as of 06:22 UTC, from 3 minutes ago") hides on a phone like the slow queries board.
+- **Off** is shown for slow queries only when the Query text switch is off and the board is empty, and for repeats when database records carry no statements (`RepeatScan.statementsOff`).

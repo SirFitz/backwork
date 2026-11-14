@@ -57,9 +57,17 @@ File ownership (one owner per file inside a wave; mounts in shared routes are on
 
 1. Ticket open before work; branch `bac-NN-slug` from `origin/main`; own worktree under `backwork-wt/`.
 2. Plan followed; anything that had to change is written back into the plan file in the same PR.
-3. `bun run typecheck` exit 0 and `bun test` exit 0, exit codes reported. New pure code has unit tests; new SQL has an opt-in database test (`DATABASE_URL=<url> USAGE_TEST_DATABASE_URL=<url> bun test <file>`); the DDL test proves the new table is created on a fresh database.
+3. `bun run typecheck` exit 0, `bun test` exit 0 and `npx remix vite:build` exit 0, exit codes reported. The build matters: a route may import from a `.server` module only what its loader or action uses, and a constant, label or parser the page itself uses must come from a pure `.ts` module. Tests and the dev server do not catch this; the production build does (it failed on `main` once). New pure code has unit tests; new SQL has an opt-in database test (`DATABASE_URL=<url> USAGE_TEST_DATABASE_URL=<url> bun test <file>`); the DDL test proves the new table is created on a fresh database.
 4. Exercised in a real browser against the local stack with the insights fixture scenario (or seeded data) at 1440 and 390 wide: loading, empty and error states shown, no sideways scroll, UI_ISSUES checks that apply (top gap, card header height).
 5. PR description in plain language (what and why, no activity log, no blame), merged by me; deployed; checked live on backwork.dev as a metered and an unmetered organisation where it differs; ticket closed with the evidence; work log entry.
+
+## Lessons from the build
+
+- **The production build is a check of its own.** Two Insights routes imported constants from `.server` modules; tests, `tsc` and the dev server all passed, `remix vite:build` failed.
+- **First loads that read several sources need a budget.** Remix gives up on a slow stream after 5 seconds, so a cold first computation showed "data source unavailable". Pages that read several sources now give the computation 3.5 seconds, then show a shared building state (`components/insights/building.tsx`) and ask again.
+- **Phone spacing is measured, not assumed.** The Insights tab strip wrapped under the title (88 px to the first card, limit 56).
+- **Timing tests must not assume an idle machine.** Two 5000-call tests failed whenever the load average passed 100; the bound is now generous.
+- **Run the new thing against real data before calling it done.** The fix-first ranking, the repeated-calls list and the slow queries board were each checked on the shared fixture stack and again on production data.
 
 ## Risks that cut across features
 

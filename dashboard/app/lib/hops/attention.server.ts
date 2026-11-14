@@ -20,7 +20,7 @@ import { JumpKind, LIST_LIMIT, type RecordScan, type ServiceJump, type ServiceWi
 export { JumpKind, LIST_LIMIT };
 export type { RecordScan, ServiceJump, ServiceWindow, StalledRequest, UnreceivedCall };
 import { HealthChecks, vmClient, windowQueries as inboundWindowQueries, type PromClient, type WindowQueries } from "~/lib/hops/metrics.server";
-import { LOGQL_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
+import { LOGQL_NOT_HEALTH_OR_MONITOR, isHealthOrMonitor } from "~/lib/hops/health";
 import { peerPairs } from "~/lib/hops/peers";
 import { knownPeersFor, peerStore, type PeerStore } from "~/lib/hops/peers.server";
 
@@ -131,7 +131,7 @@ export function findStalled(records: readonly HopRecord[], now: number): Stalled
   const out = new Map<HopId, StalledRequest>();
   for (const r of records) {
     if (r.hop !== HopKind.In || ended.has(r.hopId) || out.has(r.hopId)) continue;
-    if (isHealthCheckOp(r.op)) continue;
+    if (isHealthOrMonitor(r)) continue;
     if (r.timeMs < now - ATTENTION_WINDOW_MS || now - r.timeMs < STALL_AFTER_MS) continue;
     out.set(r.hopId, { traceId: r.traceId, service: r.service, method: r.method, op: r.op, startMs: r.timeMs });
   }
@@ -180,7 +180,7 @@ export function limitList<T>(rows: readonly T[], truncated: boolean): RecordScan
 // ---------------------------------------------------------------- stalled and unreceived (queries)
 
 /** Inbound start and end records, health checks left out. */
-export const INBOUND_RECORDS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,6}in(?:_end)?(?:\\\\\\\\?\\"|\\\\s|$)" ${LOGQL_NOT_HEALTH_CHECK}`;
+export const INBOUND_RECORDS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,6}in(?:_end)?(?:\\\\\\\\?\\"|\\\\s|$)" ${LOGQL_NOT_HEALTH_OR_MONITOR}`;
 /** Outbound start and end records that are not database or cache calls. */
 export const OUTBOUND_CALLS_QUERY = `{kind="hop"} |~ "\\\\bhop\\\\W{1,6}out(?:_end)?(?:\\\\\\\\?\\"|\\\\s|$)" !~ "\\\\bvia\\\\W{1,6}(?:db|cache)(?:\\\\\\\\?\\"|\\\\s|$)"`;
 

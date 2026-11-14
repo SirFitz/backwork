@@ -40,4 +40,24 @@ describe("vector config", () => {
     const snap = { ...defaultSnapshot(), patterns: [] };
     expect(controlsVrl(snap)).not.toContain("BWPROTECT");
   });
+  test("BAC-79: the Database and cache switch strips the new totals, as the ingest proxy does", () => {
+    const snap = defaultSnapshot();
+    snap.project = { ...snap.project, stores: false };
+    const v = controlsVrl(snap);
+    expect(v).toContain(`includes(["db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n"], k)`);
+    expect(v).toContain(`replace(bw_head, r' (?:db|cache)_(?:n|us|hit_n|miss_n|wait_us)=\\S*', "")`);
+    expect(v).toContain("bw_on_stores = false");
+  });
+  test("BAC-79: hits, misses and wait are their own counters, routed only when reported", () => {
+    for (const y of [stackConfigYaml(), agentConfigYaml()]) {
+      expect(y).toContain(`cache_hits: '.bw_m.stores == true && exists(.bw_m.cache_hit_n)'`);
+      expect(y).toContain("inputs: [bw_hop_duration, bw_hop_started, bw_hop_store, bw_hop_store_cache_hit, bw_hop_store_cache_miss, bw_hop_store_db_wait]");
+      expect(y).toContain("store: cache_hit");
+      expect(y).toContain("store: cache_miss");
+      expect(y).toContain("store: db_wait");
+    }
+    // The existing store transform keeps exactly its four counters.
+    const store = stackConfigYaml().split("  bw_hop_store:\n")[1].split("\n\n")[0];
+    expect(store.match(/- type: counter/g)?.length).toBe(4);
+  });
 });

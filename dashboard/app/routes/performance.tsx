@@ -22,12 +22,14 @@ import {
 } from "~/lib/hops/metrics.server";
 import { cn } from "~/lib/utils";
 import { NUM, ServicesTable, TD, TIGHT, Th, errorTone, fmtLatency, fmtRate, fmtShare, latencyTone } from "~/components/services-table";
-import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
+import { HEALTH_PARAM, HEALTH_TOGGLE_LABEL, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
 import { compareRoutes, compareServices, serviceTrend } from "~/lib/hops/compare.server";
 import { canCompare, compareKey, type CompareRow } from "~/lib/hops/compare";
 import { deploysBetween } from "~/lib/deploys.server";
 import { CompareChip } from "~/components/insights/compare-chip";
 import { TrendCard, type TrendPanel } from "~/components/insights/trend-card";
+import { ShareCellText } from "~/components/insights/share-cell";
+import { cacheHitsCell, connWaitCell } from "~/lib/hops/cache-pool";
 
 export const meta: MetaFunction = () => [{ title: "Performance · backwork" }];
 
@@ -190,7 +192,7 @@ export default function Performance() {
         sub="Request rate, errors and latency for every service that reports hops, by service, route and connection."
         right={
           <>
-            <ToggleLink to={perfHref(range, d.requested, otherHealth, compare)} on={health === HealthChecks.Shown} label="Show health checks" short="Health" />
+            <ToggleLink to={perfHref(range, d.requested, otherHealth, compare)} on={health === HealthChecks.Shown} label={HEALTH_TOGGLE_LABEL} short="Health" />
             <ToggleLink
               to={perfHref(range, d.requested, health, !compare)}
               on={compare}
@@ -294,6 +296,8 @@ export default function Performance() {
                             {col ? <Th num className={TIGHT}>{col.head}</Th> : null}
                             <Th num className={cn(TIGHT, "hidden sm:table-cell")}>p99</Th>
                             <Th num className={TIGHT}>DB + cache</Th>
+                            <Th num className={TIGHT}>Cache hits</Th>
+                            <Th num className={cn(TIGHT, "hidden sm:table-cell")}>Conn. wait</Th>
                           </tr>
                         </thead>
                         <tbody>
@@ -311,6 +315,8 @@ export default function Performance() {
                               {col ? <td className={cn(TD, TIGHT, "text-right")}>{col.cell(r)}</td> : null}
                               <td className={cn(TD, TIGHT, NUM, "hidden sm:table-cell")}>{fmtLatency(r.p99)}</td>
                               <td className={cn(TD, TIGHT, NUM)}>{r.storeShare === null ? "—" : fmtShare(r.storeShare, 0)}</td>
+                              <td className={cn(TD, TIGHT, NUM)}><ShareCellText cell={cacheHitsCell(r.cacheHitRatio)} /></td>
+                              <td className={cn(TD, TIGHT, NUM, "hidden sm:table-cell")}><ShareCellText cell={connWaitCell(r.dbWaitShare)} /></td>
                             </tr>
                           ))}
                         </tbody>

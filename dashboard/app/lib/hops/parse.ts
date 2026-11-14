@@ -16,6 +16,8 @@ import {
   Via,
 } from "./types";
 import { PATH_FIELD } from "./paths";
+import { MonitorField } from "./health";
+import { StoreField } from "./store-fields";
 import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
@@ -107,16 +109,30 @@ function tryJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Top-level scalars first, then one level down under the nested keys; first value found wins. */
+/** Fields read only from the object that holds the record itself (the one with `trace_id`):
+ *  loggers and collectors put their own `host` (a machine or container name) beside a record
+ *  nested under `metadata`, and that is not the request's host (HOP-27). */
+const RECORD_OWN_KEYS = [MonitorField.Host] as const;
+
+/** Top-level scalars first, then one level down under the nested keys; first value found wins,
+ *  except for RECORD_OWN_KEYS. */
 function bagFromJson(obj: Record<string, unknown>): Map<string, Scalar> {
   const bag = new Map<string, Scalar>();
   const take = (o: Record<string, unknown>): void => {
     for (const [k, v] of Object.entries(o)) if (isScalar(v) && !bag.has(k)) bag.set(k, v);
   };
   take(obj);
+  let own: Record<string, unknown> | null = "trace_id" in obj ? obj : null;
   for (const key of NESTED_KEYS) {
     const inner = obj[key];
-    if (isRecord(inner)) take(inner);
+    if (!isRecord(inner)) continue;
+    take(inner);
+    if (own === null && "trace_id" in inner) own = inner;
+  }
+  for (const key of RECORD_OWN_KEYS) {
+    const v = own?.[key];
+    if (isScalar(v)) bag.set(key, v);
+    else bag.delete(key);
   }
   return bag;
 }
@@ -210,7 +226,24 @@ function totalsOf(bag: FieldBag): StoreTotals | null {
   const cacheCalls = int(bag, "cache_n", 0, Number.MAX_SAFE_INTEGER);
   const cacheUs = int(bag, "cache_us", 0, Number.MAX_SAFE_INTEGER);
   if (dbCalls === null && cacheCalls === null) return null;
-  return { dbCalls: dbCalls ?? 0, dbUs: dbUs ?? 0, cacheCalls: cacheCalls ?? 0, cacheUs: cacheUs ?? 0 };
+  return {
+    dbCalls: dbCalls ?? 0,
+    dbUs: dbUs ?? 0,
+    cacheCalls: cacheCalls ?? 0,
+    cacheUs: cacheUs ?? 0,
+    // Proposed HOP-25 and HOP-26: absent (not 0) when the service does not report them.
+    cacheHits: int(bag, StoreField.CacheHits, 0, Number.MAX_SAFE_INTEGER),
+    cacheMisses: int(bag, StoreField.CacheMisses, 0, Number.MAX_SAFE_INTEGER),
+    dbWaitUs: int(bag, StoreField.DbWaitUs, 0, Number.MAX_SAFE_INTEGER),
+  };
+}
+
+/** `wait_us` on a database end record (proposed HOP-26): whole microseconds, at most the call's
+ *  own duration (a larger value is read as the duration, as the writer is told to cap it). */
+function waitOf(bag: FieldBag, durationUs: number | null): number | null {
+  const w = int(bag, StoreField.WaitUs, 0, Number.MAX_SAFE_INTEGER);
+  if (w === null) return null;
+  return durationUs !== null && w > durationUs ? durationUs : w;
 }
 
 function namedFieldsOf(bag: FieldBag): NamedField[] {
@@ -230,6 +263,25 @@ function namedFieldsOf(bag: FieldBag): NamedField[] {
 function pathOf(bag: FieldBag): string | null {
   const v = bag.get(PATH_FIELD);
   return typeof v === "string" && v.startsWith("/") && isPrintableValue(v) ? v : null;
+}
+
+/** `host` (HOP-27): 1 to 200 bytes of 0x21..0x7E, read lower case; null otherwise. A port the
+ *  writer left on is dropped, so `Host:3000` and `host` read alike. */
+function hostOf(bag: FieldBag): string | null {
+  const v = bag.get(MonitorField.Host);
+  if (typeof v !== "string" || !isPrintableValue(v)) return null;
+  const lower = v.toLowerCase();
+  const colon = lower.lastIndexOf(":");
+  // Only a trailing numeric port is dropped; an IPv6 literal ("[::1]") keeps its colons.
+  const host = colon > 0 && !lower.includes("]", colon) && /^\d{1,5}$/.test(lower.slice(colon + 1)) ? lower.slice(0, colon) : lower;
+  const trimmed = host.endsWith(".") ? host.slice(0, -1) : host;
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** `synthetic` (HOP-28): `1` in either form (JSON number or string, key=value), or `true`. */
+function syntheticOf(bag: FieldBag): boolean {
+  const v = bag.get(MonitorField.Synthetic);
+  return v === 1 || v === "1" || v === true || v === "true";
 }
 
 /** `table` (STM-5, HOP-12); null when absent or out of bounds. */
@@ -304,6 +356,8 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
   if (!Number.isFinite(entry.ts)) return null;
 
   const parentId = bag.get("parent_id");
+  const durationUs = isEnd ? int(bag, "duration_us", 0, Number.MAX_SAFE_INTEGER) : null;
+  const storeEnd = hop === "out_end";
   return {
     traceId,
     hop,
@@ -320,6 +374,8 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     method: str(bag, "method"),
     op: str(bag, "op"),
     path: via === Via.Http && !isOut ? pathOf(bag) : null,
+    host: via === Via.Http && !isOut ? hostOf(bag) : null,
+    synthetic: !isOut && syntheticOf(bag),
     peer: isOut ? str(bag, "peer") : null,
     table: via === Via.Db && isOut ? tableOf(bag) : null,
     stmt: via === Via.Db && isOut ? stmtOf(bag) : null,
@@ -327,7 +383,9 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     outcome: isEnd ? outcome : null,
     status: isEnd ? int(bag, "status", 100, 999) : null,
     error: isEnd ? str(bag, "error") : null,
-    durationUs: isEnd ? int(bag, "duration_us", 0, Number.MAX_SAFE_INTEGER) : null,
+    durationUs,
+    hit: storeEnd && via === Via.Cache ? bool(bag, StoreField.Hit) : null,
+    waitUs: storeEnd && via === Via.Db ? waitOf(bag, durationUs) : null,
     totals: hop === "in_end" ? totalsOf(bag) : null,
     fields: hop === "in_end" ? namedFieldsOf(bag) : [],
     timeMs: entry.ts,

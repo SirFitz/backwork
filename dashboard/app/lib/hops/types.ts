@@ -88,12 +88,18 @@ export interface NamedField {
   value: string;
 }
 
-/** Data-store totals on an inbound end record (HOP-20). */
+/** Data-store totals on an inbound end record (HOP-20, and the proposed HOP-25 and HOP-26). */
 export interface StoreTotals {
   dbCalls: number;
   dbUs: number;
   cacheCalls: number;
   cacheUs: number;
+  /** `cache_hit_n`: one-key cache reads that found a value. Null when the service does not report it. */
+  cacheHits: number | null;
+  /** `cache_miss_n`: one-key cache reads that found nothing. Null when the service does not report it. */
+  cacheMisses: number | null;
+  /** `db_wait_us`: microseconds the request's database calls waited for a connection. Null when not reported. */
+  dbWaitUs: number | null;
 }
 
 /** One validated hop record line. Times are epoch milliseconds from the log entry. */
@@ -124,6 +130,12 @@ export interface HopRecord {
   /** Inbound HTTP hops: the path that was requested, long segments masked (spec HOP-24). `op`
    *  stays the route template: group by `op`, show `path` for one request. */
   path: string | null;
+  /** Inbound HTTP hops: the request's host, lower case, no port (spec 0.13, HOP-27). Missing or
+   *  null when not recorded (records before 0.13). */
+  host?: string | null;
+  /** Inbound hops: `synthetic=1` (HOP-28), an uptime monitor's request or one downstream of it.
+   *  Missing or false when not marked. */
+  synthetic?: boolean;
   peer: string | null;
   /** SQL data-store hops: the table the statement acts on (spec 13.2, STM-5), when recorded. */
   table: string | null;
@@ -134,6 +146,12 @@ export interface HopRecord {
   status: number | null;
   error: string | null;
   durationUs: number | null;
+  /** Cache end records of a one-key read: `hit` (proposed HOP-25), true when a value was found.
+   *  Null when not reported, and on every other record. */
+  hit: boolean | null;
+  /** Database end records: `wait_us` (proposed HOP-26), microseconds of `duration_us` spent waiting
+   *  for a connection. Null when not reported, and on every other record. */
+  waitUs: number | null;
   totals: StoreTotals | null;
   fields: NamedField[];
   /** Log entry time, epoch ms. */
@@ -201,6 +219,10 @@ export interface Hop {
   op: string | null;
   /** Inbound HTTP hops: the path that was requested (HOP-24), when recorded. */
   path: string | null;
+  /** Inbound HTTP hops: the request's host (HOP-27), when recorded. */
+  host?: string | null;
+  /** Inbound hops marked `synthetic=1` (HOP-28): a monitor's request. */
+  synthetic?: boolean;
   peer: string | null;
   /** SQL data-store hops (spec 13.2): table and statement shape, when recorded. */
   table: string | null;
@@ -220,6 +242,10 @@ export interface Hop {
   startMs: number;
   endMs: number | null;
   durationUs: number | null;
+  /** Cache hops: the end record's `hit` (see HopRecord). */
+  hit: boolean | null;
+  /** Database hops: the end record's `wait_us` (see HopRecord). */
+  waitUs: number | null;
   totals: StoreTotals | null;
   fields: NamedField[];
   linkedIds: LinkedId[];
