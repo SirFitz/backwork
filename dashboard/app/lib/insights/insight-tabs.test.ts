@@ -8,8 +8,10 @@ describe("Insights tabs", () => {
     expect(INSIGHT_TABS.map((t) => t.label)).toEqual(["Fix first", "Slow queries", "Repeated calls", "Service map"]);
   });
 
-  test("only tabs whose route exists are shown; today that is Fix first", () => {
-    expect(visibleInsightTabs().map((t) => t.key)).toEqual([InsightTab.FixFirst]);
+  test("only tabs whose route exists are shown, Fix first and Service map among them", () => {
+    expect(visibleInsightTabs()).toEqual(INSIGHT_TABS.filter((t) => t.ready));
+    expect(visibleInsightTabs().map((t) => t.key)).toContain(InsightTab.FixFirst);
+    expect(visibleInsightTabs().map((t) => t.key)).toContain(InsightTab.ServiceMap);
   });
 
   test("flipping ready shows a tab in its place", () => {

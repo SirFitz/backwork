@@ -23,6 +23,33 @@ export const EdgeTone = {
 } as const;
 export type EdgeTone = (typeof EdgeTone)[keyof typeof EdgeTone];
 
+/** How the map is shown: the drawn graph (desktop) or the table (always on a phone). */
+export const MapView = {
+  Graph: "graph",
+  List: "list",
+} as const;
+export type MapView = (typeof MapView)[keyof typeof MapView];
+
+export function parseMapView(value: string | null | undefined): MapView {
+  return value === MapView.List ? MapView.List : MapView.Graph;
+}
+
+/** What is picked on the graph: a node or an edge, by id. */
+export const SelectionKind = {
+  Node: "node",
+  Edge: "edge",
+} as const;
+export type SelectionKind = (typeof SelectionKind)[keyof typeof SelectionKind];
+export interface MapSelection {
+  kind: SelectionKind;
+  id: string;
+}
+
+/** Keys that pick the focused node or edge (they are buttons). */
+export function activatesSelection(key: string): boolean {
+  return key === "Enter" || key === " ";
+}
+
 /** Error share from which an edge is amber (the services table's `errorTone` uses the same). */
 export const EDGE_WARN_SHARE = 0.01;
 /** Error share from which an edge is red. */
@@ -204,7 +231,7 @@ export function buildMap(input: MapInput): ServiceMap {
     }
     if (!to.peers.includes(c.peer)) to.peers.push(c.peer);
     if (to.id === from.id) continue; // a service calling itself through its own host
-    const id = `${from.id}->${to.id}`;
+    const id = `${from.id}|${to.id}`;
     const prev = edges.get(id);
     if (prev) {
       prev.figures = mergeFigures(prev.figures, c.figures);
