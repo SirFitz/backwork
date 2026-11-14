@@ -19,6 +19,7 @@ import {
   mergeByShape,
   parentBatches,
   rawGroups,
+  SLOW_FRESH_MS,
   slowQueryLogql,
   statementCallsLogql,
   type InboundEnd,
@@ -32,8 +33,8 @@ import {
 export { SlowWindow } from "./slow-queries";
 export type { QueryRow, StatementRoutes } from "./slow-queries";
 
-/** A board result younger than this is served without asking Loki (2 minutes). */
-export const SLOW_FRESH_MS = 2 * 60_000;
+/** A board result younger than this is served without asking Loki: defined in the pure module, which the page uses too. */
+export { SLOW_FRESH_MS };
 /** A board result older than this is not shown; the page waits for a new one (15 minutes). */
 export const SLOW_MAX_STALE_MS = 15 * 60_000;
 /** The routes of one statement are kept this long (5 minutes). */

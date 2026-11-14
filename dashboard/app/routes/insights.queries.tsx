@@ -22,7 +22,8 @@ import {
   type QueryRow,
   type StatementRoutes,
 } from "~/lib/hops/slow-queries";
-import { SLOW_FRESH_MS, routesFor, slowQueries, type SlowQueries } from "~/lib/hops/slow-queries.server";
+import { routesFor, slowQueries, type SlowQueries } from "~/lib/hops/slow-queries.server";
+import { SLOW_FRESH_MS } from "~/lib/hops/slow-queries";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 

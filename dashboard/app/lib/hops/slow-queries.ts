@@ -433,3 +433,6 @@ export function groupCallingRoutes(calls: readonly SampledCall[], inbound: reado
     sampled: calls.length,
   };
 }
+
+/** A board result younger than this is served without asking Loki (2 minutes). The page uses it too. */
+export const SLOW_FRESH_MS = 2 * 60_000;
