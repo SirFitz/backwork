@@ -18,8 +18,13 @@
  *   FIXED     "1" (default) emits the two frame requests with their fixed IDs once
  *   SENSITIVE "1" (default) emits one line per cycle holding a card number,
  *             an email and a member number (for the sensitive-data filter test)
- *   SCENARIO  "insights" adds the insights requests (BAC-67) to every cycle: run it
- *             on shop-api, commerce-payments and commerce-risk (see qa/README.md)
+ *   SCENARIO  comma list. "insights" adds the insights requests (BAC-67) to every cycle: run it
+ *             on shop-api, commerce-payments and commerce-risk (see qa/README.md).
+ *             "monitors" (BAC-80) adds an uptime monitor's GET /cart and a shopper's: run
+ *             it on shop-api, commerce-api and commerce-payments
+ *   BASE      "1" (default) writes the frame requests, the generated POST /orders and the
+ *             ordinary lines; "0" writes the scenarios only (extra containers added to a
+ *             running stack, e.g. compose.monitors.yml, so nothing is written twice)
  *   REGRESSION_FILE  insights only: once this file exists, GET /shop takes twice as
  *             long (default /tmp/bw-regression; deploy.sh creates it)
  *
@@ -42,7 +47,7 @@ export const Format = { Json: "json", JsonNested: "json-nested", Kv: "kv" } as c
 export type Format = (typeof Format)[keyof typeof Format];
 
 /** Extra request sets a container can add to its cycle. */
-export const Scenario = { Insights: "insights" } as const;
+export const Scenario = { Insights: "insights", Monitors: "monitors" } as const;
 export type Scenario = (typeof Scenario)[keyof typeof Scenario];
 
 export type HopKind = "in" | "in_end" | "out" | "out_end";
@@ -65,6 +70,10 @@ export interface HopRecord {
   op?: string;
   /** Inbound HTTP hops: the path that was requested (spec 0.10, HOP-24). */
   path?: string;
+  /** Inbound HTTP hops: the request's host, lower case, no port (spec 0.13, HOP-27). */
+  host?: string;
+  /** Inbound hops of a monitor's request and its downstream requests (spec 0.13, HOP-28). */
+  synthetic?: 1;
   /** SQL data-store end records: the table (spec 0.9, section 13.2). */
   table?: string;
   peer?: string;
@@ -109,7 +118,7 @@ export type Emission =
 
 const FIELD_ORDER: readonly (keyof HopRecord)[] = [
   "trace_id", "hop", "hop_id", "parent_hop", "hop_sent", "tracer", "parent_id", "service", "adapter", "via",
-  "method", "op", "path", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "hit", "wait_us",
+  "method", "op", "path", "host", "synthetic", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "hit", "wait_us",
   "db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n",
 ];
 
@@ -570,6 +579,52 @@ export function insightsCycle(seed: number, regression: boolean): Emission[] {
 }
 
 // ---------------------------------------------------------------------------
+// Monitors scenario (BAC-80): an uptime monitor's cart check and a shopper's
+// ---------------------------------------------------------------------------
+
+/** The monitor's host (Possibug's one-minute cart check on a FleekSite site). */
+export const MONITOR_HOST = "binary.fleeksite.com";
+/** A real shopper's storefront host. */
+export const SHOPPER_HOST = "shop.example.com";
+/** The commerce API's own host, seen on its inbound hops. */
+export const API_HOST = "api.dev.example.com";
+/** The products route the cart page calls three times. */
+export const PRODUCTS_ROUTE = "/api/v1/public/m/:merchant_username/products";
+
+/**
+ * GET /cart on shop-api: three product calls to commerce-api and one discount lookup on
+ * commerce-payments, one after another. A monitor's request carries `synthetic=1` on every
+ * inbound hop of the trace (HOP-28); the shopper's carries hosts only.
+ */
+export function cartRender(s: InsightsSeed, who: "monitor" | "shopper"): Emission[] {
+  const S = Service.Shop, A = Service.Api, P = Service.Payments;
+  const t = s.trace(`cart:${who}`);
+  const pid = s.id(`cart:${who}:pid`);
+  const inId = s.id(`cart:${who}:in`);
+  const mark: Partial<HopRecord> = who === "monitor" ? { synthetic: 1 } : {};
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "hono", via: "http", method: "GET", op: "/cart", path: "/cart", host: who === "monitor" ? MONITOR_HOST : SHOPPER_HOST, ...mark };
+  const out: Emission[] = [];
+  let at = 1.5;
+  const call = (n: number, svc: Service, peer: string, op: string, path: string, ms: number): void => {
+    const outRec: HopRecord = { trace_id: t, hop: "out", hop_id: s.id(`cart:${who}:out:${n}`), parent_hop: inId, hop_sent: true, parent_id: pid, service: S, adapter: "undici", via: "http", method: "GET", peer };
+    const inRec: HopRecord = { trace_id: t, hop: "in", hop_id: s.id(`cart:${who}:in:${n}`), parent_hop: outRec.hop_id, parent_id: pid, service: svc, adapter: svc === A ? "plug" : "hono", via: "http", method: "GET", op, path, host: API_HOST, ...mark };
+    out.push({ at, service: S, kind: "hop", rec: outRec });
+    out.push(...inboundPair(svc, at + 0.4, { rec: inRec, endAt: at + ms - 0.4, statusCode: 200 }));
+    out.push({ at: at + ms, service: S, kind: "hop", rec: { ...outRec, hop: "out_end", outcome: "ok", status: 200, duration_us: us(ms) } });
+    at += ms + 0.6;
+  };
+  for (let n = 0; n < 3; n++) call(n, A, "api.dev.example.com", PRODUCTS_ROUTE, "/api/v1/public/m/binary/products", 18 + 10 * s.unit(`cart:${who}:p:${n}`));
+  call(3, P, "api.dev.example.com", "/api/v1/discounts/:code", "/api/v1/discounts/WELCOME10", 9 + 4 * s.unit(`cart:${who}:d`));
+  return [...inboundPair(S, 0, { rec, endAt: at + 1.2, statusCode: 200 }), ...out];
+}
+
+/** Every request of one monitors cycle: the monitor's check, then a shopper's cart. */
+export function monitorsCycle(seed: number): Emission[] {
+  const s = insightsSeed(seed);
+  return [...cartRender(s, "monitor"), ...cartRender(s, "shopper").map((e) => ({ ...e, at: e.at + 1500 }))];
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -581,6 +636,16 @@ function isFormat(v: string): v is Format {
 }
 function isScenario(v: string): v is Scenario {
   return (Object.values(Scenario) as string[]).includes(v);
+}
+
+/** SCENARIO as a comma list ("insights,monitors"); empty for none. */
+export function scenariosOf(raw: string): Scenario[] {
+  const out: Scenario[] = [];
+  for (const part of raw.split(",").map((p) => p.trim()).filter(Boolean)) {
+    if (!isScenario(part)) throw new Error(`SCENARIO entries must be ${Object.values(Scenario).join(", ")}; got ${part}`);
+    out.push(part);
+  }
+  return out;
 }
 
 function schedule(list: Emission[], service: Service, format: Format, startMs: number): void {
@@ -597,10 +662,10 @@ function main(): void {
   if (!isService(svc)) throw new Error(`SERVICE must be one of ${Object.values(Service).join(", ")}`);
   if (!isFormat(fmt)) throw new Error(`FORMAT must be one of ${Object.values(Format).join(", ")}`);
   const cycleMs = Math.max(5, Number(process.env.CYCLE_S ?? "30")) * 1000;
-  const fixed = (process.env.FIXED ?? "1") === "1";
+  const base = (process.env.BASE ?? "1") === "1";
+  const fixed = base && (process.env.FIXED ?? "1") === "1";
   const sensitive = (process.env.SENSITIVE ?? "1") === "1";
-  const scenario = process.env.SCENARIO ?? "";
-  if (scenario && !isScenario(scenario)) throw new Error(`SCENARIO must be one of ${Object.values(Scenario).join(", ")}`);
+  const scenarios = scenariosOf(process.env.SCENARIO ?? "");
   const regressionFile = process.env.REGRESSION_FILE ?? "/tmp/bw-regression";
 
   // First boundary: every container started by one `compose up` agrees on it.
@@ -613,11 +678,14 @@ function main(): void {
   const tick = (start: number): void => {
     // Generated requests share the boundary as their seed so every container
     // derives the same IDs without talking to the others.
-    const ids = seededHealthyIds(start);
-    const status = (start / cycleMs) % 5 === 4 ? 422 : 201;
-    schedule(healthyOrder(ids, { status, orderId: String(8000 + (start / cycleMs) % 1000) }), svc, fmt, start + 1000);
-    schedule(ordinaryLines(svc, sensitive), svc, fmt, start + 500);
-    if (scenario === Scenario.Insights) schedule(insightsCycle(start, existsSync(regressionFile)), svc, fmt, start + 5000);
+    if (base) {
+      const ids = seededHealthyIds(start);
+      const status = (start / cycleMs) % 5 === 4 ? 422 : 201;
+      schedule(healthyOrder(ids, { status, orderId: String(8000 + (start / cycleMs) % 1000) }), svc, fmt, start + 1000);
+      schedule(ordinaryLines(svc, sensitive), svc, fmt, start + 500);
+    }
+    if (scenarios.includes(Scenario.Insights)) schedule(insightsCycle(start, existsSync(regressionFile)), svc, fmt, start + 5000);
+    if (scenarios.includes(Scenario.Monitors)) schedule(monitorsCycle(start), svc, fmt, start + 12000);
     setTimeout(() => tick(start + cycleMs), Math.max(0, start + cycleMs - Date.now()));
   };
   tick(boundary + cycleMs);

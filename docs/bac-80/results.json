@@ -1,0 +1,147 @@
+[
+  {
+    "name": "1440 default: rows load",
+    "ok": true,
+    "detail": "100 rows"
+  },
+  {
+    "name": "1440 default: no monitor rows",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 default: shopper domain shown",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 Domain column header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 old rows show no placeholder for the domain",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 default: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "1440 box finds shop.example.com",
+    "ok": true,
+    "detail": "7 rows"
+  },
+  {
+    "name": "1440 toggle on: box finds binary.fleeksite.com",
+    "ok": true,
+    "detail": "6 rows"
+  },
+  {
+    "name": "1440 toggle on: monitor rows carry the Monitor badge",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 toggle on: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "1440 monitor view: Monitor chip",
+    "ok": true,
+    "detail": "GET /cart 200 Monitor"
+  },
+  {
+    "name": "1440 monitor view: domain next to the route",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "1440 monitor view: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "1440 old view: renders without chip or domain",
+    "ok": true,
+    "detail": "POST /orders"
+  },
+  {
+    "name": "1440 old view: no sideways scroll",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 default: rows load",
+    "ok": true,
+    "detail": "100 rows"
+  },
+  {
+    "name": "390 default: no monitor rows",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 default: shopper domain shown",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 old rows show no placeholder for the domain",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 default: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "390 box finds shop.example.com",
+    "ok": true,
+    "detail": "8 rows"
+  },
+  {
+    "name": "390 toggle on: box finds binary.fleeksite.com",
+    "ok": true,
+    "detail": "6 rows"
+  },
+  {
+    "name": "390 toggle on: monitor rows carry the Monitor badge",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 toggle on: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "390 monitor view: Monitor chip",
+    "ok": true,
+    "detail": "GET /cart 200 Monitor"
+  },
+  {
+    "name": "390 monitor view: domain next to the route",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "390 monitor view: no sideways scroll",
+    "ok": true,
+    "detail": "overflow 0px"
+  },
+  {
+    "name": "390 old view: renders without chip or domain",
+    "ok": true,
+    "detail": "POST /orders"
+  },
+  {
+    "name": "390 old view: no sideways scroll",
+    "ok": true,
+    "detail": ""
+  }
+]

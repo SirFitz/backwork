@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { HEALTH_CHECK_PATHS, HealthChecks, LOGQL_NOT_HEALTH_CHECK, PROM_NOT_HEALTH_CHECK, healthChecksFrom, isHealthCheckOp } from "./health";
+import {
+  HEALTH_CHECK_PATHS,
+  HealthChecks,
+  LOGQL_NOT_HEALTH_CHECK,
+  LOGQL_NOT_HEALTH_OR_MONITOR,
+  LOGQL_NOT_SYNTHETIC,
+  PROM_NOT_HEALTH_CHECK,
+  PROM_NOT_HEALTH_OR_MONITOR,
+  PROM_NOT_SYNTHETIC,
+  healthChecksFrom,
+  isHealthCheckOp,
+  isHealthOrMonitor,
+  shownUnder,
+} from "./health";
 
 describe("isHealthCheckOp", () => {
   test("every listed path, in any case", () => {
@@ -59,5 +72,59 @@ describe("LogQL line filter", () => {
 describe("PromQL matcher", () => {
   test("anchored, case-insensitive alternation of every path", () => {
     expect(PROM_NOT_HEALTH_CHECK).toBe('op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"');
+  });
+});
+
+// ---------------------------------------------------------------- monitors (BAC-80, HOP-28)
+
+describe("isHealthOrMonitor and shownUnder", () => {
+  test("a monitor's hop, a health check, and an ordinary or old record", () => {
+    expect(isHealthOrMonitor({ op: "/cart", synthetic: true })).toBe(true);
+    expect(isHealthOrMonitor({ op: "/healthz", synthetic: false })).toBe(true);
+    expect(isHealthOrMonitor({ op: "/cart", synthetic: false })).toBe(false);
+    expect(isHealthOrMonitor({ op: "/cart" })).toBe(false);
+    expect(isHealthOrMonitor({ op: null })).toBe(false);
+  });
+  test("hidden by default, every hop shown with the toggle", () => {
+    expect(shownUnder(HealthChecks.Hidden, { op: "/cart", synthetic: true })).toBe(false);
+    expect(shownUnder(HealthChecks.Hidden, { op: "/cart" })).toBe(true);
+    expect(shownUnder(HealthChecks.Shown, { op: "/cart", synthetic: true })).toBe(true);
+    expect(shownUnder(HealthChecks.Shown, { op: "/healthz" })).toBe(true);
+  });
+  test("the toggle keeps its parameter: ?health=1", () => {
+    expect(healthChecksFrom("1")).toBe(HealthChecks.Shown);
+    expect(healthChecksFrom(null)).toBe(HealthChecks.Hidden);
+  });
+});
+
+describe("monitor LogQL line filter", () => {
+  const re = logqlRegex(LOGQL_NOT_SYNTHETIC);
+  test("matches synthetic records in JSON (number and string), escaped JSON and key=value", () => {
+    expect(re.test('{"hop":"in_end","op":"/cart","host":"binary.fleeksite.com","synthetic":1,"status":200}')).toBe(true);
+    expect(re.test('{"hop":"in","synthetic":"1"}')).toBe(true);
+    expect(re.test('{"hop":"in","synthetic":true}')).toBe(true);
+    expect(re.test("trace_id=a hop=in_end via=http op=/cart host=binary.fleeksite.com synthetic=1 status=200")).toBe(true);
+    expect(re.test("hop=in op=/cart synthetic=1")).toBe(true);
+    const stored = JSON.stringify({ message: JSON.stringify({ hop: "in_end", op: "/cart", synthetic: 1 }) });
+    expect(re.test(stored)).toBe(true);
+  });
+  test("keeps real requests, old records and look-alike fields", () => {
+    expect(re.test('{"hop":"in_end","op":"/cart","host":"shop.example.com","status":200}')).toBe(false);
+    expect(re.test("hop=in_end op=/orders status=201")).toBe(false);
+    expect(re.test("hop=in_end op=/cart synthetic=0")).toBe(false);
+    expect(re.test("hop=in_end op=/cart synthetic=10")).toBe(false);
+    expect(re.test("hop=in_end op=/cart f_synthetic=1")).toBe(false);
+    expect(re.test('{"hop":"in_end","f_synthetic":"1"}')).toBe(false);
+  });
+  test("the combined filter is the health-check filter then the monitor filter", () => {
+    expect(LOGQL_NOT_HEALTH_OR_MONITOR).toBe(`${LOGQL_NOT_HEALTH_CHECK} ${LOGQL_NOT_SYNTHETIC}`);
+    expect(LOGQL_NOT_SYNTHETIC).toBe('!~ "\\\\bsynthetic\\\\W{1,6}(?:1|true)\\\\b"');
+  });
+});
+
+describe("monitor PromQL matcher", () => {
+  test("keeps series without the label (older collectors, real traffic)", () => {
+    expect(PROM_NOT_SYNTHETIC).toBe('synthetic!="1"');
+    expect(PROM_NOT_HEALTH_OR_MONITOR).toEqual([PROM_NOT_HEALTH_CHECK, 'synthetic!="1"']);
   });
 });

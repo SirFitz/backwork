@@ -99,3 +99,26 @@ after it was written; recreate the stack's VictoriaMetrics volume to start over.
 
 Without Docker: `SERVICE=shop-api FORMAT=json SCENARIO=insights CYCLE_S=10 bun qa/fixtures/emitter.ts`
 (and the same with `SERVICE=commerce-payments` and `SERVICE=commerce-risk` for the checkout receivers).
+
+## Monitors scenario (fixtures, BAC-80)
+
+Records with the Correlator 0.13 fields `host` (HOP-27) and `synthetic=1` (HOP-28). Every cycle an uptime
+monitor's `GET /cart` on shop-api (host `binary.fleeksite.com`, `synthetic=1` on every inbound hop of its
+trace: three `GET /api/v1/public/m/:merchant_username/products` on commerce-api and one
+`GET /api/v1/discounts/:code` on commerce-payments, all with host `api.dev.example.com`), then a shopper's
+`GET /cart` (host `shop.example.com`, the same calls, no marker). The other fixture records carry neither
+field (the old-records case). Formats: shop-api and commerce-api `json`, commerce-payments `kv`.
+
+`qa/fixtures/compose.monitors.yml` adds three scenario-only containers (`BASE=0`, nothing written twice), on a
+fresh stack or beside one that is already up:
+
+```bash
+docker compose -p <project> --project-directory . -f qa/fixtures/compose.monitors.yml up -d --build
+cd qa/fixtures && bun test        # the scenario's lines through the dashboard parser, all three formats
+```
+
+Browser check (Playwright-launched Chrome, 1440 and 390 wide, screenshots and `results.json` in `OUT`):
+
+```bash
+BW_BASE_URL=http://127.0.0.1:3580 BW_COOKIE=<backwork_auth> MONITOR_TRACE=<trace> OLD_TRACE=<trace> OUT=<dir> node qa/bac-80-check.mjs
+```

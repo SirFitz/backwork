@@ -1,0 +1,32 @@
+PASS 1440 default: rows load: 100 rows
+PASS 1440 default: no monitor rows
+PASS 1440 default: shopper domain shown
+PASS 1440 Domain column header
+PASS 1440 old rows show no placeholder for the domain
+PASS 1440 default: no sideways scroll: overflow 0px
+INFO 1440 header bottom to first card: 60px
+PASS 1440 box finds shop.example.com: 7 rows
+PASS 1440 toggle on: box finds binary.fleeksite.com: 6 rows
+PASS 1440 toggle on: monitor rows carry the Monitor badge
+PASS 1440 toggle on: no sideways scroll: overflow 0px
+PASS 1440 monitor view: Monitor chip: GET /cart 200 Monitor
+PASS 1440 monitor view: domain next to the route
+PASS 1440 monitor view: no sideways scroll: overflow 0px
+PASS 1440 old view: renders without chip or domain: POST /orders
+PASS 1440 old view: no sideways scroll
+PASS 390 default: rows load: 100 rows
+PASS 390 default: no monitor rows
+PASS 390 default: shopper domain shown
+PASS 390 old rows show no placeholder for the domain
+PASS 390 default: no sideways scroll: overflow 0px
+INFO 390 header bottom to first card: 56px
+PASS 390 box finds shop.example.com: 8 rows
+PASS 390 toggle on: box finds binary.fleeksite.com: 6 rows
+PASS 390 toggle on: monitor rows carry the Monitor badge
+PASS 390 toggle on: no sideways scroll: overflow 0px
+PASS 390 monitor view: Monitor chip: GET /cart 200 Monitor
+PASS 390 monitor view: domain next to the route
+PASS 390 monitor view: no sideways scroll: overflow 0px
+PASS 390 old view: renders without chip or domain: POST /orders
+PASS 390 old view: no sideways scroll
+29 passed, 0 failed

@@ -130,6 +130,12 @@ export interface HopRecord {
   /** Inbound HTTP hops: the path that was requested, long segments masked (spec HOP-24). `op`
    *  stays the route template: group by `op`, show `path` for one request. */
   path: string | null;
+  /** Inbound HTTP hops: the request's host, lower case, no port (spec 0.13, HOP-27). Missing or
+   *  null when not recorded (records before 0.13). */
+  host?: string | null;
+  /** Inbound hops: `synthetic=1` (HOP-28), an uptime monitor's request or one downstream of it.
+   *  Missing or false when not marked. */
+  synthetic?: boolean;
   peer: string | null;
   /** SQL data-store hops: the table the statement acts on (spec 13.2, STM-5), when recorded. */
   table: string | null;
@@ -213,6 +219,10 @@ export interface Hop {
   op: string | null;
   /** Inbound HTTP hops: the path that was requested (HOP-24), when recorded. */
   path: string | null;
+  /** Inbound HTTP hops: the request's host (HOP-27), when recorded. */
+  host?: string | null;
+  /** Inbound hops marked `synthetic=1` (HOP-28): a monitor's request. */
+  synthetic?: boolean;
   peer: string | null;
   /** SQL data-store hops (spec 13.2): table and statement shape, when recorded. */
   table: string | null;

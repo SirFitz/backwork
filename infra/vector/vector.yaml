@@ -355,6 +355,10 @@ transforms:
       if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
       bw_m.outcome = bw_l
       bw_st = to_int(get(bw_h, ["status"]) ?? 0) ?? 0
+      # HOP-28 (BAC-80): inbound hops of a monitor's request carry synthetic=1. "1" or "" (an empty
+      # label is no label, so series without it, and older collectors, stay one series as before).
+      bw_sy = get(bw_h, ["synthetic"]) ?? null
+      bw_m.synthetic = if bw_m.dir == "in" && (bw_sy == 1 || bw_sy == "1" || bw_sy == true || bw_sy == "true") { "1" } else { "" }
       bw_m.status_class = if bw_st >= 200 && bw_st < 300 { "2xx" } else if bw_st >= 300 && bw_st < 400 { "3xx" } else if bw_st >= 400 && bw_st < 500 { "4xx" } else if bw_st >= 500 && bw_st < 600 { "5xx" } else { "" }
       bw_d = to_float(get(bw_h, ["duration_us"]) ?? -1) ?? -1.0
       if bw_d >= 0.0 { bw_m.duration_s = bw_d / 1000000.0 }
@@ -409,6 +413,7 @@ transforms:
           peer: "{{ bw_m.peer }}"
           outcome: "{{ bw_m.outcome }}"
           status_class: "{{ bw_m.status_class }}"
+          synthetic: "{{ bw_m.synthetic }}"
 
   bw_hop_started:
     type: log_to_metric
@@ -422,6 +427,7 @@ transforms:
           dir: "{{ bw_m.dir }}"
           via: "{{ bw_m.via }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
 
   bw_hop_store:
     type: log_to_metric
@@ -436,6 +442,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: db
       - type: counter
         field: bw_m.cache_s
@@ -446,6 +453,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: cache
       - type: counter
         field: bw_m.db_n
@@ -456,6 +464,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: db
       - type: counter
         field: bw_m.cache_n
@@ -466,6 +475,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: cache
 
   bw_hop_store_cache_hit:
@@ -481,6 +491,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: cache_hit
 
   bw_hop_store_cache_miss:
@@ -496,6 +507,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: cache_miss
 
   bw_hop_store_db_wait:
@@ -511,6 +523,7 @@ transforms:
           via: "{{ bw_m.via }}"
           method: "{{ bw_m.method }}"
           op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
           store: db_wait
 
   bw_hop_cardinality:

@@ -68,6 +68,8 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     method: base.method,
     op: base.op,
     path: base.path ?? end?.path ?? null,
+    host: base.host ?? end?.host ?? null,
+    synthetic: base.synthetic === true || end?.synthetic === true,
     peer: base.peer,
     // Data-store hops have an end record only (HOP-19); the end record carries both fields.
     table: end?.table ?? base.table,
@@ -478,6 +480,8 @@ export interface RequestSummary {
   via: Via;
   status: number | null;
   failed: boolean;
+  /** The head hop is a monitor's (HOP-28); missing on summaries stored before BAC-80. */
+  synthetic?: boolean;
   state: HopState;
   services: number;
   durationUs: number | null;
@@ -495,6 +499,7 @@ export function requestSummary(tree: RequestTree): RequestSummary | null {
     via: head.via,
     status: head.status,
     failed: isFailed(head),
+    synthetic: head.synthetic === true,
     state: head.state,
     services: tree.services.length,
     durationUs: head.durationUs,

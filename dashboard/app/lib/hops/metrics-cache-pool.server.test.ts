@@ -18,7 +18,8 @@ import {
 import type { Tenant } from "~/lib/tenant.server";
 
 const SHOWN = HealthChecks.Shown;
-const NOT_HEALTH = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)"';
+// Health checks and monitors (BAC-80): the health-check matcher, then synthetic!="1".
+const NOT_HEALTH = 'op!~"(?i)/(?:healthz|health|ready|live|livez|readyz|ping)",synthetic!="1"';
 const ROUTE = ["service", "method", "op"];
 let seq = 0;
 const org = (): Tenant => ({ orgId: `org-cp-${++seq}`, platform: false });
