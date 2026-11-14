@@ -24,12 +24,20 @@ function ipIsPrivate(ip: string): boolean {
   return net.isIPv4(ip) ? isPrivateV4(ip) : isPrivateV6(ip);
 }
 
+/** Local webhook receivers allowed outside production only (BAC-72, for exercising alerts on a
+ *  laptop): `ALERT_DEV_WEBHOOK_HOSTS=localhost:4599,127.0.0.1:4599`, exact host and port. */
+export function devWebhookHosts(env: Record<string, string | undefined> = process.env): ReadonlySet<string> {
+  if (env.NODE_ENV === "production") return new Set();
+  return new Set((env.ALERT_DEV_WEBHOOK_HOSTS || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean));
+}
+
 /** Throws if the URL is not a safe, public http(s) destination. `allowHosts`
  *  restricts to specific public domains (Slack/Discord). */
 async function assertSafeUrl(raw: string, allowHosts?: string[]): Promise<void> {
   let u: URL;
   try { u = new URL(raw); } catch { throw new Error("invalid URL"); }
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("only http(s) URLs are allowed");
+  if (!allowHosts && u.port && devWebhookHosts().has(`${u.hostname.toLowerCase()}:${u.port}`)) return;
   const host = u.hostname.toLowerCase();
   if (allowHosts) {
     if (!allowHosts.some((h) => host === h || host.endsWith("." + h))) throw new Error(`host must be one of: ${allowHosts.join(", ")}`);
@@ -157,7 +165,18 @@ export function redact(c: Channel): Channel {
   return { ...c, config: cfg };
 }
 
-export type Msg = { title: string; body: string; severity: "critical" | "warning" | "ok" };
+export type Msg = {
+  title: string;
+  body: string;
+  severity: "critical" | "warning" | "ok";
+  /** A page to open; Slack, Discord and email show it under the body, a webhook gets it as a field. */
+  link?: string;
+};
+
+/** The body with its link on a line of its own, for the channels that render text. */
+function bodyWithLink(msg: Msg): string {
+  return msg.link ? `${msg.body}\n${msg.link}` : msg.body;
+}
 
 export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -179,7 +198,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
           method: "POST",
           redirect: "manual", // don't follow a 30x to an internal target (SSRF)
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: `*${msg.title}*\n${msg.body}` }),
+          body: JSON.stringify({ text: `*${msg.title}*\n${bodyWithLink(msg)}` }),
         });
         return r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` };
       }
@@ -189,7 +208,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
           method: "POST",
           redirect: "manual", // don't follow a 30x to an internal target (SSRF)
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ content: `**${msg.title}**\n${msg.body}` }),
+          body: JSON.stringify({ content: `**${msg.title}**\n${bodyWithLink(msg)}` }),
         });
         return r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` };
       }
@@ -202,7 +221,7 @@ export async function send(channel: Channel, msg: Msg): Promise<{ ok: boolean; e
           secure: port === 465,
           auth: c.user ? { user: c.user, pass: c.pass } : undefined,
         });
-        await transport.sendMail({ from: c.from, to: c.to, subject: msg.title, text: msg.body });
+        await transport.sendMail({ from: c.from, to: c.to, subject: msg.title, text: bodyWithLink(msg) });
         return { ok: true };
       }
       case "sms": {
