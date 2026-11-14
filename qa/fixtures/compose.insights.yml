@@ -1,0 +1,14 @@
+# Insights scenario (BAC-67), local testing only: adds the shop-api fixture and turns the
+# scenario on in the two services POST /checkout calls. Use on top of the local stack:
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yml -f qa/fixtures/compose.insights.yml up -d --build
+# See qa/README.md, "Insights scenario".
+services:
+  shop-api:
+    build: ./qa/fixtures
+    labels: { dev.backwork.collect: "true" }
+    environment: { SERVICE: shop-api, FORMAT: json, CYCLE_S: "30", SCENARIO: insights }
+    restart: unless-stopped
+  commerce-payments:
+    environment: { SCENARIO: insights }
+  commerce-risk:
+    environment: { SCENARIO: insights }

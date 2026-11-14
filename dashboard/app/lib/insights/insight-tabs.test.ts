@@ -1,5 +1,7 @@
+// The Insights tab strip (BAC-67). The definitions live in the route; a test beside it would be
+// picked up as a route by Remix, so it sits here.
 import { describe, expect, test } from "bun:test";
-import { INSIGHT_TABS, InsightTab, visibleInsightTabs, type InsightTabDef } from "./insights";
+import { INSIGHT_TABS, InsightTab, visibleInsightTabs, type InsightTabDef } from "~/routes/insights";
 
 describe("Insights tabs", () => {
   test("in plan order: Fix first, Slow queries, Repeated calls, Service map", () => {

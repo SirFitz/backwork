@@ -425,6 +425,9 @@ function FindRequest() {
   );
 }
 
+/** The `popover="manual"` attribute, which React 18's types do not know. */
+const POPOVER_MANUAL: Record<string, string> = { popover: "manual" };
+
 /** Width of the organisation menu, px (Tailwind w-60). */
 const AUTH_MENU_WIDTH_PX = 240;
 /** Gap between the menu and the window edge, px. */
@@ -463,11 +466,6 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
     const pop = popRef.current;
     if (pop?.matches(":popover-open")) pop.hidePopover();
     setOpen(false);
-  }, []);
-
-  // The popover attribute is set here: React 18 does not type it.
-  useEffect(() => {
-    popRef.current?.setAttribute("popover", "manual");
   }, []);
 
   // Close on navigation.
@@ -514,6 +512,9 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
       <div
         ref={popRef}
         data-org-menu
+        // Rendered on the server too, so the closed menu is hidden before hydration. React 18 does
+        // not type the attribute, so it goes in through a spread.
+        {...POPOVER_MANUAL}
         className="fixed m-0 overflow-auto rounded-lg border border-border bg-surface p-1 text-fg shadow-lg"
         style={{ inset: "auto" }}
       >

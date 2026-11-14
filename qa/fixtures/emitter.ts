@@ -18,21 +18,32 @@
  *   FIXED     "1" (default) emits the two frame requests with their fixed IDs once
  *   SENSITIVE "1" (default) emits one line per cycle holding a card number,
  *             an email and a member number (for the sensitive-data filter test)
+ *   SCENARIO  "insights" adds the insights requests (BAC-67) to every cycle: run it
+ *             on shop-api, commerce-payments and commerce-risk (see qa/README.md)
+ *   REGRESSION_FILE  insights only: once this file exists, GET /shop takes twice as
+ *             long (default /tmp/bw-regression; deploy.sh creates it)
  *
  * Run without Docker: SERVICE=commerce-api FORMAT=kv bun qa/fixtures/emitter.ts
  */
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 
 export const Service = {
   Api: "commerce-api",
   Payments: "commerce-payments",
   Risk: "commerce-risk",
   Worker: "commerce-worker",
+  /** The insights scenario's storefront (BAC-67). */
+  Shop: "shop-api",
 } as const;
 export type Service = (typeof Service)[keyof typeof Service];
 
 export const Format = { Json: "json", JsonNested: "json-nested", Kv: "kv" } as const;
 export type Format = (typeof Format)[keyof typeof Format];
+
+/** Extra request sets a container can add to its cycle. */
+export const Scenario = { Insights: "insights" } as const;
+export type Scenario = (typeof Scenario)[keyof typeof Scenario];
 
 export type HopKind = "in" | "in_end" | "out" | "out_end";
 export type Via = "http" | "rpc" | "job" | "message" | "db" | "cache" | "other";
@@ -147,7 +158,7 @@ export interface HealthyIds {
   parentId: string;
   apiIn: string; apiOutRisk: string; riskIn: string; riskCache: string;
   apiOutPay: string; payIn: string; payDb1: string; payOutAcq: string; payDb2: string;
-  apiDb: string; apiOutJob: string; workerIn: string;
+  apiDb: string; apiOutJob: string; workerIn: string; apiDbMerchant: string;
 }
 
 /** IDs of the healthy frame request (frame 2). */
@@ -293,6 +304,190 @@ export function ordinaryLines(service: Service, sensitive: boolean): Emission[] 
 }
 
 // ---------------------------------------------------------------------------
+// Insights scenario (BAC-67): requests with the patterns the insights features
+// find. Every container running SCENARIO=insights derives the same IDs from
+// the cycle boundary, so the cross-service requests line up.
+// ---------------------------------------------------------------------------
+
+/** Seeded IDs and numbers for one insights cycle. */
+export interface InsightsSeed {
+  /** 16-hex hop id for a label, the same in every container. */
+  id: (label: string) => string;
+  /** 32-hex trace id for a request label. */
+  trace: (label: string) => string;
+  /** A number in [0, 1) for a label, the same in every container. */
+  unit: (label: string) => number;
+}
+
+export function insightsSeed(seed: number): InsightsSeed {
+  const digest = (label: string): string => createHash("sha256").update(`insights:${seed}:${label}`).digest("hex");
+  return {
+    id: (label) => digest(label).slice(0, 16),
+    trace: (label) => digest(`trace:${label}`).slice(0, 32),
+    unit: (label) => parseInt(digest(`unit:${label}`).slice(0, 8), 16) / 0x1_0000_0000,
+  };
+}
+
+/** The N+1 statement: one plan looked up per product on the page. */
+export const N_PLUS_ONE_STMT = "select plans.id, plans.name, plans.price from plans where plans.number = ?";
+/** Times the N+1 statement runs per GET /shop. */
+export const N_PLUS_ONE_REPEATS = 14;
+/** The slow statement shape of GET /orders/:id. */
+export const SLOW_ORDERS_STMT = "select o0.id, o0.total, o0.status from orders as o0 where (o0.customer_id = ?) order by o0.created_at desc limit ?";
+/** Commands in the plain Redis pipeline of GET /feed. */
+export const PIPELINE_GETS = 12;
+
+/** The eight distinct selects of GET /shop, one per table. */
+const SHOP_SELECTS: readonly { table: string; stmt: string; ms: number }[] = [
+  { table: "products", stmt: "select products.id, products.name, products.plan_number from products where products.listed = ? order by products.rank limit ?", ms: 3.2 },
+  { table: "categories", stmt: "select categories.id, categories.name from categories where categories.visible = ?", ms: 1.1 },
+  { table: "banners", stmt: "select banners.id, banners.image from banners where banners.starts_at <= ? and banners.ends_at > ?", ms: 0.9 },
+  { table: "stock", stmt: "select stock.product_id, stock.count from stock where stock.product_id in (?)", ms: 1.8 },
+  { table: "prices", stmt: "select prices.product_id, prices.amount from prices where prices.product_id in (?) and prices.currency = ?", ms: 1.6 },
+  { table: "reviews", stmt: "select reviews.product_id, avg(reviews.stars) from reviews where reviews.product_id in (?) group by reviews.product_id", ms: 2.4 },
+  { table: "carts", stmt: "select carts.id, carts.items from carts where carts.session_id = ?", ms: 0.8 },
+  { table: "sessions", stmt: "update sessions set seen_at = ? where sessions.id = ?", ms: 0.7 },
+];
+
+type Inbound = { rec: HopRecord; endAt: number; statusCode: number; extra?: Partial<HopRecord> };
+
+function inboundPair(service: Service, start: number, i: Inbound): Emission[] {
+  return [
+    { at: start, service, kind: "hop", rec: i.rec },
+    { at: i.endAt, service, kind: "hop", rec: { ...i.rec, hop: "in_end", outcome: "ok", status: i.statusCode, duration_us: us(i.endAt - start), ...i.extra } },
+  ];
+}
+
+/** A data-store call written as its end record at `endAt` (store hops have no start record). */
+function storeCall(service: Service, base: Omit<HopRecord, "hop" | "hop_id" | "duration_us" | "outcome">, hopId: string, endAt: number, ms: number): Emission {
+  return { at: endAt, service, kind: "hop", rec: { ...base, hop: "out_end", hop_id: hopId, hop_sent: false, outcome: "ok", duration_us: us(ms) } };
+}
+
+/**
+ * GET /shop: the N+1. One request that runs the plans lookup 14 times one after another (one per
+ * product) plus 8 distinct selects. `slow` doubles every call (the regression mode).
+ */
+export function shopList(s: InsightsSeed, slow: boolean): Emission[] {
+  const S = Service.Shop;
+  const t = s.trace("shop");
+  const pid = s.id("shop:pid");
+  const inId = s.id("shop:in");
+  const k = slow ? 2 : 1;
+  const db = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "prisma", via: "db" as Via, peer: "shop-db" };
+  const out: Emission[] = [{ at: 1.2, service: S, kind: "log", level: "info", msg: "listing products page=1", trace_id: t }];
+  let at = 1.5 * k;
+  let dbUs = 0;
+  const first = SHOP_SELECTS[0];
+  at += first.ms * k;
+  out.push(storeCall(S, { ...db, op: "select", table: first.table, stmt: first.stmt }, s.id("shop:sel:0"), at, first.ms * k));
+  dbUs += us(first.ms * k);
+  for (let n = 0; n < N_PLUS_ONE_REPEATS; n++) {
+    const ms = (0.9 + 0.5 * s.unit(`shop:plan:${n}`)) * k;
+    at += 0.15 + ms;
+    out.push(storeCall(S, { ...db, op: "select", table: "plans", stmt: N_PLUS_ONE_STMT }, s.id(`shop:plan:${n}`), at, ms));
+    dbUs += us(ms);
+  }
+  for (let n = 1; n < SHOP_SELECTS.length; n++) {
+    const q = SHOP_SELECTS[n];
+    at += 0.15 + q.ms * k;
+    out.push(storeCall(S, { ...db, op: q.stmt.startsWith("update") ? "update" : "select", table: q.table, stmt: q.stmt }, s.id(`shop:sel:${n}`), at, q.ms * k));
+    dbUs += us(q.ms * k);
+  }
+  const endAt = at + 2.4 * k;
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/shop", path: "/shop" };
+  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: N_PLUS_ONE_REPEATS + SHOP_SELECTS.length, db_us: dbUs } }), ...out];
+}
+
+/**
+ * GET /orders/:id: one slow query shape (180 to 420 ms), then three independent cache gets run
+ * one after another that could have run together.
+ */
+export function orderLookup(s: InsightsSeed): Emission[] {
+  const S = Service.Shop;
+  const t = s.trace("order");
+  const pid = s.id("order:pid");
+  const inId = s.id("order:in");
+  const slowMs = 180 + 240 * s.unit("order:slow");
+  const orderNo = 5000 + Math.floor(1000 * s.unit("order:no"));
+  const db = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "prisma", via: "db" as Via, peer: "shop-db" };
+  const cache = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "ioredis", via: "cache" as Via, peer: "redis.internal", op: "get" };
+  let at = 2 + slowMs;
+  const out: Emission[] = [storeCall(S, { ...db, op: "select", table: "orders", stmt: SLOW_ORDERS_STMT }, s.id("order:db"), at, slowMs)];
+  const gets = [0.6, 0.8, 0.5];
+  gets.forEach((ms, n) => {
+    at += 0.3 + ms;
+    out.push(storeCall(S, cache, s.id(`order:get:${n}`), at, ms));
+  });
+  out.push({ at: at + 0.2, service: S, kind: "log", level: "info", msg: `order ${orderNo} loaded`, trace_id: t });
+  const endAt = at + 1.1;
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/orders/:id", path: `/orders/${orderNo}` };
+  const cacheUs = gets.reduce((a, ms) => a + us(ms), 0);
+  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: 1, db_us: us(slowMs), cache_n: gets.length, cache_us: cacheUs } }), ...out];
+}
+
+/** GET /feed: a plain Redis pipeline of 12 gets sent in one write. Must not be flagged as N+1 or
+ *  as calls that could run in parallel: they already did. */
+export function cacheFeed(s: InsightsSeed): Emission[] {
+  const S = Service.Shop;
+  const t = s.trace("feed");
+  const pid = s.id("feed:pid");
+  const inId = s.id("feed:in");
+  const cache = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "ioredis", via: "cache" as Via, peer: "redis.internal", op: "get" };
+  const out: Emission[] = [];
+  let cacheUs = 0;
+  for (let n = 0; n < PIPELINE_GETS; n++) {
+    // One write, replies in order: every command started at 1.0 ms and ended a little later.
+    const ms = 0.7 + 0.02 * n;
+    out.push(storeCall(S, cache, s.id(`feed:get:${n}`), 1.0 + ms, ms));
+    cacheUs += us(ms);
+  }
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/feed", path: "/feed" };
+  return [...inboundPair(S, 0, { rec, endAt: 3.4, statusCode: 200, extra: { cache_n: PIPELINE_GETS, cache_us: cacheUs } }), ...out];
+}
+
+/**
+ * POST /checkout: two outbound HTTP calls, to commerce-payments and then commerce-risk, run one
+ * after the other although neither needs the other's answer.
+ */
+export function checkout(s: InsightsSeed): Emission[] {
+  const S = Service.Shop, P = Service.Payments, R = Service.Risk;
+  const t = s.trace("checkout");
+  const pid = s.id("checkout:pid");
+  const inId = s.id("checkout:in");
+  const outPay: HopRecord = { trace_id: t, hop: "out", hop_id: s.id("checkout:out:pay"), parent_hop: inId, hop_sent: true, parent_id: pid, service: S, adapter: "undici", via: "http", method: "POST", peer: "payments.internal" };
+  const payIn: HopRecord = { trace_id: t, hop: "in", hop_id: s.id("checkout:pay:in"), parent_hop: outPay.hop_id, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/charges/authorise" };
+  const outRisk: HopRecord = { trace_id: t, hop: "out", hop_id: s.id("checkout:out:risk"), parent_hop: inId, hop_sent: true, parent_id: pid, service: S, adapter: "undici", via: "http", method: "POST", peer: "risk.internal" };
+  const riskIn: HopRecord = { trace_id: t, hop: "in", hop_id: s.id("checkout:risk:in"), parent_hop: outRisk.hop_id, parent_id: pid, service: R, adapter: "fastify", via: "http", method: "POST", op: "/screen" };
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "POST", op: "/checkout", path: "/checkout" };
+  const payMs = 38 + 20 * s.unit("checkout:pay");
+  const riskMs = 24 + 16 * s.unit("checkout:risk");
+  const payStart = 2.0, payEnd = payStart + payMs;
+  const riskStart = payEnd + 0.8, riskEnd = riskStart + riskMs;
+  return [
+    ...inboundPair(S, 0, { rec, endAt: riskEnd + 1.5, statusCode: 201 }),
+    { at: 0.6, service: S, kind: "log", level: "info", msg: "checkout started", trace_id: t },
+    { at: payStart, service: S, kind: "hop", rec: outPay },
+    ...inboundPair(P, payStart + 0.4, { rec: payIn, endAt: payEnd - 0.4, statusCode: 200 }),
+    { at: payEnd, service: S, kind: "hop", rec: { ...outPay, hop: "out_end", outcome: "ok", status: 200, duration_us: us(payMs) } },
+    { at: riskStart, service: S, kind: "hop", rec: outRisk },
+    ...inboundPair(R, riskStart + 0.4, { rec: riskIn, endAt: riskEnd - 0.4, statusCode: 200 }),
+    { at: riskEnd, service: S, kind: "hop", rec: { ...outRisk, hop: "out_end", outcome: "ok", status: 200, duration_us: us(riskMs) } },
+  ];
+}
+
+/** Every request of one insights cycle, spaced a second apart. */
+export function insightsCycle(seed: number, regression: boolean): Emission[] {
+  const s = insightsSeed(seed);
+  const shift = (list: Emission[], ms: number): Emission[] => list.map((e) => ({ ...e, at: e.at + ms }));
+  return [
+    ...shift(shopList(s, regression), 0),
+    ...shift(orderLookup(s), 1000),
+    ...shift(cacheFeed(s), 2000),
+    ...shift(checkout(s), 3000),
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -301,6 +496,9 @@ function isService(v: string): v is Service {
 }
 function isFormat(v: string): v is Format {
   return (Object.values(Format) as string[]).includes(v);
+}
+function isScenario(v: string): v is Scenario {
+  return (Object.values(Scenario) as string[]).includes(v);
 }
 
 function schedule(list: Emission[], service: Service, format: Format, startMs: number): void {
@@ -319,6 +517,9 @@ function main(): void {
   const cycleMs = Math.max(5, Number(process.env.CYCLE_S ?? "30")) * 1000;
   const fixed = (process.env.FIXED ?? "1") === "1";
   const sensitive = (process.env.SENSITIVE ?? "1") === "1";
+  const scenario = process.env.SCENARIO ?? "";
+  if (scenario && !isScenario(scenario)) throw new Error(`SCENARIO must be one of ${Object.values(Scenario).join(", ")}`);
+  const regressionFile = process.env.REGRESSION_FILE ?? "/tmp/bw-regression";
 
   // First boundary: every container started by one `compose up` agrees on it.
   let boundary = Math.ceil(Date.now() / cycleMs) * cycleMs;
@@ -334,6 +535,7 @@ function main(): void {
     const status = (start / cycleMs) % 5 === 4 ? 422 : 201;
     schedule(healthyOrder(ids, { status, orderId: String(8000 + (start / cycleMs) % 1000) }), svc, fmt, start + 1000);
     schedule(ordinaryLines(svc, sensitive), svc, fmt, start + 500);
+    if (scenario === Scenario.Insights) schedule(insightsCycle(start, existsSync(regressionFile)), svc, fmt, start + 5000);
     setTimeout(() => tick(start + cycleMs), Math.max(0, start + cycleMs - Date.now()));
   };
   tick(boundary + cycleMs);
