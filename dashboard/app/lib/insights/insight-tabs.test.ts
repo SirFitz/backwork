@@ -8,12 +8,14 @@ describe("Insights tabs", () => {
     expect(INSIGHT_TABS.map((t) => t.label)).toEqual(["Fix first", "Slow queries", "Repeated calls", "Service map"]);
   });
 
-  test("only tabs whose route exists are shown; today that is Fix first", () => {
-    expect(visibleInsightTabs().map((t) => t.key)).toEqual([InsightTab.FixFirst]);
+  test("only tabs whose route exists are shown, Fix first and Slow queries among them", () => {
+    const shown = visibleInsightTabs().map((t) => t.key);
+    expect(shown).toEqual(INSIGHT_TABS.filter((t) => t.ready).map((t) => t.key));
+    expect(shown.slice(0, 2)).toEqual([InsightTab.FixFirst, InsightTab.SlowQueries]);
   });
 
   test("flipping ready shows a tab in its place", () => {
-    const flipped: InsightTabDef[] = INSIGHT_TABS.map((t) => (t.key === InsightTab.ServiceMap ? { ...t, ready: true } : t));
+    const flipped: InsightTabDef[] = INSIGHT_TABS.map((t) => ({ ...t, ready: t.key === InsightTab.FixFirst || t.key === InsightTab.ServiceMap }));
     expect(visibleInsightTabs(flipped).map((t) => t.to)).toEqual(["/insights", "/insights/map"]);
   });
 });
