@@ -7,7 +7,7 @@ import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
 import { isCapped } from "~/lib/plans/limits";
 import { addToBucket, addToDaily, orgLimits } from "~/lib/plans/usage.server";
-import { startPlanJobs } from "~/lib/plans/retention.server";
+import { startBackgroundJobs } from "~/lib/jobs.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
 // <endpoint>/loki/api/v1/push. The bearer token resolves to an org + project;
@@ -22,7 +22,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   const tenant = await resolveIngestToken(token);
   if (!tenant) return new Response("unauthorized", { status: 401 });
-  startPlanJobs();
+  startBackgroundJobs();
 
   const ct = request.headers.get("content-type") || "application/json";
   if (!ct.includes("json")) {

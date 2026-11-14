@@ -47,7 +47,7 @@ import {
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
 import { themeSessionResolver } from "~/lib/theme.server";
-import { ensureEvaluator } from "~/lib/evaluator.server";
+import { startBackgroundJobs } from "~/lib/jobs.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";
 import { readLivePaused, writeLivePaused } from "~/lib/live-pref";
@@ -76,7 +76,7 @@ const PUBLIC_PATHS = new Set(["/login", "/register", "/onboarding", "/forgot"]);
 const MARKETING_PATHS = new Set(["/pricing", "/security", "/docs", "/about", "/privacy", "/terms", "/changelog"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  ensureEvaluator(); // start the background alert evaluator once
+  startBackgroundJobs(); // alert evaluator and plan jobs, once per process
   const path = new URL(request.url).pathname;
   const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite") || path.startsWith("/reset");
   const { getTheme } = await themeSessionResolver(request);
