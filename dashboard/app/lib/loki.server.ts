@@ -221,3 +221,56 @@ export function services(tenant?: Tenant): Promise<string[]> {
   const key = tenant && !tenant.platform ? `loki:services:${tenant.orgId}` : "loki:services";
   return cached(key, 30000, () => labelValues("service", tenant));
 }
+
+/** A time window in epoch milliseconds. */
+export interface TimeWindowMs {
+  start: number;
+  end: number;
+}
+
+/** One series of a metric query: its labels and its value at the end of the window. */
+export interface MetricSample {
+  metric: Record<string, string>;
+  value: number;
+}
+
+/** Client timeout for statement aggregates (BAC-67): the 12 s of `queryRange` is too short. */
+export const METRIC_INSTANT_TIMEOUT_MS = 25_000;
+
+type JsonFetch = <T>(url: string, init?: RequestInit & { timeoutMs?: number; retries?: number }) => Promise<T>;
+
+/**
+ * A LogQL metric query read as one value per series at `window.end` (BAC-67: statement aggregates
+ * over hop records). Uses `query_range` with `step = end - start`, like `rateByService`, because
+ * Loki's instant endpoint drops grouped results; no retry, since a slow aggregate retried doubles
+ * the load. Wrap callers in `cachedStale`. `fetcher` is injectable for tests.
+ */
+export async function metricInstant(
+  query: string,
+  window: TimeWindowMs,
+  tenant: Tenant,
+  timeoutMs: number = METRIC_INSTANT_TIMEOUT_MS,
+  fetcher: JsonFetch = fetchJson,
+): Promise<MetricSample[]> {
+  const startS = Math.floor(window.start / 1000);
+  const endS = Math.floor(window.end / 1000);
+  const params = new URLSearchParams({
+    query: scoped(query, tenant),
+    start: String(startS),
+    end: String(endS),
+    step: String(Math.max(1, endS - startS)),
+  });
+  const res = await fetcher<LokiMatrixResult>(
+    `${config.lokiUrl}/loki/api/v1/query_range?${params.toString()}`,
+    { timeoutMs, retries: 0 },
+  );
+  const out: MetricSample[] = [];
+  for (const series of res.data.result || []) {
+    const last = series.values[series.values.length - 1];
+    if (!last) continue;
+    const value = Number(last[1]);
+    if (!Number.isFinite(value)) continue;
+    out.push({ metric: series.metric || {}, value });
+  }
+  return out;
+}
