@@ -35,3 +35,22 @@ export const STORE_TOTAL_FIELDS: readonly StoreField[] = [
 
 /** Regex source (JS and Rust-regex alike) matching ` <total>=<value>` in a key=value line. */
 export const STORE_TOTALS_KV_PATTERN = " (?:db|cache)_(?:n|us|hit_n|miss_n|wait_us)=\\S*";
+
+/** Values of the `store` label on the store counters (`backwork_hop_store_seconds_total`,
+ *  `backwork_hop_store_calls_total`). `db` and `cache` are the request's time and calls in each
+ *  store; the other three are parts or kinds of those, so a sum over the store counters must
+ *  select `db` and `cache` only (STORE_SHARE_MATCHER) or it counts them twice. */
+export const StoreSeries = {
+  Db: "db",
+  Cache: "cache",
+  /** Calls counter: one-key cache reads that found a value. */
+  CacheHit: "cache_hit",
+  /** Calls counter: one-key cache reads that found nothing. */
+  CacheMiss: "cache_miss",
+  /** Seconds counter: database time spent waiting for a connection (part of `db`). */
+  DbWait: "db_wait",
+} as const;
+export type StoreSeries = (typeof StoreSeries)[keyof typeof StoreSeries];
+
+/** PromQL matcher that keeps the store counters to the request's own database and cache figures. */
+export const STORE_SHARE_MATCHER = `store=~"${StoreSeries.Db}|${StoreSeries.Cache}"`;
