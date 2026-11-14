@@ -72,3 +72,18 @@ The 12 s client timeout is raised only for `metricInstant` (25 s, no retry); a s
 
 ## Out of scope
 Per-query alerts (feature 5 reads this module's cached result), a per-statement Vector metric, EXPLAIN plans.
+
+## As built (BAC-69: deviations and details settled in the PR)
+- **One JSON query for top-level and nested records.** After unwrapping the envelope, `| json` then
+  `label_format` takes each field (`hop`, `via`, `stmt`, `table`, `peer`, `duration_us`) from the top
+  level or the first of `metadata`, `fields`, `data`, `context`, `attributes` (`{{ or .stmt .metadata_stmt ... }}`), as `parse.ts` reads them. A third nested-JSON query was not needed.
+- **Envelope unwrap that keeps bare lines.** `| json rec="message" | drop __error__, __error_details__ | line_format "{{ if contains \"trace_id\" .rec }}{{ .rec }}{{ else }}{{ __line__ }}{{ end }}"`: a bare kv line (no JSON) and a bare nested-JSON record (whose own `message` is "hop") keep their whole line.
+- **key=value: `stmt=` is cut off first.** `regexp "^(?P<kv_head>.*?)\\sstmt=(?P<stmt>.*)$"`, then the head (plus a trailing space) is the line and each field is read with `(?:^|\\s)<field>=(?P<field>\\S+)\\s`, so a statement containing `duration_us=?` or `peer=x` is never read as a field, and `hop=in_end` never matches `op=`. A `!~ "^\\s*\\{"` filter keeps JSON lines out of it.
+- **Grouped by `(service, peer, table, stmt)`**, with `keep` before the aggregation so the per-trace labels the JSON parser extracts never become series; records are checked for `hop="out_end"` and `via="db"` after parsing (the line filters alone could match text inside a statement).
+- **The row set is the top 200 by total time.** Each measure is `topk(200, ...)`; when any list comes back at 200, calls and p95 are read again as `<measure> and topk(200, <total>)` so every row has all three. Rows come from the total list only.
+- **Controls sit in the card head**, not in a second "Slow queries" title row: the Insights layout already owns the page title row (with the tab strip naming the board), and a second row would push the first card past the 64 px top gap (UI_ISSUES 4). On a phone the inline meta hides, the service select narrows to 7.5 rem, p95 and share move into the expanded row.
+- **The expanded row is URL state** (`?open=<service>:<shapeId>`): the same loader defers `routesFor` for that row, so no extra route and the expansion is linkable.
+- **`routesFor` line filters** are the quote- and backslash-free pieces of the sample (the longest six of at least 4 characters, chained `|=`), because a JSON envelope stores `"` as `\"`; candidate lines are parsed with `parseHopRecord` and kept only when `stmt` equals the sample exactly. Routes are looked up in the board's window.
+- **Times** read "as of 14:02 UTC" (rendered on the server, so no hydration mismatch); a result older than 2 minutes adds "from N minutes ago".
+- `lib/insights/insight-tabs.test.ts` now checks that the visible tabs are exactly the `ready` ones, so each wave-1 flip does not break it.
+- Measured on the local insights stack (Loki 3.3, about 1 000 hop lines an hour): each of the six queries 16 to 43 ms, the whole board 72 to 150 ms, routes lookup 35 to 45 ms. This says nothing about real volume: measure on the reference deployment before offering a longer window.
