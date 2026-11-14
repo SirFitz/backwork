@@ -4,12 +4,14 @@
  *
  * - An outbound call to another service and the inbound hop it reached are one row (they are the
  *   same call seen from both sides).
- * - Repeated store calls of one shape under the same hop fold into one row ("select … x160").
+ * - Repeated store calls of one shape (`callShapeKey`, BAC-68) under the same hop fold into one
+ *   row ("select … x160").
  * - Everything below the first service's own hops is folded, except what went wrong or took a
  *   large share of the request.
  */
+import { callShapeKey } from "./repeated";
 import { FAULT_GAPS } from "./tree";
-import { GapKind, HopDir, HopState, Outcome, StoreKind, Via, type Hop } from "./types";
+import { GapKind, HopDir, HopState, Outcome, StoreKind, Via, type Hop, type HopId } from "./types";
 
 /** A shape repeated at least this many times under one hop folds into one row. */
 export const GROUP_MIN = 3;
@@ -41,8 +43,10 @@ export interface VisibleRow {
   tail: boolean;
 }
 
+/** Store calls fold by the repeated-call detector's key (BAC-68), so the "xN" row and the finding
+ *  agree: statement shape for the database, command for the cache. */
 function shapeKey(h: Hop): string {
-  return `${h.via}\u0000${h.op ?? ""}\u0000${h.table ?? ""}\u0000${h.stmt ?? ""}\u0000${h.pipeline?.ops.join(" ") ?? ""}`;
+  return callShapeKey(h);
 }
 
 /** A call out of a service that reached exactly one inbound hop and nothing went wrong between them. */
@@ -181,4 +185,17 @@ export function expandableKeys(nodes: readonly PathNode[]): string[] {
   };
   nodes.forEach(visit);
   return keys;
+}
+
+/**
+ * The keys of the nodes from a root down to the row that shows `hopId` (a group holding it counts
+ * as that row), for "show me this call": open each, then scroll to the last. Null when no row has it.
+ */
+export function pathKeysTo(nodes: readonly PathNode[], hopId: HopId): string[] | null {
+  for (const n of nodes) {
+    if (n.hop.hopId === hopId || n.call?.hopId === hopId || n.members?.some((m) => m.hopId === hopId)) return [n.key];
+    const below = pathKeysTo(n.kids, hopId);
+    if (below) return [n.key, ...below];
+  }
+  return null;
 }

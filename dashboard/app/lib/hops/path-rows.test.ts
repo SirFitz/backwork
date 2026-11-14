@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildPathNodes, expandableKeys, GROUP_MIN, summaryOf, visibleRows } from "./path-rows";
+import { buildPathNodes, expandableKeys, GROUP_MIN, pathKeysTo, summaryOf, visibleRows } from "./path-rows";
 import { GapKind, HopDir, HopState, Outcome, StoreKind, Via, type Hop, type HopId } from "./types";
 
 let n = 0;
@@ -113,5 +113,33 @@ describe("path rows", () => {
     const rows = visibleRows(buildPathNodes([root]), none, 1000);
     expect(rows[1].expandable).toBe(false);
     expect(expandableKeys(buildPathNodes([root]))).toEqual([root.hopId]);
+  });
+});
+
+describe("path rows share the repeated-call shape (BAC-68)", () => {
+  const sel = (stmt: string, peer = "db"): Hop => mk({ via: Via.Db, isStore: true, op: "select", table: "stock", peer, stmt, durationUs: 1000 });
+
+  test("whitespace, case and IN list variants of one statement fold into one row", () => {
+    const kids = [sel("select stock.n from stock where stock.id in (?, ?)"), sel("SELECT stock.n FROM stock WHERE stock.id IN (?)"), sel("select stock.n from stock\nwhere stock.id in (?,?,?);")];
+    const root = mk({ dir: HopDir.In, durationUs: 10000, children: kids });
+    const [node] = buildPathNodes([root]);
+    expect(node.kids).toHaveLength(1);
+    expect(node.kids[0].members).toHaveLength(3);
+  });
+
+  test("the same statement to two hosts is two rows", () => {
+    const kids = [sel("select stock.n from stock", "a"), sel("select stock.n from stock", "a"), sel("select stock.n from stock", "b")];
+    const [node] = buildPathNodes([mk({ dir: HopDir.In, durationUs: 10000, children: kids })]);
+    expect(node.kids.map((k) => k.members?.length ?? 1)).toEqual([1, 1, 1]);
+  });
+
+  test("pathKeysTo finds the row holding a call: through a merged call, down to its group", () => {
+    const calls = [sel("select stock.n from stock"), sel("select stock.n from stock"), sel("select stock.n from stock")];
+    const inner = mk({ dir: HopDir.In, service: "other", durationUs: 20000, children: calls });
+    const call = mk({ dir: HopDir.Out, durationUs: 22000, children: [inner] });
+    const root = mk({ dir: HopDir.In, durationUs: 100000, children: [call] });
+    const nodes = buildPathNodes([root]);
+    expect(pathKeysTo(nodes, calls[1].hopId)).toEqual([root.hopId, inner.hopId, `group-${calls[0].hopId}`]);
+    expect(pathKeysTo(nodes, "ffffffffffffffff" as HopId)).toBeNull();
   });
 });

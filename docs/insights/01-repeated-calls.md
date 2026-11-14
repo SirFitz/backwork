@@ -90,3 +90,12 @@ Different adapters emit different text for one query, so a cross-adapter merge m
 
 ## Out of scope
 Fixing the query for the user; suggesting an index (that is feature 2's detail panel at most).
+
+## As built (deviations settled in the BAC-68 PR)
+- **Cache minimum.** Cache calls that ran one after another qualify from 5 (`REPEAT_MIN_CACHE_SEQUENTIAL`); cache calls that ran together still need `REPEAT_MIN_CACHE = 10`. With 10 for both, the live `/shop` example above (7 sequential `set` calls, 2.10 s) would never be reported, although each of those calls waited a round trip.
+- **Sequential, robustly.** Besides the 80 percent pair rule, a group is sequential when on average at most `SEQUENTIAL_MAX_IN_FLIGHT = 1.5` calls were in flight (summed durations over first start to last end); otherwise concurrent. Stored lines are written in bursts: in the fixture's real `GET /shop` records, 5 of the 13 pairs of plans lookups end a few microseconds apart and look overlapped, so the pair rule alone read the N+1 as "together". Over the group, 14 calls of about 1.1 ms spread over 13 ms.
+- **`atLeast`** uses the shortfall of the group's own store kind (a cache shortfall does not make a database count a floor).
+- **Shape key** is one exported function, `callShapeKey`, in `repeated.ts`: host, table and statement shape (or command when the statement is absent) for the database; host and command (and MULTI commands) for the cache. `path-rows.ts` folds by it, so the same statement to two database hosts is now two rows.
+- `repeatHint` gives a suggestion for sequential cache groups too ("Use one multi-key command or a pipeline."), as the copy section says; null for concurrent groups.
+- Not-recorded statements: the sentence ends "(matched by command and table: the query text was not recorded)".
+- `path-rows.ts` gains `pathKeysTo(nodes, hopId)` so the header fact can open and scroll to the first group.
