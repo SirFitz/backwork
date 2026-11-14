@@ -2,8 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { BACKGROUND_JOBS, JobName, startBackgroundJobs, startJobs, type BackgroundJob } from "./jobs.server";
 
 describe("background jobs", () => {
-  test("the evaluator and the plan jobs are both started from one place", () => {
-    expect(BACKGROUND_JOBS.map((j) => j.name)).toEqual([JobName.AlertEvaluator, JobName.PlanJobs]);
+  test("the evaluator, the plan jobs and the automatic pins are all started from one place", () => {
+    expect(BACKGROUND_JOBS.map((j) => j.name)).toEqual([JobName.AlertEvaluator, JobName.PlanJobs, JobName.AutoPins]);
   });
 
   test("startBackgroundJobs starts each job once per process", () => {
