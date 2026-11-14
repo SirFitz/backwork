@@ -10,7 +10,8 @@ import { Deferred, RowsSkeleton } from "~/components/defer";
 import { NUM, TD, Th } from "~/components/services-table";
 import { requireOrg } from "~/lib/auth/context.server";
 import { tenantOf } from "~/lib/tenant.server";
-import { REPEATS_WINDOW_MS, scanRepeats, type RepeatRow, type RepeatScan } from "~/lib/hops/repeats.server";
+import { REPEATS_WINDOW_MS, scanRepeats } from "~/lib/hops/repeats.server";
+import type { RepeatRow, RepeatScan } from "~/lib/hops/repeats.server";
 import { shapeLabel } from "~/lib/hops/stmt-shape";
 import { fmtUs } from "~/lib/hops/time-format";
 import { cn } from "~/lib/utils";
@@ -28,18 +29,21 @@ function settle<T>(p: Promise<T>): Promise<Settled<T>> {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
-  return defer({ scan: settle(scanRepeats(tenantOf(ctx.org.id))) });
+  return defer({ windowMinutes: REPEATS_WINDOW_MS / 60_000, scan: settle(scanRepeats(tenantOf(ctx.org.id))) });
 }
 
-const WINDOW_WORDS = `the last ${REPEATS_WINDOW_MS / 60_000} minutes`;
+function windowWords(minutes: number): string {
+  return `the last ${minutes} minutes`;
+}
 
 export default function RepeatedCalls() {
   const d = useLoaderData<typeof loader>();
+  const words = windowWords(d.windowMinutes);
   return (
     <Card>
-      <CardHead title="Repeated queries" sub={`Inside one request, ${WINDOW_WORDS}`} />
+      <CardHead title="Repeated queries" sub={`Inside one request, ${words}`} />
       <Deferred resolve={d.scan} fallback={<RowsSkeleton rows={5} />}>
-        {(s: Settled<RepeatScan>) => (s.ok ? <ScanBody scan={s.value} /> : <ScanFailed error={s.error} />)}
+        {(s: Settled<RepeatScan>) => (s.ok ? <ScanBody scan={s.value} words={words} /> : <ScanFailed error={s.error} />)}
       </Deferred>
     </Card>
   );
@@ -49,7 +53,7 @@ function ScanFailed({ error }: { error: string }) {
   return <p className="px-4 py-10 text-center text-[13px] text-err">Request records unavailable: {error}. Reload to try again.</p>;
 }
 
-function ScanBody({ scan }: { scan: RepeatScan }) {
+function ScanBody({ scan, words }: { scan: RepeatScan; words: string }) {
   if (scan.statementsOff) {
     return (
       <Empty icon={<Repeat className="h-5 w-5" />} title="Query text is switched off for this organisation, so repeats cannot be matched.">
@@ -57,7 +61,7 @@ function ScanBody({ scan }: { scan: RepeatScan }) {
       </Empty>
     );
   }
-  if (!scan.rows.length) return <Empty icon={<Repeat className="h-5 w-5" />} title={`No repeated queries in ${WINDOW_WORDS}.`} />;
+  if (!scan.rows.length) return <Empty icon={<Repeat className="h-5 w-5" />} title={`No repeated queries in ${words}.`} />;
   return (
     <>
       <div className="overflow-x-auto scroll-thin">
@@ -78,7 +82,7 @@ function ScanBody({ scan }: { scan: RepeatScan }) {
         </table>
       </div>
       {scan.truncated ? (
-        <p className="px-4 py-2 text-2xs text-faint">Sampled: the last {scan.recordsRead.toLocaleString("en-GB")} records of {WINDOW_WORDS}.</p>
+        <p className="px-4 py-2 text-2xs text-faint">Sampled: the last {scan.recordsRead.toLocaleString("en-GB")} records of {words}.</p>
       ) : null}
     </>
   );
