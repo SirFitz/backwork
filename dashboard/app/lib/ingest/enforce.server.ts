@@ -18,6 +18,7 @@ import {
   type ControlRow,
 } from "~/lib/controls.server";
 import { PATH_FIELD } from "~/lib/hops/paths";
+import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN } from "~/lib/hops/store-fields";
 import { STATEMENT_FIELDS, StatementField, recordPairs, splitStatement } from "~/lib/hops/stmt";
 
 export const LineKind = { Log: "log", Hop: "hop", Link: "link" } as const;
@@ -27,7 +28,8 @@ const HOP_KINDS = new Set(["in", "in_end", "out", "out_end"]);
 const NESTED = ["metadata", "fields", "data", "context", "attributes"] as const;
 const TRACE_RE = /^[0-9a-f]{32}$/;
 const HOP_ID_RE = /^[0-9a-f]{16}$/;
-const STORE_TOTALS = new Set(["db_n", "db_us", "cache_n", "cache_us"]);
+const STORE_TOTALS: ReadonlySet<string> = new Set(STORE_TOTAL_FIELDS);
+const STORE_TOTALS_KV = new RegExp(STORE_TOTALS_KV_PATTERN, "g");
 
 type Fields = Record<string, unknown>;
 
@@ -135,7 +137,7 @@ export function stripHopFields(raw: string, c: Classified, strip: HopStrip): str
   const { head, stmt } = splitStatement(raw);
   let out = head;
   if (dropNamed) out = out.replace(/ f_[a-z0-9_]+=\S*/g, "");
-  if (dropStores) out = out.replace(/ (?:db|cache)_(?:n|us)=\S*/g, "");
+  if (dropStores) out = out.replace(STORE_TOTALS_KV, "");
   if (dropStatements) out = out.replace(/ table=\S*/g, "");
   if (dropPaths) out = out.replace(/ path=\S*/g, "");
   return stmt === null || dropStatements ? out : `${out} stmt=${stmt}`;

@@ -88,12 +88,18 @@ export interface NamedField {
   value: string;
 }
 
-/** Data-store totals on an inbound end record (HOP-20). */
+/** Data-store totals on an inbound end record (HOP-20, and the proposed HOP-25 and HOP-26). */
 export interface StoreTotals {
   dbCalls: number;
   dbUs: number;
   cacheCalls: number;
   cacheUs: number;
+  /** `cache_hit_n`: one-key cache reads that found a value. Null when the service does not report it. */
+  cacheHits: number | null;
+  /** `cache_miss_n`: one-key cache reads that found nothing. Null when the service does not report it. */
+  cacheMisses: number | null;
+  /** `db_wait_us`: microseconds the request's database calls waited for a connection. Null when not reported. */
+  dbWaitUs: number | null;
 }
 
 /** One validated hop record line. Times are epoch milliseconds from the log entry. */
@@ -140,6 +146,12 @@ export interface HopRecord {
   status: number | null;
   error: string | null;
   durationUs: number | null;
+  /** Cache end records of a one-key read: `hit` (proposed HOP-25), true when a value was found.
+   *  Null when not reported, and on every other record. */
+  hit: boolean | null;
+  /** Database end records: `wait_us` (proposed HOP-26), microseconds of `duration_us` spent waiting
+   *  for a connection. Null when not reported, and on every other record. */
+  waitUs: number | null;
   totals: StoreTotals | null;
   fields: NamedField[];
   /** Log entry time, epoch ms. */
@@ -230,6 +242,10 @@ export interface Hop {
   startMs: number;
   endMs: number | null;
   durationUs: number | null;
+  /** Cache hops: the end record's `hit` (see HopRecord). */
+  hit: boolean | null;
+  /** Database hops: the end record's `wait_us` (see HopRecord). */
+  waitUs: number | null;
   totals: StoreTotals | null;
   fields: NamedField[];
   linkedIds: LinkedId[];

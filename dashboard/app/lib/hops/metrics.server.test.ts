@@ -134,15 +134,15 @@ describe("query builders (design 8.1)", () => {
   });
   test("time in data stores is store seconds over inbound seconds", () => {
     expect(storeShareQuery(servicesScope(SHOWN), PerfRange.H6)).toBe(
-      `${wi(`backwork_hop_store_seconds_total`, "6h", ["service"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in"}`, "6h", ["service"])}`
+      `${wi(`backwork_hop_store_seconds_total{store=~"db|cache"}`, "6h", ["service"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in"}`, "6h", ["service"])}`
     );
     expect(storeShareQuery(routesScope("svc", SHOWN), PerfRange.H6)).toBe(
-      `${wi(`backwork_hop_store_seconds_total{service="svc"}`, "6h", ["service", "method", "op"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in",service="svc"}`, "6h", ["service", "method", "op"])}`
+      `${wi(`backwork_hop_store_seconds_total{service="svc",store=~"db|cache"}`, "6h", ["service", "method", "op"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in",service="svc"}`, "6h", ["service", "method", "op"])}`
     );
   });
   test("data-store calls per request", () => {
     expect(storeCallsPerRequestQuery(servicesScope(SHOWN), PerfRange.H1)).toBe(
-      `${wi(`backwork_hop_store_calls_total`, "1h", ["service"])} / ${wi(`backwork_hop_duration_seconds_count{dir="in"}`, "1h", ["service"])}`
+      `${wi(`backwork_hop_store_calls_total{store=~"db|cache"}`, "1h", ["service"])} / ${wi(`backwork_hop_duration_seconds_count{dir="in"}`, "1h", ["service"])}`
     );
   });
   test("in progress is started minus finished over 15 minutes, clamped", () => {
@@ -178,7 +178,7 @@ describe("query builders (design 8.1)", () => {
     expect(b).toContain(`status_class="5xx",${not}}`);
     expect(quantileQuery(Quantile.P95, "in", routesScope("svc"), PerfRange.H1)).toContain(`{dir="in",service="svc",${not}}`);
     expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(
-      `${wi(`backwork_hop_store_seconds_total{${not}}`, "1h", ["service"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in",${not}}`, "1h", ["service"])}`
+      `${wi(`backwork_hop_store_seconds_total{store=~"db|cache",${not}}`, "1h", ["service"])} / ${wi(`backwork_hop_duration_seconds_sum{dir="in",${not}}`, "1h", ["service"])}`
     );
     expect(inProgressQuery()).toContain(`backwork_hop_started_total{dir="in",${not}}`);
     expect(httpTotalsQuery("1h", null)).toContain(`via="http",${not}}`);

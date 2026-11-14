@@ -17,6 +17,7 @@ import {
 } from "./types";
 import { PATH_FIELD } from "./paths";
 import { MonitorField } from "./health";
+import { StoreField } from "./store-fields";
 import { StatementField, isStatement, isTableName, recordPairs, splitStatement } from "./stmt";
 
 /** One log entry as the Loki client returns it. */
@@ -225,7 +226,24 @@ function totalsOf(bag: FieldBag): StoreTotals | null {
   const cacheCalls = int(bag, "cache_n", 0, Number.MAX_SAFE_INTEGER);
   const cacheUs = int(bag, "cache_us", 0, Number.MAX_SAFE_INTEGER);
   if (dbCalls === null && cacheCalls === null) return null;
-  return { dbCalls: dbCalls ?? 0, dbUs: dbUs ?? 0, cacheCalls: cacheCalls ?? 0, cacheUs: cacheUs ?? 0 };
+  return {
+    dbCalls: dbCalls ?? 0,
+    dbUs: dbUs ?? 0,
+    cacheCalls: cacheCalls ?? 0,
+    cacheUs: cacheUs ?? 0,
+    // Proposed HOP-25 and HOP-26: absent (not 0) when the service does not report them.
+    cacheHits: int(bag, StoreField.CacheHits, 0, Number.MAX_SAFE_INTEGER),
+    cacheMisses: int(bag, StoreField.CacheMisses, 0, Number.MAX_SAFE_INTEGER),
+    dbWaitUs: int(bag, StoreField.DbWaitUs, 0, Number.MAX_SAFE_INTEGER),
+  };
+}
+
+/** `wait_us` on a database end record (proposed HOP-26): whole microseconds, at most the call's
+ *  own duration (a larger value is read as the duration, as the writer is told to cap it). */
+function waitOf(bag: FieldBag, durationUs: number | null): number | null {
+  const w = int(bag, StoreField.WaitUs, 0, Number.MAX_SAFE_INTEGER);
+  if (w === null) return null;
+  return durationUs !== null && w > durationUs ? durationUs : w;
 }
 
 function namedFieldsOf(bag: FieldBag): NamedField[] {
@@ -338,6 +356,8 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
   if (!Number.isFinite(entry.ts)) return null;
 
   const parentId = bag.get("parent_id");
+  const durationUs = isEnd ? int(bag, "duration_us", 0, Number.MAX_SAFE_INTEGER) : null;
+  const storeEnd = hop === "out_end";
   return {
     traceId,
     hop,
@@ -363,7 +383,9 @@ export function parseHopRecord(entry: RawLogEntry): HopRecord | null {
     outcome: isEnd ? outcome : null,
     status: isEnd ? int(bag, "status", 100, 999) : null,
     error: isEnd ? str(bag, "error") : null,
-    durationUs: isEnd ? int(bag, "duration_us", 0, Number.MAX_SAFE_INTEGER) : null,
+    durationUs,
+    hit: storeEnd && via === Via.Cache ? bool(bag, StoreField.Hit) : null,
+    waitUs: storeEnd && via === Via.Db ? waitOf(bag, durationUs) : null,
     totals: hop === "in_end" ? totalsOf(bag) : null,
     fields: hop === "in_end" ? namedFieldsOf(bag) : [],
     timeMs: entry.ts,

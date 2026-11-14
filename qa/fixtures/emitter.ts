@@ -82,10 +82,19 @@ export interface HopRecord {
   status?: number;
   error?: string;
   duration_us?: number;
+  /** Cache end records of a one-key read: a value was found (proposed HOP-25, BAC-79). */
+  hit?: boolean;
+  /** Database end records: microseconds of duration_us spent waiting for a connection (proposed HOP-26). */
+  wait_us?: number;
   db_n?: number;
   db_us?: number;
+  /** Proposed HOP-26: the request's database calls' summed wait_us. */
+  db_wait_us?: number;
   cache_n?: number;
   cache_us?: number;
+  /** Proposed HOP-25: one-key reads that found a value, and that found none. Left out when 0 calls. */
+  cache_hit_n?: number;
+  cache_miss_n?: number;
   /** f_{name} named fields, in insertion order. */
   fields?: Record<string, string>;
   /** SQL data-store end records: the statement shape, always written last (spec HOP-14, 13.2). */
@@ -109,7 +118,8 @@ export type Emission =
 
 const FIELD_ORDER: readonly (keyof HopRecord)[] = [
   "trace_id", "hop", "hop_id", "parent_hop", "hop_sent", "tracer", "parent_id", "service", "adapter", "via",
-  "method", "op", "path", "host", "synthetic", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "db_n", "db_us", "cache_n", "cache_us",
+  "method", "op", "path", "host", "synthetic", "table", "peer", "attempt", "outcome", "status", "error", "duration_us", "hit", "wait_us",
+  "db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n",
 ];
 
 /** Ordered [key, value] pairs of a record, exactly as HOP-8/HOP-14 list them. */
@@ -423,15 +433,85 @@ export function orderLookup(s: InsightsSeed): Emission[] {
   let at = 2 + slowMs;
   const out: Emission[] = [storeCall(S, { ...db, op: "select", table: "orders", stmt: SLOW_ORDERS_STMT }, s.id("order:db"), at, slowMs)];
   const gets = [0.6, 0.8, 0.5];
+  // BAC-79: each get reports whether it found a value; about three in four do.
+  const hits = gets.map((_, n) => s.unit(`order:hit:${n}`) < ORDER_HIT_CHANCE);
   gets.forEach((ms, n) => {
     at += 0.3 + ms;
-    out.push(storeCall(S, cache, s.id(`order:get:${n}`), at, ms));
+    out.push(storeCall(S, { ...cache, hit: hits[n] }, s.id(`order:get:${n}`), at, ms));
   });
   out.push({ at: at + 0.2, service: S, kind: "log", level: "info", msg: `order ${orderNo} loaded`, trace_id: t });
   const endAt = at + 1.1;
   const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/orders/:id", path: `/orders/${orderNo}` };
   const cacheUs = gets.reduce((a, ms) => a + us(ms), 0);
-  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: 1, db_us: us(slowMs), cache_n: gets.length, cache_us: cacheUs } }), ...out];
+  return [...inboundPair(S, 0, { rec, endAt, statusCode: 200, extra: { db_n: 1, db_us: us(slowMs), cache_n: gets.length, cache_us: cacheUs, ...readTotals(hits) } }), ...out];
+}
+
+/** Chance that a GET /orders/:id cache get finds a value (BAC-79). */
+export const ORDER_HIT_CHANCE = 0.75;
+/** Cache gets per GET /search, and the chance that one finds a value: the cache-miss-heavy route. */
+export const SEARCH_GETS = 10;
+export const SEARCH_HIT_CHANCE = 0.2;
+/** Database calls per POST /refunds, the pool-starved route, and the share of each call spent
+ *  waiting for a connection (between the two). */
+export const REFUND_CALLS = 3;
+export const REFUND_WAIT_SHARE: readonly [number, number] = [0.55, 0.85];
+/** Each POST /refunds call's duration, ms: a base and a random spread above it. */
+export const REFUND_CALL_MS: readonly (readonly [number, number])[] = [[8, 4], [48, 14], [6, 3]];
+
+/** `cache_hit_n` and `cache_miss_n` for an inbound end record: a total with no calls is left out
+ *  (proposed HOP-25). */
+export function readTotals(hits: readonly boolean[]): Partial<HopRecord> {
+  const n = hits.filter(Boolean).length;
+  const m = hits.length - n;
+  return { ...(n > 0 ? { cache_hit_n: n } : {}), ...(m > 0 ? { cache_miss_n: m } : {}) };
+}
+
+/** GET /search: ten one-key cache gets one after another, most of which find nothing (BAC-79). */
+export function productSearch(s: InsightsSeed): Emission[] {
+  const S = Service.Shop;
+  const t = s.trace("search");
+  const pid = s.id("search:pid");
+  const inId = s.id("search:in");
+  const cache = { trace_id: t, parent_hop: inId, parent_id: pid, service: S, adapter: "ioredis", via: "cache" as Via, peer: "redis.internal", op: "get" };
+  const hits = Array.from({ length: SEARCH_GETS }, (_, n) => s.unit(`search:hit:${n}`) < SEARCH_HIT_CHANCE);
+  const out: Emission[] = [];
+  let at = 0.8;
+  let cacheUs = 0;
+  hits.forEach((hit, n) => {
+    const ms = 0.4 + 0.3 * s.unit(`search:ms:${n}`);
+    at += 0.1 + ms;
+    out.push(storeCall(S, { ...cache, hit }, s.id(`search:get:${n}`), at, ms));
+    cacheUs += us(ms);
+  });
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: S, adapter: "fastify", via: "http", method: "GET", op: "/search", path: "/search" };
+  return [...inboundPair(S, 0, { rec, endAt: at + 0.9, statusCode: 200, extra: { cache_n: SEARCH_GETS, cache_us: cacheUs, ...readTotals(hits) } }), ...out];
+}
+
+/** POST /refunds on commerce-payments: three updates (one long) whose time is mostly waiting for a database
+ *  connection from an exhausted pool (BAC-79). `wait_us` is part of each call's duration. */
+export function refundBatch(s: InsightsSeed): Emission[] {
+  const P = Service.Payments;
+  const t = s.trace("refunds");
+  const pid = s.id("refunds:pid");
+  const inId = s.id("refunds:in");
+  const db = { trace_id: t, parent_hop: inId, parent_id: pid, service: P, adapter: "pg", via: "db" as Via, peer: "payments-db", op: "update", table: "refunds" };
+  const out: Emission[] = [];
+  let at = 1.0;
+  let dbUs = 0;
+  let waitUs = 0;
+  for (let n = 0; n < REFUND_CALLS; n++) {
+    // The middle update is the long one, so the request has a culprit the verdict names.
+    const [base, spread] = REFUND_CALL_MS[n % REFUND_CALL_MS.length];
+    const ms = base + spread * s.unit(`refunds:ms:${n}`);
+    const [lo, hi] = REFUND_WAIT_SHARE;
+    const wait = us(ms * (lo + (hi - lo) * s.unit(`refunds:wait:${n}`)));
+    at += 0.2 + ms;
+    out.push({ at, service: P, kind: "hop", rec: { ...db, hop: "out_end", hop_id: s.id(`refunds:db:${n}`), hop_sent: false, outcome: "ok", duration_us: us(ms), wait_us: wait, stmt: "update refunds set status = ?, settled_at = ? where refunds.id = ?" } });
+    dbUs += us(ms);
+    waitUs += wait;
+  }
+  const rec: HopRecord = { trace_id: t, hop: "in", hop_id: inId, parent_id: pid, service: P, adapter: "hono", via: "http", method: "POST", op: "/refunds" };
+  return [...inboundPair(P, 0, { rec, endAt: at + 1.4, statusCode: 201, extra: { db_n: REFUND_CALLS, db_us: dbUs, db_wait_us: waitUs } }), ...out];
 }
 
 /** GET /feed: a plain Redis pipeline of 12 gets sent in one write. Must not be flagged as N+1 or
@@ -493,6 +573,8 @@ export function insightsCycle(seed: number, regression: boolean): Emission[] {
     ...shift(orderLookup(s), 1000),
     ...shift(cacheFeed(s), 2000),
     ...shift(checkout(s), 3000),
+    ...shift(productSearch(s), 4000),
+    ...shift(refundBatch(s), 5000),
   ];
 }
 
