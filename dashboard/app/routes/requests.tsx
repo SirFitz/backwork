@@ -12,6 +12,7 @@ import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/ho
 import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
 import { pathTitle } from "~/lib/hops/paths";
 import { HEALTH_PARAM, HealthChecks, healthChecksFrom } from "~/lib/hops/health";
+import { CHATTY_BADGE, byMostCalls, chattyRows, chattySentence, type ChattyVerdict } from "~/lib/hops/chatty";
 import { cn, fmtMs, fmtPct } from "~/lib/utils";
 import { Clock } from "~/components/time";
 
@@ -81,7 +82,10 @@ function pctl(nums: number[], p: number) {
 
 const FILTERS = ["all", "2xx", "3xx", "4xx", "5xx"] as const;
 type StatusFilter = (typeof FILTERS)[number];
-type SortKey = "time" | "status" | "latency";
+type SortKey = "time" | "status" | "latency" | "calls";
+
+/** One list row's identity, as the dedupe uses it. */
+const rowKey = (r: RequestListRow): string => `${r.traceID}|${r.service}|${r.startMs}`;
 
 const SELECT = "h-9 w-full max-w-full sm:w-auto rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
@@ -143,6 +147,7 @@ function Feed({
   const [q, setQ] = useState(routeParam ?? "");
   const [exactRoute, setExactRoute] = useState<string | null>(routeParam);
   const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "desc" });
+  const [chattyOnly, setChattyOnly] = useState(false);
   const toggleSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
 
   // Older pages are appended in place; the live poll refreshes only the newest page.
@@ -165,13 +170,20 @@ function Feed({
     const seen = new Set<string>();
     const out: RequestListRow[] = [];
     for (const r of [...feed.rows, ...olderRows]) {
-      const k = `${r.traceID}|${r.service}|${r.startMs}`;
+      const k = rowKey(r);
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(r);
     }
     return out;
   }, [feed.rows, olderRows]);
+
+  // Chatty rows (BAC-71): judged against the loaded rows of the same route.
+  const chatty = useMemo(() => {
+    const verdicts = chattyRows(all);
+    return new Map<string, ChattyVerdict>(all.map((r, i) => [rowKey(r), verdicts[i]]));
+  }, [all]);
+  const chattyCount = useMemo(() => Array.from(chatty.values()).filter((v) => v.chatty).length, [chatty]);
 
   const methods = useMemo(() => {
     const set = new Set(all.map((r) => r.method).filter(Boolean));
@@ -183,20 +195,31 @@ function Feed({
     let r = all;
     if (statusFilter !== "all") r = r.filter((x) => cls(x.status) === statusFilter);
     if (method !== "all") r = r.filter((x) => x.method === method);
+    if (chattyOnly) r = r.filter((x) => chatty.get(rowKey(x))?.chatty === true);
     if (exactRoute !== null) r = r.filter((x) => x.route === exactRoute);
     else if (q.trim()) {
       const t = q.trim().toLowerCase();
       r = r.filter((x) => x.route.toLowerCase().includes(t) || (x.path ?? "").toLowerCase().includes(t) || x.service.toLowerCase().includes(t));
     }
-    if (sort.key) {
+    if (sort.key === "calls") r = sort.dir === "desc" ? byMostCalls(r) : [...byMostCalls(r)].reverse();
+    else if (sort.key) {
       const m = sort.dir === "asc" ? 1 : -1;
       const val = (x: RequestListRow) => (sort.key === "time" ? x.startMs : sort.key === "latency" ? x.durationMs : x.status ?? 0);
       r = [...r].sort((a, b) => (val(a) - val(b)) * m);
     }
     return r;
-  }, [all, statusFilter, method, q, exactRoute, sort]);
+  }, [all, statusFilter, method, q, exactRoute, sort, chattyOnly, chatty]);
 
-  const filtered = statusFilter !== "all" || method !== "all" || exactRoute !== null || q.trim() !== "";
+  const filtered = statusFilter !== "all" || method !== "all" || exactRoute !== null || q.trim() !== "" || chattyOnly;
+  const chattyControls = (
+    <ChattyControls
+      count={chattyCount}
+      only={chattyOnly}
+      onOnly={setChattyOnly}
+      mostCalls={sort.key === "calls"}
+      onMostCalls={(on) => setSort(on ? { key: "calls", dir: "desc" } : { key: null, dir: "desc" })}
+    />
+  );
   const loadedCounts = useMemo(() => {
     const c: Record<string, number> = { all: all.length };
     for (const f of FILTERS.slice(1)) c[f] = all.filter((r) => cls(r.status) === f).length;
@@ -229,6 +252,7 @@ function Feed({
         </Form>
         <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
         <MethodSelect methods={methods} value={method} onChange={setMethod} />
+        {chattyControls}
         <RouteSearch q={q} exactRoute={exactRoute} onChange={(v) => { setQ(v); setExactRoute(null); }} onClear={() => { setExactRoute(null); setQ(""); }} />
       </div>
       <div className="space-y-2 md:hidden">
@@ -241,7 +265,7 @@ function Feed({
         <details className="group rounded-lg border border-border bg-surface">
           <summary className="flex h-9 cursor-pointer list-none items-center justify-between px-3 text-[13px] text-muted">
             More filters
-            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, health === HealthChecks.Shown ? "health checks" : null].filter(Boolean).join(" · ") || "last 1h"}</span>
+            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === "calls" ? "most calls" : null, health === HealthChecks.Shown ? "health checks" : null].filter(Boolean).join(" · ") || "last 1h"}</span>
           </summary>
           <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border p-2">
             <Form method="get" className="flex min-w-0 flex-wrap items-center gap-2">
@@ -251,6 +275,7 @@ function Feed({
             </Form>
             <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
             <MethodSelect methods={methods} value={method} onChange={setMethod} />
+            {chattyControls}
           </div>
         </details>
       </div>
@@ -281,7 +306,7 @@ function Feed({
                   </div>
                   {r.path && r.route && r.route !== r.path ? <div className="mt-0.5 truncate font-mono text-2xs text-faint" title={`route ${r.route}`}>{r.route}</div> : null}
                   <div className="mt-[3px] flex min-w-0 items-center justify-between gap-2.5 font-mono text-[11px]">
-                    <span className="min-w-0 truncate text-accent">{r.service}</span>
+                    <span className="flex min-w-0 items-center gap-1.5"><span className="min-w-0 truncate text-accent">{r.service}</span><ChattyBadge verdict={chatty.get(rowKey(r))} /></span>
                     <span className={cn("shrink-0 tabular-nums", r.durationMs >= 1000 ? "text-err" : r.durationMs >= 500 ? "text-warn" : "text-faint")}>
                       <Clock ts={r.startMs} seconds /> · {fmtMs(r.durationMs)}
                     </span>
@@ -308,7 +333,7 @@ function Feed({
                   <tr key={`${r.traceID}|${r.service}|${r.startMs}`} onClick={() => navigate(`/requests/${r.traceID}`)} className="cursor-pointer border-b border-border/40 last:border-0 hover:bg-surface-2/50">
                     <td className="px-4 py-1.5 tabular-nums text-faint"><Clock ts={r.startMs} /></td>
                     <td className="px-4 py-1.5 text-accent">{r.service}</td>
-                    <td className="px-4 py-1.5 font-semibold text-muted">{r.method || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-1.5 font-semibold text-muted">{r.method || "—"}<ChattyBadge verdict={chatty.get(rowKey(r))} className="ml-1.5" /></td>
                     <td className="max-w-[360px] px-4 py-1.5 text-fg/90" title={pathTitle(r.path, r.route)}>
                       {r.path ? (
                         <>
@@ -345,6 +370,31 @@ function Feed({
           <span className="text-2xs text-faint">{next !== null ? `Showing ${all.length} of the last ${range}` : `All ${all.length} requests of the last ${range} are shown`}</span>
         </div>
       </Card>
+    </>
+  );
+}
+
+/** The neutral "chatty" marker (BAC-71). No vertical padding, so the row keeps its height. */
+function ChattyBadge({ verdict, className }: { verdict: ChattyVerdict | undefined; className?: string }) {
+  if (!verdict?.chatty) return null;
+  return (
+    <span title={chattySentence(verdict)} className={cn("shrink-0", className)}>
+      <Badge tone="neutral" className="py-0 font-sans leading-[1.4]">{CHATTY_BADGE}</Badge>
+    </span>
+  );
+}
+
+/** "Chatty only" filter and "Most calls" sort, client side over the loaded rows like the others. */
+function ChattyControls({ count, only, onOnly, mostCalls, onMostCalls }: { count: number; only: boolean; onOnly: (on: boolean) => void; mostCalls: boolean; onMostCalls: (on: boolean) => void }) {
+  const chip = (on: boolean) => cn("inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[13px] transition-colors", on ? "border-border-strong bg-surface-2 text-fg" : "border-border bg-surface text-muted hover:text-fg");
+  return (
+    <>
+      <button type="button" aria-pressed={only} onClick={() => onOnly(!only)} className={chip(only)} title="Requests with many database and cache calls, among the loaded rows">
+        Chatty only <span className="text-2xs text-faint">{count.toLocaleString("en-US")}</span>
+      </button>
+      <button type="button" aria-pressed={mostCalls} onClick={() => onMostCalls(!mostCalls)} className={chip(mostCalls)}>
+        Most calls
+      </button>
     </>
   );
 }
