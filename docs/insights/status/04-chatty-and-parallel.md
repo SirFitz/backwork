@@ -22,3 +22,6 @@ Branch `bac-71-chatty-parallel`, worktree `backwork-wt/ins-chatty`, cut from ori
 
 ## 5. PR
 - After `git merge origin/main` (already up to date): tsc 0; bun test 0 (611 pass, 7 skip, 0 fail); vite:build 0.
+- PR https://github.com/SirFitz/backwork/pull/40 opened against main.
+- Cleanup: dev server on :3502 stopped, /tmp/bw_ins_71* removed, bw_ins_71 dropped.
+DONE
