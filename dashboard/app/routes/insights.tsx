@@ -34,8 +34,8 @@ export interface InsightTabDef {
 export const INSIGHT_TABS: readonly InsightTabDef[] = [
   { key: InsightTab.FixFirst, label: "Fix first", to: "/insights", ready: true },
   { key: InsightTab.SlowQueries, label: "Slow queries", to: "/insights/queries", ready: true },
-  { key: InsightTab.RepeatedCalls, label: "Repeated calls", to: "/insights/repeats", ready: false },
-  { key: InsightTab.ServiceMap, label: "Service map", to: "/insights/map", ready: false },
+  { key: InsightTab.RepeatedCalls, label: "Repeated calls", to: "/insights/repeats", ready: true },
+  { key: InsightTab.ServiceMap, label: "Service map", to: "/insights/map", ready: true },
 ];
 
 /** The tabs to show: only those whose route exists. */
