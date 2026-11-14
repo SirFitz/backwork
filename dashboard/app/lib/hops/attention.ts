@@ -54,3 +54,34 @@ export interface RecordScan<T> {
   /** the record limit was reached, so older records in the window were not read */
   truncated: boolean;
 }
+
+/** The Overview's "Needs attention" groups, in page order (BAC-73 adds Regressions). */
+export const AttentionGroup = {
+  Jumps: "jumps",
+  Regressions: "regressions",
+  Stalled: "stalled",
+  Unreceived: "unreceived",
+} as const;
+export type AttentionGroup = (typeof AttentionGroup)[keyof typeof AttentionGroup];
+export const ATTENTION_GROUPS: readonly AttentionGroup[] = Object.values(AttentionGroup);
+
+/** A deploy this long before the compared window's start, or later, is named next to a regression. */
+export const REGRESSION_DEPLOY_LOOKBACK_MS = 6 * 3600_000;
+
+/** One service slower or failing more than the same hour last week, for the Overview. */
+export interface ServiceRegression {
+  service: string;
+  /** compare.ts verdict: slower or more_errors */
+  verdict: "slower" | "more_errors";
+  requests: number;
+  /** seconds */
+  p95Now: number | null;
+  p95Before: number | null;
+  p95Ratio: number | null;
+  /** 0..1 */
+  errorNow: number;
+  errorBefore: number;
+  /** the newest deploy of the service in the window or the 6 hours before it, ms */
+  deployAt: number | null;
+  deployLabel: string | null;
+}

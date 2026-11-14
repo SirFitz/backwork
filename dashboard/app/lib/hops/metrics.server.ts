@@ -367,23 +367,38 @@ export function combineFigures(
   return out;
 }
 
-async function figuresFor(
+/** The six figure queries of one scope and range, read and joined. `offset` and `lookbackSeconds`
+ *  read a window in the past (BAC-73: the same hours last week); the defaults read the current one
+ *  with exactly the queries the tables have always sent. */
+export async function scopeFigures(
+  client: PromClient,
+  dir: "in" | "out",
+  scope: Scope,
+  range: PerfRange,
+  tenant: Tenant,
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): Promise<Array<{ metric: Record<string, string>; figures: Figures }>> {
+  const [errQA, errQB] = errorRateQueries(dir, scope, range, offset, lookbackSeconds);
+  const [rate, errA, errB, p50, p95, p99] = await Promise.all([
+    client.instant(rateQuery(dir, scope, range, offset, lookbackSeconds), tenant),
+    client.instant(errQA, tenant),
+    client.instant(errQB, tenant),
+    client.instant(quantileQuery(Quantile.P50, dir, scope, range, undefined, offset, lookbackSeconds), tenant),
+    client.instant(quantileQuery(Quantile.P95, dir, scope, range, undefined, offset, lookbackSeconds), tenant),
+    client.instant(quantileQuery(Quantile.P99, dir, scope, range, undefined, offset, lookbackSeconds), tenant),
+  ]);
+  return combineFigures(scope.by, { rate, errA, errB, p50, p95, p99 });
+}
+
+function figuresFor(
   client: PromClient,
   dir: "in" | "out",
   scope: Scope,
   range: PerfRange,
   tenant: Tenant
 ): Promise<Array<{ metric: Record<string, string>; figures: Figures }>> {
-  const [errQA, errQB] = errorRateQueries(dir, scope, range);
-  const [rate, errA, errB, p50, p95, p99] = await Promise.all([
-    client.instant(rateQuery(dir, scope, range), tenant),
-    client.instant(errQA, tenant),
-    client.instant(errQB, tenant),
-    client.instant(quantileQuery(Quantile.P50, dir, scope, range), tenant),
-    client.instant(quantileQuery(Quantile.P95, dir, scope, range), tenant),
-    client.instant(quantileQuery(Quantile.P99, dir, scope, range), tenant),
-  ]);
-  return combineFigures(scope.by, { rate, errA, errB, p50, p95, p99 });
+  return scopeFigures(client, dir, scope, range, tenant);
 }
 
 const TTL_MS = 10_000;
