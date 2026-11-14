@@ -85,6 +85,8 @@ function hopFromPair(id: HopId, pair: RecordPair, now: number): Hop {
     startMs,
     endMs,
     durationUs,
+    hit: end?.hit ?? null,
+    waitUs: end?.waitUs ?? null,
     totals: end?.totals ?? null,
     fields: end?.fields ?? [],
     linkedIds: [],

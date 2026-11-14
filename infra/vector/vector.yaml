@@ -253,7 +253,7 @@ transforms:
           bw_box = to_string(%bw_box) ?? ""
           bw_c = bw_o
           if bw_box != "" { bw_c = object(get(bw_o, [bw_box]) ?? {}) ?? {} }
-          bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "cache_n", "cache_us"], k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
+          bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n"], k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
           if bw_box == "" { bw_o = bw_c } else { bw_o = set(bw_o, [bw_box], bw_c) ?? bw_o }
           .message = encode_json(bw_o)
         } else {
@@ -263,7 +263,7 @@ transforms:
           bw_head = to_string(get(bw_lp, ["head"]) ?? bw_line) ?? bw_line
           bw_tail = to_string(get(bw_lp, ["tail"]) ?? "") ?? ""
           if bw_drop_f { bw_head = replace(bw_head, r' f_[a-z0-9_]+=\S*', "") }
-          if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us)=\S*', "") }
+          if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us|hit_n|miss_n|wait_us)=\S*', "") }
           if bw_drop_p { bw_head = replace(bw_head, r' path=\S*', "") }
           if bw_drop_q {
             bw_head = replace(bw_head, r' table=\S*', "")
@@ -364,6 +364,21 @@ transforms:
         bw_m.db_n = to_float(get(bw_h, ["db_n"]) ?? 0) ?? 0.0
         bw_m.cache_s = (to_float(get(bw_h, ["cache_us"]) ?? 0) ?? 0.0) / 1000000.0
         bw_m.cache_n = to_float(get(bw_h, ["cache_n"]) ?? 0) ?? 0.0
+        bw_x = get(bw_h, ["cache_hit_n"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.cache_hit_n = bw_x }
+        }
+        bw_x = get(bw_h, ["cache_miss_n"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.cache_miss_n = bw_x }
+        }
+        bw_x = get(bw_h, ["db_wait_us"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.db_wait_s = bw_x / 1000000.0 }
+        }
       }
       . = { "service": .service, "bw_hk": bw_hk, "bw_m": bw_m, "timestamp": .timestamp }
 
@@ -374,6 +389,9 @@ transforms:
       ends: '(.bw_hk == "in_end" || .bw_hk == "out_end") && exists(.bw_m.duration_s)'
       starts: '.bw_hk == "in" || .bw_hk == "out"'
       stores: '.bw_m.stores == true'
+      cache_hits: '.bw_m.stores == true && exists(.bw_m.cache_hit_n)'
+      cache_misses: '.bw_m.stores == true && exists(.bw_m.cache_miss_n)'
+      db_waits: '.bw_m.stores == true && exists(.bw_m.db_wait_s)'
 
   bw_hop_duration:
     type: log_to_metric
@@ -450,9 +468,54 @@ transforms:
           op: "{{ bw_m.op }}"
           store: cache
 
+  bw_hop_store_cache_hit:
+    type: log_to_metric
+    inputs: [bw_hop_route.cache_hits]
+    metrics:
+      - type: counter
+        field: bw_m.cache_hit_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          store: cache_hit
+
+  bw_hop_store_cache_miss:
+    type: log_to_metric
+    inputs: [bw_hop_route.cache_misses]
+    metrics:
+      - type: counter
+        field: bw_m.cache_miss_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          store: cache_miss
+
+  bw_hop_store_db_wait:
+    type: log_to_metric
+    inputs: [bw_hop_route.db_waits]
+    metrics:
+      - type: counter
+        field: bw_m.db_wait_s
+        increment_by_value: true
+        name: backwork_hop_store_seconds_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          store: db_wait
+
   bw_hop_cardinality:
     type: tag_cardinality_limit
-    inputs: [bw_hop_duration, bw_hop_started, bw_hop_store]
+    inputs: [bw_hop_duration, bw_hop_started, bw_hop_store, bw_hop_store_cache_hit, bw_hop_store_cache_miss, bw_hop_store_db_wait]
     mode: exact
     value_limit: 2000
     limit_exceeded_action: drop_tag

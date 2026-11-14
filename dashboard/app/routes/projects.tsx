@@ -328,6 +328,7 @@ export default function Projects() {
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Ship logs from a server</div>
             <CodeBlock>{cmdFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
+            <p className="mt-1 text-2xs text-faint">The Cache hits and Conn. wait figures on Performance come from agents installed from this version on: run the command again on hosts set up earlier.</p>
           </div>
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Report deploys, marked on <a href="/performance" className="text-brand hover:underline">Performance</a></div>

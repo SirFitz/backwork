@@ -29,7 +29,9 @@ describe("default arguments keep today's strings", () => {
     expect(quantileQuery(Quantile.P95, "in", routesScope("svc"), PerfRange.H1)).toBe(snapshot.q);
     expect(quantileQuery(Quantile.P50, "out", connectionsScope(), PerfRange.H24)).toBe(snapshot.qOut);
     expect(trendQuery(PerfRange.H6)).toBe(snapshot.trend);
-    expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(snapshot.share);
+    // BAC-79: the store share gains only `store=~"db|cache"` on its store selector (see
+    // metrics-cache-pool.server.test.ts); every other character is main's.
+    expect(storeShareQuery(servicesScope(), PerfRange.H1)).toBe(snapshot.share.replaceAll("backwork_hop_store_seconds_total{", 'backwork_hop_store_seconds_total{store=~"db|cache",'));
   });
 
   test("counter windows", () => {
