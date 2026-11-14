@@ -4,7 +4,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
 import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
-import { Fragment, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Database, Link2, LogIn, OctagonX, RotateCcw, SearchX, Unplug, Zap,
 } from "lucide-react";
@@ -15,14 +15,16 @@ import { tenantOf } from "~/lib/tenant.server";
 import { logLinesFor, logsOnly, progressiveLookup, type WindowResult } from "~/lib/hops/query.server";
 import { splitRequests, type RequestPart } from "~/lib/hops/split";
 import { buildRequestTree, faultCount, headHop, isFailed, storeCallCounts } from "~/lib/hops/tree";
-import { buildPathNodes, expandableKeys, rowUs, visibleRows, type VisibleRow } from "~/lib/hops/path-rows";
+import { buildPathNodes, expandableKeys, pathKeysTo, rowUs, visibleRows, type PathNode, type VisibleRow } from "~/lib/hops/path-rows";
+import { detectRepeats, repeatChip, repeatHint, repeatNote, repeatSentence, repeatsByHop, type RepeatGroup, type RepeatReport } from "~/lib/hops/repeated";
+import { RepeatChip } from "~/components/insights/repeat-chip";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
 import { sharedDatabaseHost, storeLabel, statementTail } from "~/lib/hops/store-label";
 import { knownPeersFor } from "~/lib/hops/peers.server";
 import { pathTitle, requestPath, routeHint } from "~/lib/hops/paths";
 import { failedCallsSentence, requestProblems, retriedSentence } from "~/lib/hops/problems";
 import { fmtUs, plural } from "~/lib/hops/time-format";
-import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
+import { GapKind, HOP_RETENTION_DAYS, HopDir, HopKind, HopState, LOG_PAGE, LOG_RETENTION_DAYS, Outcome, SearchWindow, StoreKind, Via, WINDOW_LABEL, type Hop, type HopId, type HopRecord, type LinkedId, type RequestTree, type TraceId, type TraceLogLine } from "~/lib/hops/types";
 import { cn } from "~/lib/utils";
 import { Clock, useHydrated } from "~/components/time";
 
@@ -46,6 +48,8 @@ interface Found {
   window: SearchWindow;
   /** Peers some service of the organisation has answered as (design 9); null when unknown. */
   knownPeers: string[] | null;
+  /** The window hit the fetch limit: counts are floors (BAC-68 "at least"). */
+  truncated: boolean;
 }
 
 /** A found window, with the peers it calls looked up (and the pairs it links saved). */
@@ -53,7 +57,7 @@ function toFound(orgId: string): (r: WindowResult) => Promise<Found | null> {
   return async (r) => {
     if (!r.found) return null;
     const knownPeers = await knownPeersFor(orgId, peerPairs(r.records), calledPeers(r.records));
-    return { records: r.records, links: r.links, window: r.window, knownPeers };
+    return { records: r.records, links: r.links, window: r.window, knownPeers, truncated: r.truncated };
   };
 }
 
@@ -415,16 +419,20 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   const colours = useMemo(() => colourMap(tree.services), [tree.services]);
   const defaultOpen = tree.gaps.find((g) => g.kind === GapKind.Stopped)?.hopId ?? null;
   const [openHop, setOpenHop] = useState<string | null>(defaultOpen);
+  // Repeated calls (BAC-68): found once per tree; the header fact opens and scrolls to the first.
+  const repeats = useMemo(() => detectRepeats(tree, found.truncated), [tree, found.truncated]);
+  const repeatOf = useMemo(() => repeatsByHop(repeats), [repeats]);
+  const [focus, setFocus] = useState<RepeatFocus | null>(null);
   const head = headHop(tree);
   if (!head) return <LogsOnly d={d} />;
   const lastLog = logs.length ? logs[logs.length - 1].timeMs : null;
   const ctx: RowCtx = {
-    tree, colours, now: d.now, openHop, setOpenHop, logsState, traceId: d.traceId,
+    tree, colours, now: d.now, openHop, setOpenHop, logsState, traceId: d.traceId, repeatOf, focus,
     axisStart: head.startMs, axisMs: Math.max(elapsedUs(head, d.now) / 1000, 0.001),
   };
   return (
     <>
-      <Header tree={tree} head={head} d={d} />
+      <Header tree={tree} head={head} d={d} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
       <PathCard ctx={ctx} />
@@ -464,7 +472,7 @@ function Title({ head, size = "lg" }: { head: Hop; size?: "lg" | "sm" }) {
   );
 }
 
-function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
+function Header({ tree, head, d, repeats, onShowRepeat }: { tree: RequestTree; head: Hop; d: Data; repeats: RepeatReport; onShowRepeat: (hopId: HopId) => void }) {
   const counts = storeCallCounts(tree);
   const stores = counts.db + counts.cache;
   const storeWord = counts.db && counts.cache ? ["database and cache call", "database and cache calls"] : counts.cache ? ["cache call", "cache calls"] : ["database call", "database calls"];
@@ -483,6 +491,16 @@ function Header({ tree, head, d }: { tree: RequestTree; head: Hop; d: Data }) {
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{hopCount}</b> {hopCount === 1 ? "hop" : "hops"}</span>
           {stores ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{stores}</b> {stores === 1 ? storeWord[0] : storeWord[1]}</span> : null}
+          {repeats.repeatedCalls ? (
+            <button
+              type="button"
+              className={cn(fact, "text-left hover:text-fg hover:underline")}
+              title={repeatSentence(repeats.groups[0])}
+              onClick={() => onShowRepeat(repeats.groups[0].hopIds[0])}
+            >
+              <b className="font-medium text-fg">{repeats.repeatedCalls}</b> repeated {repeats.repeatedCalls === 1 ? "call" : "calls"}
+            </button>
+          ) : null}
           {jobs ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{jobs}</b> {jobs === 1 ? "background job" : "background jobs"}</span> : null}
           <span className={cn(fact, faults ? "text-err" : "hidden md:inline")}><b className={cn("font-medium", faults ? "text-err" : "text-fg")}>{faults}</b> {faults === 1 ? "gap" : "gaps"}</span>
         </div>
@@ -619,7 +637,16 @@ function TimeSplitBar({ tree, head, colour }: { tree: RequestTree; head: Hop; co
 
 // ---------------------------------------------------------------- the path
 
+/** "Show me this repeated call": the hop, and a counter so asking twice scrolls again. */
+interface RepeatFocus {
+  hopId: HopId;
+  seq: number;
+}
+
 interface RowCtx {
+  /** Each repeated call's group (BAC-68). */
+  repeatOf: ReadonlyMap<HopId, RepeatGroup>;
+  focus: RepeatFocus | null;
   tree: RequestTree;
   colours: Map<string, string>;
   now: number;
@@ -650,6 +677,17 @@ function ticks(axisMs: number): Array<{ at: number; label: string }> {
 
 const GRID = "md:grid md:grid-cols-[minmax(0,1fr)_44px_96px_84px_minmax(200px,330px)] md:gap-x-3 md:items-center";
 
+/** The calls drawn inside a folded group: their group row carries the repeat finding. */
+function groupedHops(nodes: readonly PathNode[]): Set<HopId> {
+  const out = new Set<HopId>();
+  const visit = (n: PathNode): void => {
+    for (const m of n.members ?? []) out.add(m.hopId);
+    n.kids.forEach(visit);
+  };
+  nodes.forEach(visit);
+  return out;
+}
+
 /** A group of repeated calls drawn as one hop: from the first start to the last end. */
 function groupSpan(members: readonly Hop[]): Hop {
   const first = members[0];
@@ -666,8 +704,27 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
   const headUs = headHop(ctx.tree)?.durationUs ?? 0;
   const visible = visibleRows(nodes, overrides, headUs);
   const foldable = useMemo(() => expandableKeys(nodes), [nodes]);
+  const inGroup = useMemo(() => groupedHops(nodes), [nodes]);
   const allOpen = foldable.length > 0 && foldable.every((k) => visible.some((r) => r.node.key === k && r.expanded));
   const toggle = (key: string, open: boolean): void => setOverrides((m) => new Map(m).set(key, open));
+  // The header's "N repeated calls": open the rows down to the first group, then bring it into view.
+  const { focus, setOpenHop } = ctx;
+  useEffect(() => {
+    if (!focus) return;
+    const keys = pathKeysTo(nodes, focus.hopId);
+    if (!keys) return;
+    setOverrides((m) => {
+      const next = new Map(m);
+      for (const k of keys) next.set(k, true);
+      return next;
+    });
+    const last = keys[keys.length - 1];
+    if (last === focus.hopId) setOpenHop(focus.hopId);
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-path-key="${last}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focus, nodes, setOpenHop]);
   const setAll = (open: boolean): void => setOverrides(new Map(foldable.map((k) => [k, open])));
   const rows: ReactNode[] = [];
   for (const row of visible) {
@@ -695,7 +752,7 @@ function PathCard({ ctx }: { ctx: RowCtx }) {
       if (g.kind === GapKind.OutsideCaller) rows.push(<GapRow key={`oc-${hop.hopId}`} depth={row.depth} note title="Called from outside this organisation." text="The caller's records are not here: it belongs to another organisation, or its records were not collected." icon={<LogIn className="h-3.5 w-3.5 shrink-0 text-faint" />} />);
       if (g.kind === GapKind.TracerBetween) rows.push(<GapRow key={`tb-${hop.hopId}`} depth={row.depth} title="Passed through a tracer-only service." text="A service that sends spans but no hop records sat between these two hops." note />);
     }
-    rows.push(<HopRow key={row.node.key} row={row} ctx={ctx} onFold={(open) => toggle(row.node.key, open)} />);
+    rows.push(<HopRow key={row.node.key} row={row} ctx={ctx} grouped={inGroup.has(hop.hopId)} onFold={(open) => toggle(row.node.key, open)} />);
     if (!row.node.members && ctx.openHop === hop.hopId) rows.push(<HopDetail key={`d-${hop.hopId}`} hop={hop} call={row.node.call} depth={row.depth} ctx={ctx} />);
   }
   const dbHost = sharedDatabaseHost(ctx.tree.hops);
@@ -796,14 +853,16 @@ function FoldButton({ row, onFold }: { row: VisibleRow; onFold: (open: boolean) 
   );
 }
 
-function HopRow({ row, ctx, onFold }: { row: VisibleRow; ctx: RowCtx; onFold: (open: boolean) => void }) {
+function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; onFold: (open: boolean) => void; grouped: boolean }) {
   const { node, depth } = row;
   const hop = node.hop;
   const members = node.members;
   // A merged pair is drawn with the caller's timing (what the caller waited); a group as one span.
   const timed: Hop = members ? groupSpan(members) : node.call ?? hop;
+  // A group row carries its finding; a call inside an open group does not repeat it.
+  const repeat = members ? members.map((m) => ctx.repeatOf.get(m.hopId)).find((g) => g !== undefined) ?? null : grouped ? null : ctx.repeatOf.get(hop.hopId) ?? null;
   const status = statusOf(hop);
-  const note = [node.call ? callNote(node.call, hop) : "", members ? `${members.length} calls · ${fmtUs(rowUs(node))} in all` : noteOf(hop)].filter(Boolean).join(" · ");
+  const note = [node.call ? callNote(node.call, hop) : "", members ? `${members.length} calls · ${fmtUs(rowUs(node))} in all` : noteOf(hop), !members && repeat ? repeatNote(repeat) : ""].filter(Boolean).join(" · ");
   const geom = geometry(timed, ctx.axisStart, ctx.axisMs, ctx.now);
   const selected = !members && ctx.openHop === hop.hopId;
   const colour = ctx.colours.get(hop.service) as string;
@@ -813,6 +872,7 @@ function HopRow({ row, ctx, onFold }: { row: VisibleRow; ctx: RowCtx; onFold: (o
     <div
       role="button"
       tabIndex={0}
+      data-path-key={node.key}
       aria-expanded={selected}
       onClick={toggle}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
@@ -825,6 +885,7 @@ function HopRow({ row, ctx, onFold }: { row: VisibleRow; ctx: RowCtx; onFold: (o
         <FoldButton row={row} onFold={onFold} />
         <HopText hop={hop} ctx={ctx} />
         {members ? <span className="shrink-0 font-mono text-[12px] font-medium text-muted">×{members.length}</span> : null}
+        {repeat ? <RepeatChip group={repeat} /> : null}
         {note ? <span className="min-w-0 truncate text-2xs text-faint">{note}</span> : null}
         {row.summary && !members ? <span className="min-w-0 shrink-0 truncate rounded-full bg-surface-2 px-2 py-px text-2xs text-muted">{row.summary}</span> : null}
       </div>
@@ -848,7 +909,7 @@ function HopRow({ row, ctx, onFold }: { row: VisibleRow; ctx: RowCtx; onFold: (o
           <div className="ml-[34px] mt-[3px] font-mono text-[11.5px] leading-snug text-faint [overflow-wrap:anywhere]" title={hop.stmt ?? undefined}>{statementTail(hop)}</div>
         ) : null}
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
-          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary].filter(Boolean).join(" · ")}
+          {[hop.via, members ? `${members.length} calls` : null, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null].filter(Boolean).join(" · ")}
         </div>
         <Bar hop={timed} colour={colour} geom={geom} thin />
       </div>
@@ -868,6 +929,12 @@ function HopDetail({ hop, call = null, depth, ctx }: { hop: Hop; call?: Hop | nu
   if (hop.isStore && hop.via === Via.Db) {
     if (hop.peer) facts.push(["Database", hop.peer]);
     if (hop.table) facts.push(["Table", hop.table]);
+  }
+  const repeat = ctx.repeatOf.get(hop.hopId);
+  if (repeat) {
+    facts.push(["Repeated", repeatSentence(repeat)]);
+    const hint = repeatHint(repeat);
+    if (hint) facts.push(["Suggestion", hint]);
   }
   if (hop.pipeline) facts.push(["Commands", `${hop.pipeline.ops.join(", ")} · sent as one MULTI block`]);
   if (hop.skewMs > 0) facts.push(["Start", `drawn from its caller's start: its records put it ${fmtGap(hop.skewMs)} earlier`]);

@@ -57,3 +57,14 @@ Peers are hostnames; two services behind one host merge into one node (the peer 
 
 ## Out of scope
 Editing the map, saving layouts, tracing a single request over the map, topology from queue message flows.
+
+## As built (deviations and details settled in the BAC-76 PR)
+- Nodes are the services with inbound figures in the range plus every endpoint of an edge, not every service in `inboundServices` (14 days): a service that went quiet would otherwise sit unconnected on the map. `inboundServices` is still read, as the known services a peer named like a service resolves to.
+- `MapNode` gains `via` (db or cache for a store), `peers` (the hosts or queue names that resolve to it) and `hidden` (past the 40-node cap); `MapEdge` gains `peers` and `drawn` (false for back edges and edges touching a hidden node; both stay in the list); `ServiceMap` gains `hiddenNodes`. Edge ids are `<from>|<to>` (no `>` to escape in HTML). `tone` uses an `EdgeTone` map.
+- `PeerStore` gains `all(orgId)` (most recently seen first, at most 5000 rows); `peerServicesFor(orgId, store?)` keeps the newest service for a peer. `learnPeers` is split into `scanPeers` (one read: inbound and non-store outbound records of the last 15 minutes, limit 3000, its own LogQL so `peers.server.ts` does not import `attention.server.ts`) and the `cachedStale` wrapper (fresh 5 min, served stale up to 1 h while the next scan runs). It saves only pairs not already stored and then drops the 30 s bulk-read cache.
+- `serviceMap` takes a trailing `read` (Loki) after `now`, and `now` is a clock function. A failing scan or peer read never fails the map: peers stay External and the page says so (`peersUnavailable`). The result carries `computedAt` for the stale note.
+- Default range 1 h (the plan lists 1 h, 6 h, 24 h without a default).
+- The title row is the card header ("Service map", info tip, range and view controls on one row) under the Insights tabs; the phone gets the range as a select and always the list.
+- The tab test in `lib/insights/insight-tabs.test.ts` no longer pins "only Fix first": it checks the shown tabs are the ready ones, so later tab flips do not each edit it.
+- The graph render test is `components/insights/map-graph.test.ts` with `createElement`: `*.test.tsx` would be type-checked without bun's types, `*.test.ts` is excluded like every other test.
+- Fixtures: no change needed. The shared stack's records already link payments.internal, risk.internal and receipts to their services.
