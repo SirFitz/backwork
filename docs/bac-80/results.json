@@ -32,12 +32,12 @@
   {
     "name": "1440 box finds shop.example.com",
     "ok": true,
-    "detail": "8 rows"
+    "detail": "7 rows"
   },
   {
     "name": "1440 toggle on: box finds binary.fleeksite.com",
     "ok": true,
-    "detail": "5 rows"
+    "detail": "6 rows"
   },
   {
     "name": "1440 toggle on: monitor rows carry the Monitor badge",
@@ -107,7 +107,7 @@
   {
     "name": "390 toggle on: box finds binary.fleeksite.com",
     "ok": true,
-    "detail": "5 rows"
+    "detail": "6 rows"
   },
   {
     "name": "390 toggle on: monitor rows carry the Monitor badge",
