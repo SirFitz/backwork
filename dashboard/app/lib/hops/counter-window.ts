@@ -31,12 +31,20 @@ function byClause(labels: readonly string[]): string {
 
 /**
  * How much `selector` grew in the window that ends `offset` before now, summed by `labels`,
- * never below zero. `selector` is a full series selector, e.g. `m{dir="in"}`.
+ * never below zero. `selector` is a full series selector, e.g. `m{dir="in"}`. `lookbackSeconds`
+ * is shortened for a window far in the past (BAC-67: last week's figures), so that
+ * `offset + window + lookback` stays inside VictoriaMetrics' 14-day retention.
  */
-export function windowIncrease(selector: string, window: string, labels: readonly string[], offset: string | null = null): string {
+export function windowIncrease(
+  selector: string,
+  window: string,
+  labels: readonly string[],
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): string {
   const w = windowSeconds(window);
   const off = offset ? windowSeconds(offset) : 0;
-  const lb = COUNTER_LOOKBACK_SECONDS;
+  const lb = lookbackSeconds;
   const at = (seconds: number): string => (seconds > 0 ? ` offset ${seconds}s` : "");
   const sum = `sum ${byClause(labels)}`;
   const whole = `${sum}(increase(${selector}[${w + lb}s]${at(off)}))`;
@@ -45,6 +53,12 @@ export function windowIncrease(selector: string, window: string, labels: readonl
 }
 
 /** Per second over the window: the window's increase divided by its length. */
-export function windowPerSecond(selector: string, window: string, labels: readonly string[]): string {
-  return `${windowIncrease(selector, window, labels)} / ${windowSeconds(window)}`;
+export function windowPerSecond(
+  selector: string,
+  window: string,
+  labels: readonly string[],
+  offset: string | null = null,
+  lookbackSeconds: number = COUNTER_LOOKBACK_SECONDS,
+): string {
+  return `${windowIncrease(selector, window, labels, offset, lookbackSeconds)} / ${windowSeconds(window)}`;
 }

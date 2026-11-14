@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LogEntry } from "~/lib/loki.server";
-import { logLinesFor, logsOnly, progressiveLookup, searchWindow, SearchWindow, type HopQueryFn } from "./query.server";
+import { HOP_LIMIT, logLinesFor, logsOnly, progressiveLookup, searchWindow, SearchWindow, type HopQueryFn } from "./query.server";
 import type { Tenant } from "~/lib/tenant.server";
 import type { TraceId } from "./types";
 
@@ -30,6 +30,13 @@ describe("searchWindow", () => {
     expect(calls).toEqual([{ query: `{kind="hop"} |= "${T}"`, start: NOW - 3_600_000, end: NOW, limit: 5000, tenant }]);
     expect(r.found).toBe(true);
     expect(r.records.length).toBe(1);
+  });
+  test("truncated only when the window returned HOP_LIMIT lines (BAC-67)", async () => {
+    const { fn: few } = fake(() => [rec(NOW - 1000, "in")]);
+    expect((await searchWindow(T, SearchWindow.Hour, tenant, NOW, few)).truncated).toBe(false);
+    const full = Array.from({ length: HOP_LIMIT }, (_, i) => rec(NOW - 1000 - i, "in"));
+    const { fn: capped } = fake(() => full);
+    expect((await searchWindow(T, SearchWindow.Hour, tenant, NOW, capped)).truncated).toBe(true);
   });
   test("records of another trace that merely contain the ID text are dropped", async () => {
     const { fn } = fake(() => [rec(NOW - 1000, "in", "1f0a6c2e9b7d4405", OTHER)]);

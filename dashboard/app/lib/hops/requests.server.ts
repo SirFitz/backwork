@@ -5,7 +5,7 @@
 import * as loki from "~/lib/loki.server";
 import type { Tenant } from "~/lib/tenant.server";
 import { parseHopRecord } from "~/lib/hops/parse";
-import { HopKind, Outcome, Via, type HopRecord } from "~/lib/hops/types";
+import { HopKind, Outcome, Via, type HopRecord, type StoreTotals } from "~/lib/hops/types";
 import { isLabelValue } from "~/lib/hops/metrics.server";
 import { HealthChecks, LOGQL_NOT_HEALTH_CHECK, isHealthCheckOp } from "~/lib/hops/health";
 
@@ -22,6 +22,8 @@ export interface RequestListRow {
   durationMs: number;
   startMs: number;
   error: boolean;
+  /** Database and cache totals from the end record (HOP-20); null when the record has none. */
+  totals: StoreTotals | null;
 }
 
 /** Rows per page (design 13). */
@@ -61,6 +63,7 @@ export function rowsFromRecords(records: readonly HopRecord[], health: HealthChe
       durationMs,
       startMs: r.timeMs - durationMs,
       error: r.outcome === Outcome.Error,
+      totals: r.totals,
     });
   }
   return out;
