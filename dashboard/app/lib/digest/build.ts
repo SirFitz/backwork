@@ -192,7 +192,11 @@ function ms(seconds: number): string {
 }
 
 function fixLines(items: readonly FixItem[]): string[] {
-  return items.slice(0, DIGEST_FIX_ITEMS).map((it, i) => line(it.title, ` (${it.service}): ${it.impactLabel}`, `${i + 1}. `));
+  return items.slice(0, DIGEST_FIX_ITEMS).map((it, i) => {
+    // A regression's title already names its service ("shop-api, slower than last week").
+    const svc = it.title.startsWith(it.service) ? "" : ` (${it.service})`;
+    return line(it.title, `${svc}: ${it.impactLabel}`, `${i + 1}. `);
+  });
 }
 
 function slowerLines(rows: readonly CompareRow[]): string[] {

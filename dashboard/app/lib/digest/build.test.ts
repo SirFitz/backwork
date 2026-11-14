@@ -111,6 +111,11 @@ describe("buildDigest", () => {
     expect(s(DigestSection.Usage)).toEqual(["This month so far: 1,234,567 of 2,000,000 requests, 3.2 GB of 20 GB of data included in the plan."]);
   });
 
+  test("a fix-first title that names its service does not repeat it", () => {
+    const d = buildDigest(empty({ fixFirst: [{ ...fix(1, "shop-api, slower than last week"), impactLabel: "added 1 m 2 s in the last 6 hours" }] }));
+    expect(d.sections[0].lines).toEqual(["1. shop-api, slower than last week: added 1 m 2 s in the last 6 hours"]);
+  });
+
   test("empty sections are omitted", () => {
     const d = buildDigest(empty({ deploys: [deploy(1)] }));
     expect(d.sections.map((s) => s.key)).toEqual([DigestSection.Deploys]);
