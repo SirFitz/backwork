@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { Await } from "@remix-run/react";
 import { Skeleton } from "~/components/ui";
+import { describePanelError } from "~/lib/error-copy";
 
 /** Suspense + Await wrapper: streams the shell immediately, fills in when the
  *  deferred promise resolves, degrades per-panel on error. */
@@ -16,7 +17,7 @@ export function Deferred<T>({
   return (
     <Suspense fallback={fallback}>
       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-      <Await resolve={resolve as any} errorElement={<div className="px-4 py-10 text-center text-[13px] text-err">data source unavailable</div>}>
+      <Await resolve={resolve as any} errorElement={<div className="px-4 py-10 text-center text-[13px] text-err">{describePanelError(null)}</div>}>
         {children as any}
       </Await>
     </Suspense>

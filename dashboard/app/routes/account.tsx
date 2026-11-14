@@ -4,6 +4,7 @@ import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/re
 import { eq } from "drizzle-orm";
 import { KeyRound, Save } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
+import { isBusy, isSubmittingOwn } from "~/lib/pending";
 import { db } from "~/db/index.server";
 import { users } from "~/db/schema";
 import { requireUser } from "~/lib/auth/context.server";
@@ -53,7 +54,9 @@ export default function Account() {
   const d = useLoaderData<typeof loader>();
   const data = useActionData<typeof action>();
   const nav = useNavigation();
-  const busy = nav.state !== "idle";
+  const busy = isBusy(nav);
+  const savingProfile = isSubmittingOwn(nav, { intent: "profile" });
+  const savingPassword = isSubmittingOwn(nav, { intent: "password" });
   const msg = (scope: string) =>
     data?.scope === scope ? (
       "ok" in data && data.ok ? <p className="text-[13px] text-ok">{data.ok}</p> : "error" in data && data.error ? <p className="text-[13px] text-err">{data.error}</p> : null
@@ -70,7 +73,7 @@ export default function Account() {
           <label className="block text-2xs font-medium text-muted">Name<input name="name" defaultValue={d.name} className={`${FIELD} mt-1`} /></label>
           <label className="block text-2xs font-medium text-muted">Email<input value={d.email} disabled className={`${FIELD} mt-1 text-faint`} /></label>
           {msg("profile")}
-          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] font-medium hover:bg-surface-2 disabled:opacity-60"><Save className="h-4 w-4" /> Save profile</button>
+          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] font-medium hover:bg-surface-2 disabled:opacity-60"><Save className="h-4 w-4" /> {savingProfile ? "Saving…" : "Save profile"}</button>
         </Form>
       </Card>
 
@@ -82,7 +85,7 @@ export default function Account() {
           <input name="next" type="password" autoComplete="new-password" required placeholder="New password (10+ chars, a letter & a number)" className={FIELD} />
           <input name="confirm" type="password" autoComplete="new-password" required placeholder="Confirm new password" className={FIELD} />
           {msg("password")}
-          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60"><KeyRound className="h-4 w-4" /> {busy ? "Saving…" : "Change password"}</button>
+          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60"><KeyRound className="h-4 w-4" /> {savingPassword ? "Saving…" : "Change password"}</button>
         </Form>
       </Card>
     </div>
