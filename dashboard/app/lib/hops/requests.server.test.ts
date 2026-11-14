@@ -79,7 +79,7 @@ describe("rowsFromRecords", () => {
     const [row] = rowsFromRecords([
       rec(`trace_id=${T} hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 adapter=plug via=http method=GET op=/shop outcome=ok status=200 duration_us=90000 db_n=22 db_us=61000 cache_n=3 cache_us=900`),
     ]);
-    expect(row.totals).toEqual({ dbCalls: 22, dbUs: 61000, cacheCalls: 3, cacheUs: 900 });
+    expect(row.totals).toEqual({ dbCalls: 22, dbUs: 61000, cacheCalls: 3, cacheUs: 900, cacheHits: null, cacheMisses: null, dbWaitUs: null });
   });
   test("a failed request keeps its error flag and a missing status", () => {
     const [row] = rowsFromRecords([
