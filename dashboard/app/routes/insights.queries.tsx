@@ -7,7 +7,7 @@ import { useLoaderData } from "@remix-run/react";
 import { Link, useEnvNavigate } from "~/components/env-link";
 import { Database } from "lucide-react";
 import { Deferred } from "~/components/defer";
-import { CallingRoutes, CallingRoutesSkeleton, QueryTable, QueryTableSkeleton, rowKey } from "~/components/insights/query-table";
+import { CallingRoutes, CallingRoutesSkeleton, HintsPhase, QueryTable, QueryTableSkeleton, rowKey, type HintsState } from "~/components/insights/query-table";
 import { Card, CardHead, Empty } from "~/components/ui";
 import { safe } from "~/lib/config.server";
 import {
@@ -23,6 +23,7 @@ import {
   type StatementRoutes,
 } from "~/lib/hops/slow-queries";
 import { routesFor, slowQueries, type SlowQueries } from "~/lib/hops/slow-queries.server";
+import { boardHints, type BoardHints } from "~/lib/hops/suggest.server";
 import { SLOW_FRESH_MS } from "~/lib/hops/slow-queries";
 import { requireScope } from "~/lib/env.server";
 import { cn } from "~/lib/utils";
@@ -80,7 +81,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
         return found ? routesFor(tenant, found, state.window) : null;
       }, null)
     : null;
-  return defer({ ...state, now: Date.now(), board, routes });
+  // Suggestions (BAC-93): their own deferred section, so the table never waits for them.
+  const hints: Promise<Panel<BoardHints | null>> = safe(() => boardHints(tenant, state.window), null);
+  return defer({ ...state, now: Date.now(), board, routes, hints });
 }
 
 function clockUtc(ms: number): string {
@@ -152,6 +155,7 @@ export default function SlowQueriesPage() {
           <BoardBody
             panel={panel}
             state={state}
+            hints={d.hints}
             retryHref={pageHref(state)}
             detail={() =>
               d.routes ? (
@@ -203,11 +207,13 @@ function BoardMeta({ board, window, now }: { board: SlowQueries | null; window: 
 function BoardBody({
   panel,
   state,
+  hints,
   retryHref,
   detail,
 }: {
   panel: Panel<SlowQueries | null>;
   state: PageState;
+  hints: Promise<Panel<BoardHints | null>>;
   retryHref: string;
   detail: (row: QueryRow) => JSX.Element | null;
 }) {
@@ -233,12 +239,27 @@ function BoardBody({
   return (
     <>
       {board.groupLimited ? <p className="border-b border-border px-4 py-1.5 text-2xs text-muted">Showing the 200 queries that took the most time.</p> : null}
-      <QueryTable
-        rows={shown}
-        openKey={state.open}
-        hrefFor={(row, open) => pageHref({ ...state, open: open ? rowKey(row) : null })}
-        detail={detail}
-      />
+      <Deferred resolve={hints} fallback={<Table shown={shown} state={state} detail={detail} hints={{ phase: HintsPhase.Loading }} />}>
+        {(h) => <Table shown={shown} state={state} detail={detail} hints={hintsState(h)} />}
+      </Deferred>
     </>
+  );
+}
+
+/** The board's Suggestion column state from the deferred hints panel. */
+function hintsState(h: Panel<BoardHints | null>): HintsState {
+  if (h.error || !h.data) return { phase: HintsPhase.Error, message: h.error ?? "unavailable" };
+  return h.data.off ? { phase: HintsPhase.Off } : { phase: HintsPhase.Ready, hints: h.data.hints };
+}
+
+function Table({ shown, state, detail, hints }: { shown: QueryRow[]; state: PageState; detail: (row: QueryRow) => JSX.Element | null; hints: HintsState }) {
+  return (
+    <QueryTable
+      rows={shown}
+      openKey={state.open}
+      hrefFor={(row, open) => pageHref({ ...state, open: open ? rowKey(row) : null })}
+      detail={detail}
+      hints={hints}
+    />
   );
 }

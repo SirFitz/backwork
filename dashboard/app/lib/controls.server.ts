@@ -52,10 +52,22 @@ export const Feature = {
   Metrics: "metrics",
   /** The sensitive-data filter of design 19.2. */
   Filter: "filter",
+  /** Query suggestions (BAC-93): hints drawn from stored hop records. A dashboard feature, not a
+   *  collection one: it is never sent to the agent or the ingest proxy. */
+  Suggestions: "suggestions",
 } as const;
 export type Feature = (typeof Feature)[keyof typeof Feature];
 
 export const FEATURES: readonly Feature[] = Object.values(Feature);
+
+/** Switches the dashboard alone acts on. They stay out of the agent snapshot and the ingest
+ *  enforcement, so adding one never changes what a collector is told. */
+export const DASHBOARD_FEATURES: readonly Feature[] = [Feature.Suggestions];
+export type CollectorFeature = Exclude<Feature, typeof Feature.Suggestions>;
+/** The switches an agent or the ingest proxy enforces. */
+export const COLLECTOR_FEATURES: readonly CollectorFeature[] = FEATURES.filter(
+  (f): f is CollectorFeature => !DASHBOARD_FEATURES.includes(f),
+);
 
 export function isFeature(v: unknown): v is Feature {
   return typeof v === "string" && (FEATURES as readonly string[]).includes(v);
@@ -72,6 +84,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   linked_ids: "Linked IDs",
   metrics: "Performance figures",
   filter: "Sensitive-data filter",
+  suggestions: "Query suggestions",
 };
 
 /** What stops when the switch is off (design 19.1), for help text. */
@@ -85,6 +98,7 @@ export const FEATURE_EFFECT: Record<Feature, string> = {
   linked_ids: "Link lines are no longer saved.",
   metrics: "Hop metrics are no longer saved.",
   filter: "Sensitive values are no longer replaced with [filtered].",
+  suggestions: "Query suggestions and the observed schema are no longer shown for this scope. Nothing collected changes.",
 };
 
 // ---------------------------------------------------------------------------
@@ -143,9 +157,9 @@ export function resolveAll(
   rows: readonly ControlRow[],
   projectId: string | null,
   service: string | null,
-): Record<Feature, boolean> {
-  const out = {} as Record<Feature, boolean>;
-  for (const f of FEATURES) out[f] = resolveEffective(rows, projectId, service, f);
+): Record<CollectorFeature, boolean> {
+  const out = {} as Record<CollectorFeature, boolean>;
+  for (const f of COLLECTOR_FEATURES) out[f] = resolveEffective(rows, projectId, service, f);
   return out;
 }
 
@@ -477,9 +491,9 @@ export interface ControlsSnapshot {
   /** Changes whenever any switch or pattern changes; the agent reloads on change. */
   version: string;
   /** Effective switches for the project as a whole. */
-  project: Record<Feature, boolean>;
+  project: Record<CollectorFeature, boolean>;
   /** Services with at least one switch differing from the project. */
-  services: Record<string, Record<Feature, boolean>>;
+  services: Record<string, Record<CollectorFeature, boolean>>;
   /** Enabled filter patterns, in order. Empty when the filter is off for the project. */
   patterns: { name: string; pattern: string; replacement: string }[];
   /** Container or process name (`source`) -> the service its hop records name, where they
@@ -513,7 +527,7 @@ export async function controlsSnapshot(
 ): Promise<ControlsSnapshot> {
   const rows = canonicalRows(await getControls(orgId), new Map(Object.entries(serviceNames)));
   const project = resolveAll(rows, projectId, null);
-  const services: Record<string, Record<Feature, boolean>> = {};
+  const services: Record<string, Record<CollectorFeature, boolean>> = {};
   for (const r of rows) {
     if (r.service === null || (r.projectId !== null && r.projectId !== projectId)) continue;
     services[r.service] = resolveAll(rows, projectId, r.service);

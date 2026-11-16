@@ -50,6 +50,7 @@ export const COLLECTED: readonly Feature[] = [
   Feature.Paths,
   Feature.LinkedIds,
   Feature.Metrics,
+  Feature.Suggestions,
 ];
 
 /** One line of plain meaning under each switch (frame 7). */
@@ -63,6 +64,7 @@ export const FEATURE_MEANING: Record<Feature, string> = {
   [Feature.LinkedIds]: "Order numbers and provider references.",
   [Feature.Metrics]: "Rate, errors and latency.",
   [Feature.Filter]: "Replaces sensitive values with [filtered].",
+  [Feature.Suggestions]: "Hints about slow or repeated database queries, and the schema they imply.",
 };
 
 /** Column heads of the by-service grid (frame 7). */
@@ -76,6 +78,7 @@ export const GRID_HEAD: Record<Feature, string> = {
   [Feature.LinkedIds]: "Linked IDs",
   [Feature.Metrics]: "Figures",
   [Feature.Filter]: "Filter",
+  [Feature.Suggestions]: "Suggestions",
 };
 
 /** Business wording for the built-in patterns, in the frame's order. */

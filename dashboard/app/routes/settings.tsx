@@ -9,6 +9,8 @@ import { hasRole, requireOrg } from "~/lib/auth/context.server";
 import { logAudit } from "~/lib/audit.server";
 import { PinAudit, loadPinSettings, pinUsage, savePinSettings } from "~/lib/pins.server";
 import { AUTO_PINS_INTENT, AutoPinCard, type AutoPinView } from "~/components/insights/auto-pin-card";
+import { AiCard, SUGGEST_AI_INTENT, type AiView } from "~/components/insights/ai-card";
+import { aiKeyConfigured, loadAiSettings, saveAiSettings } from "~/lib/hops/suggest-ai.server";
 import { tenantOf } from "~/lib/tenant.server";
 import { cn } from "~/lib/utils";
 import { DataControlsPanel, type SwitchGroup } from "~/components/data-controls";
@@ -32,6 +34,7 @@ const DEFAULT_KEPT_DAYS = { logs: 7, requests: 30, figures: 14 } as const;
 const SWITCH_GROUPS: readonly SwitchGroup[] = [
   { title: "Stored", features: [Feature.Logs, Feature.Hops, Feature.Stores, Feature.Metrics] },
   { title: "Detail inside each request", features: [Feature.NamedFields, Feature.Statements, Feature.Paths, Feature.LinkedIds] },
+  { title: "Shown by backwork", features: [Feature.Suggestions] },
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -61,10 +64,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return { settings, count: usage.count, limit: usage.limit, canManage: hasRole(ctx.role, "admin") };
   }, null);
 
+  // Query suggestions (BAC-93): the AI write-up's switch, cap and use (off by default).
+  const ai: Promise<{ data: AiView | null; error: string | null }> = safe(async () => ({
+    settings: await loadAiSettings(ctx.org.id),
+    keyConfigured: aiKeyConfigured(),
+    canManage: hasRole(ctx.role, "admin"),
+    model: config.suggestAiModel,
+  }), null);
+
   return defer({
     controls,
     plan,
     pins,
+    ai,
     gridHeads: GRID_HEAD,
     groups: SWITCH_GROUPS,
     publicUrl: config.publicUrl,
@@ -88,6 +100,15 @@ export async function action({ request }: ActionFunctionArgs) {
     const next = { ...current, [which]: fd.get("on") === "1" };
     await savePinSettings(ctx.org.id, ctx.user.id, next);
     void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: PinAudit.Settings, target: next });
+    return json({ ok: true });
+  }
+  if (intent === SUGGEST_AI_INTENT) {
+    if (!hasRole(ctx.role, "admin")) return json({ ok: false, error: "Only an admin can change this." }, { status: 403 });
+    const on = fd.get("on") === "1";
+    const cap = Number(fd.get("cap") ?? 0);
+    if (!Number.isFinite(cap) || cap < 0) return json({ ok: false, error: "The cap must be zero or more." }, { status: 400 });
+    await saveAiSettings(ctx.org.id, ctx.user.id, on, cap);
+    void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "suggestions.ai_settings", target: { enabled: on, monthlyCap: Math.floor(cap) } });
     return json({ ok: true });
   }
   if (!isControlIntent(intent)) return json({ ok: false, error: "Unknown action." }, { status: 400 });
@@ -139,6 +160,10 @@ export default function Settings() {
 
       <Deferred resolve={d.pins} fallback={<Card><CardHead title="Pinned requests" /><RowsSkeleton rows={2} /></Card>}>
         {(p) => (p.data ? <AutoPinCard view={p.data} /> : <Card><CardHead title="Pinned requests" /><div className="border-t border-border px-4 py-2.5 text-2xs text-warn">These settings could not be loaded just now. Reload the page to try again.</div></Card>)}
+      </Deferred>
+
+      <Deferred resolve={d.ai} fallback={<Card><CardHead title="Query suggestion write-ups" /><RowsSkeleton rows={2} /></Card>}>
+        {(p) => (p.data ? <AiCard view={p.data} /> : <Card><CardHead title="Query suggestion write-ups" /><div className="border-t border-border px-4 py-2.5 text-2xs text-warn">These settings could not be loaded just now. Reload the page to try again.</div></Card>)}
       </Deferred>
 
       <Card>

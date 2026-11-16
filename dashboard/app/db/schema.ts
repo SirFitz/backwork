@@ -357,3 +357,23 @@ export const pinSettings = pgTable("pin_settings", {
   updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Query suggestions (BAC-93): the AI write-up's switch (off by default), its monthly cap and use,
+// and the answers kept per statement shape and figures bucket.
+export const suggestionSettings = pgTable("suggestion_settings", {
+  orgId: text("org_id").primaryKey().references(() => orgs.id, { onDelete: "cascade" }),
+  aiEnabled: boolean("ai_enabled").notNull().default(false),
+  aiMonthlyCap: integer("ai_monthly_cap").notNull().default(0),
+  aiUsedMonth: text("ai_used_month").notNull().default(""),
+  aiUsed: integer("ai_used").notNull().default(0),
+  updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const suggestionAnswers = pgTable("suggestion_answers", {
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  key: text("key").notNull(),
+  answer: text("answer").notNull(),
+  model: text("model").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ pk: primaryKey({ columns: [t.orgId, t.key] }) }));
