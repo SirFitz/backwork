@@ -1,8 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { defer } from "@remix-run/node";
-import { Await, Form, Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Suspense, useState } from "react";
-import { GitBranch, Search, SlidersHorizontal } from "lucide-react";
+import { defer, json } from "@remix-run/node";
+import { Await, Form, Link, useFetcher, useLoaderData, useNavigation, useSubmit, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, GitBranch, Search, SlidersHorizontal } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
@@ -15,6 +15,8 @@ import { stripAnsi, traceIdOfLine } from "~/lib/hops/parse";
 import { Clock } from "~/components/time";
 import { displayService, serviceList, serviceMatcher, type ServiceNames } from "~/lib/service-names";
 import { serviceNames } from "~/lib/service-names.server";
+import { LIVE_PAUSED_EVENT, readLivePaused } from "~/lib/live-pref";
+import { MAX_LINES_KEPT, TAIL_POLL_MS, mergeNewLines, msToNs, newestNs, parseSince, lineKey, type LogLine } from "~/lib/logs-tail";
 
 const LEVELS = ["all", "error", "warn", "info", "debug"];
 /** pino writes numeric levels; show their names. */
@@ -54,17 +56,52 @@ function buildQuery(service: string, level: string, q: string, kind: KindFilter,
   return query;
 }
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  const url = new URL(request.url);
+function readFilters(url: URL) {
   const service = url.searchParams.get("service") || "all";
   const level = url.searchParams.get("level") || "all";
   const q = url.searchParams.get("q") || "";
   const rangeKey = url.searchParams.get("range") || DEFAULT_RANGE;
   const mins = RANGES[rangeKey] ?? 15;
-  const end = Date.now();
-  const start = end - mins * 60 * 1000;
   const showHops = url.searchParams.get("hops") === "1";
   const raw = q.trim().startsWith("{");
+  return { service, level, q, rangeKey, mins, showHops, raw };
+}
+
+function toLine(e: loki.LogEntry, names: ServiceNames): LogLine {
+  return { ts: e.ts, tsNs: e.tsNs ?? msToNs(e.ts), level: levelName(e.level), service: displayService(e.labels, names), message: stripAnsi(e.message), traceId: traceIdOfLine(e.line) };
+}
+
+/** `?since=<ns>`: only the lines newer than the newest one the page shows, same filters (BAC-83). */
+export async function loader(args: LoaderFunctionArgs) {
+  return parseSince(new URL(args.request.url).searchParams.get("since")) === null ? pageLoader(args) : tailLoader(args);
+}
+
+/** The live tail: lines from `since` (inclusive; the page drops the repeat) to now. Never cached. */
+async function tailLoader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const since = parseSince(url.searchParams.get("since")) ?? msToNs(Date.now());
+  const { service, level, q, showHops } = readFilters(url);
+  const ctx = await requireOrg(request);
+  const t = tenantOf(ctx.org.id);
+  const names = await serviceNames(t);
+  const query = buildQuery(service, level, q, showHops ? KindFilter.All : KindFilter.Ordinary, names);
+  const list = await loki.queryRange(query, { startNs: since, end: Date.now(), limit: 200 }, t);
+  return json({ lines: list.map((e) => toLine(e, names)) }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/** The page's own poll appends new lines; the header's 10 s timer must not replace the list.
+ *  A filter change (a new URL) or a mutation still loads afresh. */
+export function shouldRevalidate({ currentUrl, nextUrl, formMethod, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs): boolean {
+  if (formMethod && formMethod.toUpperCase() !== "GET") return defaultShouldRevalidate;
+  if (currentUrl.href === nextUrl.href) return false;
+  return defaultShouldRevalidate;
+}
+
+async function pageLoader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const { service, level, q, rangeKey, mins, showHops, raw } = readFilters(url);
+  const end = Date.now();
+  const start = end - mins * 60 * 1000;
   const ctx = await requireOrg(request);
   const t = tenantOf(ctx.org.id);
   // The name map is cached; every part below waits only on it and on its own query.
@@ -77,10 +114,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     services: Promise.all([loki.services(t).catch(() => [] as string[]), namesP]).then(([list, names]) => serviceList(list, names)),
     query: queryP,
     filters: { service, level, q, range: rangeKey, hops: showHops, raw },
+    /** Where the live tail starts when the first load found no lines. */
+    until: msToNs(end),
     entries: Promise.all([queryP, namesP]).then(([query, names]) =>
-      cached(`${ck(query)}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) =>
-        list.map((e) => ({ ts: e.ts, level: levelName(e.level), service: displayService(e.labels, names), message: stripAnsi(e.message), traceId: traceIdOfLine(e.line) })),
-      ),
+      cached(`${ck(query)}:e`, 5000, () => loki.queryRange(query, { start, end, limit: 200 }, t)).then((list) => list.map((e) => toLine(e, names))),
     ),
     hidden: showHops || raw
       ? Promise.resolve(0)
@@ -94,7 +131,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 const SELECT = "h-8 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
 export default function Logs() {
-  const d = useLoaderData<typeof loader>();
+  const d = useLoaderData<typeof pageLoader>();
   const submit = useSubmit();
   const nav = useNavigation();
   const loading = nav.state === "loading";
@@ -153,41 +190,130 @@ export default function Logs() {
       </Card>
 
       <Card>
-        <CardHead title="Lines" sub="newest first · up to 200 shown" right={f.raw ? null : <HopSwitch on={f.hops} filters={f} hidden={d.hidden} />} />
+        <CardHead title="Lines" sub="newest first · new lines added live" right={f.raw ? null : <HopSwitch on={f.hops} filters={f} hidden={d.hidden} />} />
         <Deferred resolve={d.entries} fallback={<RowsSkeleton rows={10} />}>
-          {(entries) =>
-            entries.length === 0 ? (
-              <NoLines filters={f} hidden={d.hidden} />
-            ) : (
-              <div className={cn("max-h-[62vh] overflow-auto scroll-thin text-[12.5px] leading-[1.7] transition-opacity", loading && "opacity-50")}>
-                <div className="sticky top-0 z-[1] hidden grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] gap-3 border-b border-border bg-surface px-4 py-[7px] text-2xs font-medium uppercase tracking-wide text-faint md:grid">
-                  <span>Time</span><span>Service</span><span>Level</span><span>Message</span><span className="text-right">Request</span>
-                </div>
-                {entries.map((e, i) => (
-                  <div key={i} className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-baseline gap-x-2 border-b border-border/40 px-3 py-1 font-mono hover:bg-surface-2/50 sm:px-4 md:grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] md:gap-x-3">
-                    <span className="shrink-0 tabular-nums text-faint md:col-start-1 md:row-start-1"><Clock ts={e.ts} /></span>
-                    <span className={cn("w-9 shrink-0 font-semibold uppercase md:order-none md:w-auto", LEVEL_TEXT[e.level] || "text-faint", "md:col-start-3 md:row-start-1")}>{e.level}</span>
-                    <span className="truncate text-accent max-md:text-right md:col-start-2 md:row-start-1" title={e.service}>{e.service}</span>
-                    <span className="col-span-3 min-w-0 whitespace-pre-wrap break-words text-fg/90 md:col-span-1 md:col-start-4 md:row-start-1">{e.message}</span>
-                    <span className="col-span-3 md:col-span-1 md:col-start-5 md:row-start-1 md:text-right">
-                      {e.traceId ? (
-                        <Link
-                          to={`/requests/${e.traceId}`}
-                          className="inline-flex items-center gap-[5px] rounded-[5px] border border-brand/30 px-1.5 py-px text-2xs font-medium text-brand hover:bg-brand/10"
-                          title={`Open request ${e.traceId}`}
-                        >
-                          <GitBranch className="h-3 w-3" />{e.traceId.slice(0, 8)}
-                        </Link>
-                      ) : <span className="hidden font-sans text-2xs text-faint md:inline">no ID</span>}
-                    </span>
-                  </div>
-                ))}
-                {entries.length >= 200 ? <div className="border-t border-border/40 px-4 py-1.5 text-2xs text-faint">Showing the newest 200 lines. Narrow by service, level, or time range to see more.</div> : null}
-              </div>
-            )
-          }
+          {(entries) => <LiveLines key={d.until} initial={entries} until={d.until} filters={f} hidden={d.hidden} dimmed={loading} />}
         </Deferred>
       </Card>
+    </div>
+  );
+}
+
+/** Follows the header's Live/Pause toggle (BAC-56), which lives in the root layout. */
+function useLivePaused(): boolean {
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    setPaused(readLivePaused());
+    const onChange = (e: Event): void => setPaused(e instanceof CustomEvent && typeof e.detail === "boolean" ? e.detail : readLivePaused());
+    window.addEventListener(LIVE_PAUSED_EVENT, onChange);
+    return () => window.removeEventListener(LIVE_PAUSED_EVENT, onChange);
+  }, []);
+  return paused;
+}
+
+/** The list, kept live by its own poll: every 10 s it asks for lines newer than the newest shown and puts
+ *  them on top. At the top it keeps following; scrolled down, the reader's place holds and a
+ *  "N new lines" control jumps back. */
+function LiveLines({ initial, until, filters, hidden, dimmed }: { initial: LogLine[]; until: string; filters: Filters; hidden: Promise<number>; dimmed: boolean }) {
+  const [lines, setLines] = useState<LogLine[]>(initial);
+  const [unseen, setUnseen] = useState(0);
+  const paused = useLivePaused();
+  const fetcher = useFetcher<typeof tailLoader>();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+  const atTopRef = useRef(true);
+  /** The top row before new lines went in, and where it was, so the reader's place can be kept. */
+  const anchorRef = useRef<{ node: HTMLElement; top: number } | null>(null);
+  const base = hopsHref(filters, filters.hops);
+
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => {
+      const f = fetcherRef.current;
+      if (document.visibilityState !== "visible" || f.state !== "idle") return;
+      f.load(`/logs${base}&since=${newestNs(linesRef.current, until)}`);
+    }, TAIL_POLL_MS);
+    return () => clearInterval(id);
+  }, [paused, base, until]);
+
+  useEffect(() => {
+    const data = fetcher.data;
+    if (!data) return;
+    const r = mergeNewLines(linesRef.current, data.lines);
+    if (r.added === 0) return;
+    const first = boxRef.current?.querySelector<HTMLElement>("[data-row]");
+    anchorRef.current = first ? { node: first, top: first.offsetTop } : null;
+    setLines(r.lines);
+    if (!atTopRef.current) setUnseen((n) => n + r.added);
+  }, [fetcher.data]);
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const anchor = anchorRef.current;
+    anchorRef.current = null;
+    if (!box || !anchor) return;
+    if (atTopRef.current) box.scrollTop = 0;
+    else box.scrollTop += anchor.node.offsetTop - anchor.top;
+  }, [lines]);
+
+  const onScroll = useCallback((): void => {
+    const box = boxRef.current;
+    if (!box) return;
+    atTopRef.current = box.scrollTop < 8;
+    if (atTopRef.current) setUnseen(0);
+  }, []);
+
+  const jumpToNewest = useCallback((): void => {
+    boxRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    setUnseen(0);
+  }, []);
+
+  if (lines.length === 0) return <NoLines filters={filters} hidden={hidden} />;
+  return (
+    <div className="relative">
+      {unseen > 0 ? (
+        <button
+          type="button"
+          onClick={jumpToNewest}
+          className="absolute left-1/2 top-10 z-[2] inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-brand/30 bg-surface px-3 py-1 text-2xs font-medium text-brand shadow-sm hover:bg-surface-2"
+        >
+          <ArrowUp className="h-3 w-3" aria-hidden />
+          {fmtNum(unseen, 0)} new {unseen === 1 ? "line" : "lines"}
+        </button>
+      ) : null}
+      {/* overflow-anchor off: the reader's place is kept by hand above, so the browser must not move it too. */}
+      <div ref={boxRef} onScroll={onScroll} className={cn("max-h-[62vh] overflow-auto scroll-thin text-[12.5px] leading-[1.7] transition-opacity [overflow-anchor:none]", dimmed && "opacity-50")}>
+        <div className="sticky top-0 z-[1] hidden grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] gap-3 border-b border-border bg-surface px-4 py-[7px] text-2xs font-medium uppercase tracking-wide text-faint md:grid">
+          <span>Time</span><span>Service</span><span>Level</span><span>Message</span><span className="text-right">Request</span>
+        </div>
+        {lines.map((e) => (
+          <div key={lineKey(e)} data-row className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-baseline gap-x-2 border-b border-border/40 px-3 py-1 font-mono hover:bg-surface-2/50 sm:px-4 md:grid-cols-[104px_160px_48px_minmax(0,1fr)_auto] md:gap-x-3">
+            <span className="shrink-0 tabular-nums text-faint md:col-start-1 md:row-start-1"><Clock ts={e.ts} /></span>
+            <span className={cn("w-9 shrink-0 font-semibold uppercase md:order-none md:w-auto", LEVEL_TEXT[e.level] || "text-faint", "md:col-start-3 md:row-start-1")}>{e.level}</span>
+            <span className="truncate text-accent max-md:text-right md:col-start-2 md:row-start-1" title={e.service}>{e.service}</span>
+            <span className="col-span-3 min-w-0 whitespace-pre-wrap break-words text-fg/90 md:col-span-1 md:col-start-4 md:row-start-1">{e.message}</span>
+            <span className="col-span-3 md:col-span-1 md:col-start-5 md:row-start-1 md:text-right">
+              {e.traceId ? (
+                <Link
+                  to={`/requests/${e.traceId}`}
+                  className="inline-flex items-center gap-[5px] rounded-[5px] border border-brand/30 px-1.5 py-px text-2xs font-medium text-brand hover:bg-brand/10"
+                  title={`Open request ${e.traceId}`}
+                >
+                  <GitBranch className="h-3 w-3" />{e.traceId.slice(0, 8)}
+                </Link>
+              ) : <span className="hidden font-sans text-2xs text-faint md:inline">no ID</span>}
+            </span>
+          </div>
+        ))}
+        {lines.length >= MAX_LINES_KEPT ? (
+          <div className="border-t border-border/40 px-4 py-1.5 text-2xs text-faint">Keeping the newest {fmtNum(MAX_LINES_KEPT, 0)} lines. Narrow by service, level, or time range to see older ones.</div>
+        ) : initial.length >= 200 ? (
+          <div className="border-t border-border/40 px-4 py-1.5 text-2xs text-faint">Showing the newest 200 lines. Narrow by service, level, or time range to see more.</div>
+        ) : null}
+      </div>
     </div>
   );
 }
