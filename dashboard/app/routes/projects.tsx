@@ -14,6 +14,8 @@ import { hasRole, requireOrg, requireRole } from "~/lib/auth/context.server";
 import { getAuthSession, commitAuthSession } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { hashToken, tenantOf } from "~/lib/tenant.server";
+import { invalidate } from "~/lib/cache.server";
+import { envOptionsKey } from "~/lib/env.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
 import { logAudit } from "~/lib/audit.server";
 import { config } from "~/lib/config.server";
@@ -123,6 +125,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const token = newToken();
     await db.insert(projects).values({ id: ulid(), orgId: ctx.org.id, name, slug, ingestTokenHash: hashToken(token) });
+    invalidate(envOptionsKey(ctx.org.id)); // the environment picker lists it at once
     void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.create", target: { name, slug } });
     return redirectWithToken(token, slug);
   }
@@ -147,6 +150,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "delete") {
     const id = String(fd.get("id"));
     await db.delete(projects).where(and(eq(projects.id, id), eq(projects.orgId, ctx.org.id)));
+    invalidate(envOptionsKey(ctx.org.id));
     void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.delete", target: { id } });
     return redirect("/projects");
   }

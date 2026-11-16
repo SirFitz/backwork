@@ -2,7 +2,8 @@
 // board. A tab is listed only once its route exists: each feature PR flips its `ready` flag.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { NavLink, Outlet } from "@remix-run/react";
+import { Outlet } from "@remix-run/react";
+import { NavLink } from "~/components/env-link";
 import { InfoTip } from "~/components/ui";
 import { requireOrg } from "~/lib/auth/context.server";
 import { cn } from "~/lib/utils";

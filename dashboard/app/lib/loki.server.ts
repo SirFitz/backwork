@@ -1,6 +1,6 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
-import type { Tenant } from "./tenant.server";
+import { scopeMatchers, tenantKey, type Tenant } from "./tenant.server";
 
 /** Inject an org_id matcher into EVERY LogQL stream selector for non-platform
  *  tenants — not just the first. A LogQL query can carry multiple `{...}`
@@ -8,10 +8,11 @@ import type { Tenant } from "./tenant.server";
  *  service fields are passed through; scoping only the first selector let a
  *  customer read another tenant's logs via the second. Walks the string
  *  quote-aware so braces inside line-filter strings (`|~ "(?i){x}"`) are ignored.
- *  Platform (and untenanted internal calls) are left unfiltered. */
-function scoped(query: string, t?: Tenant): string {
+ *  Platform (and untenanted internal calls) are left unfiltered. A project-scoped tenant
+ *  (BAC-89) adds `project="<slug>"` next to the org matcher. */
+export function scoped(query: string, t?: Tenant): string {
   if (!t || t.platform) return query;
-  const m = `org_id=${JSON.stringify(t.orgId)}`;
+  const m = scopeMatchers(t).join(",");
   let out = "";
   let i = 0;
   let inStr = false;
@@ -216,13 +217,13 @@ export async function scalar(query: string, fallback = 0, tenant?: Tenant): Prom
 
 export async function labelValues(name: string, tenant?: Tenant): Promise<string[]> {
   let url = `${config.lokiUrl}/loki/api/v1/label/${encodeURIComponent(name)}/values`;
-  if (tenant && !tenant.platform) url += `?query=${encodeURIComponent(`{org_id=${JSON.stringify(tenant.orgId)}}`)}`;
+  if (tenant && !tenant.platform) url += `?query=${encodeURIComponent(`{${scopeMatchers(tenant).join(",")}}`)}`;
   const res = await fetchJson<{ data: string[] }>(url);
   return (res.data || []).sort();
 }
 
 export function services(tenant?: Tenant): Promise<string[]> {
-  const key = tenant && !tenant.platform ? `loki:services:${tenant.orgId}` : "loki:services";
+  const key = tenant && !tenant.platform ? `loki:services:${tenantKey(tenant)}` : "loki:services";
   return cached(key, 30000, () => labelValues("service", tenant));
 }
 

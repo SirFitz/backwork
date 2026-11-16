@@ -3,12 +3,12 @@
 // row's routes are deferred, each with its own skeleton and error state.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link, useEnvNavigate } from "~/components/env-link";
 import { Database } from "lucide-react";
 import { Deferred } from "~/components/defer";
 import { CallingRoutes, CallingRoutesSkeleton, QueryTable, QueryTableSkeleton, rowKey } from "~/components/insights/query-table";
 import { Card, CardHead, Empty } from "~/components/ui";
-import { requireOrg } from "~/lib/auth/context.server";
 import { safe } from "~/lib/config.server";
 import {
   QUERY_SORTS,
@@ -24,7 +24,7 @@ import {
 } from "~/lib/hops/slow-queries";
 import { routesFor, slowQueries, type SlowQueries } from "~/lib/hops/slow-queries.server";
 import { SLOW_FRESH_MS } from "~/lib/hops/slow-queries";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { cn } from "~/lib/utils";
 
 export const meta: MetaFunction = () => [{ title: "Slow queries · Insights · backwork" }];
@@ -70,8 +70,7 @@ function pageHref(state: PageState): string {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
-  const tenant = tenantOf(ctx.org.id);
+  const { ctx, tenant } = await requireScope(request);
   const state = stateFrom(new URL(request.url));
   const boardP = slowQueries(tenant, state.window);
   const board: Promise<Panel<SlowQueries | null>> = safe(() => boardP, null);
@@ -95,7 +94,7 @@ function minutesAgo(fromMs: number, nowMs: number): string {
 
 export default function SlowQueriesPage() {
   const d = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   const state: PageState = { window: d.window, sort: d.sort, service: d.service, open: d.open };
   const go = (next: Partial<PageState>) => navigate(pageHref({ ...state, open: null, ...next }), { preventScrollReset: true, replace: true });
 

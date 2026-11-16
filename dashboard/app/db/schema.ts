@@ -171,7 +171,8 @@ export const errorGroups = pgTable("error_groups", {
   firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
   lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-  orgFp: uniqueIndex("error_groups_org_fp_uniq").on(t.orgId, t.fingerprint),
+  // BAC-89: one group per fingerprint per project (environment), not per organisation.
+  orgProjectFp: uniqueIndex("error_groups_org_project_fp_uniq").on(t.orgId, t.project, t.fingerprint),
   orgLast: index("error_groups_org_last_idx").on(t.orgId, t.lastSeen),
 }));
 

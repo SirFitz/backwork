@@ -158,7 +158,10 @@ CREATE TABLE IF NOT EXISTS error_groups (
   sample jsonb DEFAULT '{}'::jsonb,
   first_seen timestamptz NOT NULL DEFAULT now(),
   last_seen timestamptz NOT NULL DEFAULT now());
-CREATE UNIQUE INDEX IF NOT EXISTS error_groups_org_fp_uniq ON error_groups (org_id, fingerprint);
+-- BAC-89: groups are per project (environment). Every existing row is unique on
+-- (org_id, fingerprint), so it is unique on the wider key too; then the old index goes.
+CREATE UNIQUE INDEX IF NOT EXISTS error_groups_org_project_fp_uniq ON error_groups (org_id, project, fingerprint);
+DROP INDEX IF EXISTS error_groups_org_fp_uniq;
 CREATE INDEX IF NOT EXISTS error_groups_org_last_idx ON error_groups (org_id, last_seen);
 CREATE TABLE IF NOT EXISTS error_events (
   id text PRIMARY KEY,

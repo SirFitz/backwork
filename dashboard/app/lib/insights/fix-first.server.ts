@@ -4,7 +4,7 @@
 // them with the pure `rankFixFirst`, and serves the result from the stale-while-revalidate cache.
 
 import { cachedStale } from "~/lib/cache.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { allRoutesScope, routesByTotalTime, servicesScope, totalTimeBy, type RouteTotalRow } from "~/lib/hops/metrics.server";
 import { slowQueries, type SlowQueries } from "~/lib/hops/slow-queries.server";
 import { scanRepeats, type RepeatScan } from "~/lib/hops/repeats.server";
@@ -124,7 +124,7 @@ export async function computeFixFirst(tenant: Tenant, window: FixWindow, now: nu
 }
 
 export function fixFirstKey(tenant: Tenant, window: FixWindow): string {
-  return `fixfirst:${tenant.platform ? "platform" : tenant.orgId}:${window}`;
+  return `fixfirst:${tenantKey(tenant)}:${window}`;
 }
 
 /** The list for one organisation and window, behind the stale-while-revalidate cache. */

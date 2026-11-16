@@ -3,7 +3,7 @@
 // stale-while-revalidate so the page never waits on a refresh when it has a value.
 import { cachedStale } from "~/lib/cache.server";
 import * as loki from "~/lib/loki.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { PerfRange } from "~/lib/hops/figures";
 import { connectionsTable, inboundServices, servicesTable, vmClient, type PromClient } from "~/lib/hops/metrics.server";
 import { learnPeers, peerServicesFor, peerStore, type LearnQueryFn, type PeerStore } from "~/lib/hops/peers.server";
@@ -63,6 +63,6 @@ export function serviceMap(
   now: () => number = Date.now,
   read: LearnQueryFn = loki.queryRange,
 ): Promise<ServiceMapResult> {
-  const key = `map:${tenant.platform ? "platform" : tenant.orgId}:${range}`;
+  const key = `map:${tenantKey(tenant)}:${range}`;
   return cachedStale(key, MAP_FRESH_MS, MAP_MAX_STALE_MS, () => computeServiceMap(range, tenant, client, peers, now, read), now);
 }

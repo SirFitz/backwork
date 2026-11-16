@@ -2,16 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { fromLogLine, type DerivedError } from "./errors-derive";
 import { DerivedErrorSink, type DerivedErrorStore, type EventWrite, type GroupWrite, type UpsertedGroup } from "./errors-sink";
 
-/** An in-memory store with the database's semantics: (org, fingerprint) unique, update-only never creates. */
+/** An in-memory store with the database's semantics: (org, project, fingerprint) unique, update-only never creates. */
 class MemoryStore implements DerivedErrorStore {
   groups = new Map<string, { id: string; count: number; status: string }>();
   events: EventWrite[] = [];
   calls = { upsert: 0, update: 0, events: 0 };
   private seq = 0;
-  async upsertGroups(orgId: string, _project: string, gs: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
+  async upsertGroups(orgId: string, project: string, gs: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
     this.calls.upsert++;
     return gs.map((g) => {
-      const key = `${orgId}|${g.fingerprint}`;
+      const key = `${orgId}|${project}|${g.fingerprint}`;
       const row = this.groups.get(key);
       if (row) {
         row.count += g.count;
@@ -23,11 +23,11 @@ class MemoryStore implements DerivedErrorStore {
       return { id, fingerprint: g.fingerprint, inserted: true };
     });
   }
-  async updateGroups(orgId: string, gs: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
+  async updateGroups(orgId: string, project: string, gs: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
     this.calls.update++;
     const out: UpsertedGroup[] = [];
     for (const g of gs) {
-      const row = this.groups.get(`${orgId}|${g.fingerprint}`);
+      const row = this.groups.get(`${orgId}|${project}|${g.fingerprint}`);
       if (!row) continue;
       row.count += g.count;
       out.push({ id: row.id, fingerprint: g.fingerprint, inserted: false });
@@ -85,10 +85,20 @@ describe("DerivedErrorSink", () => {
     // a known group keeps counting after the cap is reached
     await sink.flush("o", "p", [err("a"), err("f")]);
     expect(store.groups.size).toBe(3);
-    expect(store.groups.get(`o|${err("a").fingerprint}`)!.count).toBe(2);
+    expect(store.groups.get(`o|p|${err("a").fingerprint}`)!.count).toBe(2);
     // another org has its own budget
     await sink.flush("o2", "p", [err("a")]);
     expect(store.groups.size).toBe(4);
+  });
+
+  test("the same error in two projects is two groups (BAC-89)", async () => {
+    const store = new MemoryStore();
+    const sink = new DerivedErrorSink(store, limits, () => 0);
+    await sink.flush("o", "dev", [err("db down")]);
+    await sink.flush("o", "production", [err("db down"), err("db down")]);
+    expect(store.groups.size).toBe(2);
+    expect(store.groups.get(`o|dev|${err("db down").fingerprint}`)!.count).toBe(1);
+    expect(store.groups.get(`o|production|${err("db down").fingerprint}`)!.count).toBe(2);
   });
 
   test("a group created before a restart is counted by update-only once the cap is used", async () => {
@@ -97,7 +107,7 @@ describe("DerivedErrorSink", () => {
     const fresh = new DerivedErrorSink(store, { ...limits, newGroupsPerMinute: 0 }, () => 0);
     await fresh.flush("o", "p", [err("old"), err("new")]);
     expect(store.calls.update).toBe(1);
-    expect(store.groups.get(`o|${err("old").fingerprint}`)!.count).toBe(2);
+    expect(store.groups.get(`o|p|${err("old").fingerprint}`)!.count).toBe(2);
     expect(store.groups.size).toBe(1);
   });
 

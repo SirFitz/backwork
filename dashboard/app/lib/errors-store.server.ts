@@ -21,7 +21,7 @@ export const pgDerivedErrorStore: DerivedErrorStore = {
         })),
       )
       .onConflictDoUpdate({
-        target: [errorGroups.orgId, errorGroups.fingerprint],
+        target: [errorGroups.orgId, errorGroups.project, errorGroups.fingerprint],
         set: {
           count: sql`${errorGroups.count} + excluded.count`,
           lastSeen: sql`greatest(${errorGroups.lastSeen}, excluded.last_seen)`,
@@ -36,7 +36,7 @@ export const pgDerivedErrorStore: DerivedErrorStore = {
     return rows.map((r) => ({ id: r.id, fingerprint: r.fingerprint, inserted: r.inserted === true }));
   },
 
-  async updateGroups(orgId: string, groups: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
+  async updateGroups(orgId: string, project: string, groups: readonly GroupWrite[]): Promise<UpsertedGroup[]> {
     await ensureSchema();
     const data = JSON.stringify(
       groups.map((g) => ({ fingerprint: g.fingerprint, n: g.count, last_seen: g.lastAt.toISOString(), sample: g.sample, message: g.title, type: g.type })),
@@ -48,7 +48,7 @@ export const pgDerivedErrorStore: DerivedErrorStore = {
         sample = v.sample, message = v.message, type = v.type,
         status = CASE WHEN g.status = 'ignored' THEN 'ignored' ELSE 'open' END
       FROM jsonb_to_recordset(${data}::jsonb) AS v(fingerprint text, n integer, last_seen timestamptz, sample jsonb, message text, type text)
-      WHERE g.org_id = ${orgId} AND g.fingerprint = v.fingerprint
+      WHERE g.org_id = ${orgId} AND g.project = ${project} AND g.fingerprint = v.fingerprint
       RETURNING g.id, g.fingerprint`);
     return res.rows.map((r) => ({ id: r.id, fingerprint: r.fingerprint, inserted: false }));
   },

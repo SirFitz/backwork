@@ -2,7 +2,7 @@
 // statement, the routes that call it and a slow example. Pure presentation: rows and the expanded
 // row's routes come from `routes/insights.queries.tsx`.
 import type { ReactNode } from "react";
-import { Link } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { NUM, Th, fmtLatency, fmtShare } from "~/components/services-table";
 import { Skeleton } from "~/components/ui";

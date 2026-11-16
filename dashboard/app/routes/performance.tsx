@@ -1,12 +1,12 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link, useEnvNavigate } from "~/components/env-link";
 import type { ReactNode } from "react";
 import { ArrowRight, Check, Gauge } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
-import { requireOrg } from "~/lib/auth/context.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { safe } from "~/lib/config.server";
 import { PERF_RANGES, PeerKind, type PerfRange } from "~/lib/hops/figures";
 import {
@@ -60,8 +60,7 @@ function compareOrNull(on: boolean, fn: () => Promise<CompareRow[]>): Promise<{ 
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
-  const tenant = tenantOf(ctx.org.id);
+  const { ctx, tenant } = await requireScope(request);
   const url = new URL(request.url);
   const range = parseRange(url.searchParams.get("range"));
   const asked = url.searchParams.get("service");
@@ -95,7 +94,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const service = await selectedP;
     if (!service) return { service: null, range, now: [], lastWeek: null, deploys: [] };
     const t = await serviceTrend(service, range, tenant, undefined, undefined, health);
-    const deploys = await deploysBetween(ctx.org.id, service, t.start, t.end);
+    const deploys = await deploysBetween(ctx.org.id, service, t.start, t.end, tenant.project ?? null);
     return { service, range, now: t.now, lastWeek: t.lastWeek, deploys };
   }, { service: requested, range, now: [], lastWeek: null, deploys: [] });
   const connections: Promise<Panel<ConnectionRow[]>> = safe(async () => {
@@ -178,7 +177,7 @@ function PanelBody<T>({ panel, empty, children }: { panel: Panel<T>; empty: Reac
 
 export default function Performance() {
   const d = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   const range = d.range as PerfRange;
   const health = d.health as HealthChecks;
   const otherHealth = health === HealthChecks.Shown ? HealthChecks.Hidden : HealthChecks.Shown;

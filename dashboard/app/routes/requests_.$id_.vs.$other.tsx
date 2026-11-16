@@ -4,7 +4,8 @@
 // the comparison is built in the browser from both (`diffRequests`, pure).
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link, useEnvNavigate } from "~/components/env-link";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Badge, Card, PageTitle, Skeleton } from "~/components/ui";
@@ -64,15 +65,17 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!a || (!typical && !chosen)) throw new Response("Not a trace ID", { status: 404 });
   const now = Date.now();
 
-  const lookup = (traceId: TraceId): Promise<SideRecords | null> =>
-    progressiveLookup(traceId, tenant, now).retention.then((r) => (r.found ? { traceId, records: r.records, links: r.links, truncated: r.truncated } : null));
+  // Trace IDs open organisation-wide (BAC-89); the typical request is picked from the first
+  // request's own environment, so a production request is never compared with a dev one.
+  const lookup = (traceId: TraceId): Promise<(SideRecords & { projects: string[] }) | null> =>
+    progressiveLookup(traceId, tenant, now).retention.then((r) => (r.found ? { traceId, records: r.records, links: r.links, truncated: r.truncated, projects: r.projects ?? [] } : null));
 
   const aSide = lookup(a);
   const pick: Promise<TypicalPick | null> = typical
     ? aSide.then((s) => {
         const summary = s ? requestSummary(firstTree(s, now)) : null;
         if (!summary || summary.via !== Via.Http) return null;
-        return typicalRequest(tenant, summary, now);
+        return typicalRequest(s && s.projects.length === 1 ? tenantOf(ctx.org.id, s.projects[0]) : tenant, summary, now);
       })
     : Promise.resolve({ traceId: chosen as TraceId, durationMs: 0 });
   const bSide = pick.then((p) => (p ? lookup(p.traceId as TraceId) : null));
@@ -117,7 +120,7 @@ export default function ComparePage() {
 
 /** Paste a request or trace ID to compare with; or go back to the typical one. */
 function PasteForm({ a, typical }: { a: string; typical: boolean }) {
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   const [value, setValue] = useState("");
   const [bad, setBad] = useState(false);
   const submit = (e: FormEvent<HTMLFormElement>): void => {

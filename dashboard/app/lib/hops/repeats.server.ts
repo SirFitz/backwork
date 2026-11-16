@@ -4,7 +4,7 @@
 // The grouping and timing rules are the request view's (`repeated.ts`), so a query listed here is
 // flagged the same way when its example request is opened.
 import * as loki from "~/lib/loki.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { cachedStale } from "~/lib/cache.server";
 import { parseHopRecord } from "~/lib/hops/parse";
 import { RECORD_LIMIT, type RecordQueryFn } from "~/lib/hops/attention.server";
@@ -129,7 +129,7 @@ export function aggregateRepeats(records: readonly HopRecord[], fromMs: number):
   return { rows: out, statementsOff: dbRecords > 0 && withStatement === 0 };
 }
 
-const keyOf = (tenant: Tenant, windowMs: number): string => `repeats:${tenant.platform ? "platform" : tenant.orgId}:${windowMs}`;
+const keyOf = (tenant: Tenant, windowMs: number): string => `repeats:${tenantKey(tenant)}:${windowMs}`;
 
 /** The board's rows for the last `windowMs`, behind a stale-while-revalidate cache. */
 export function scanRepeats(

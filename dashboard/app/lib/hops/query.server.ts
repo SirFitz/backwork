@@ -28,6 +28,10 @@ export interface WindowResult {
   /** The window returned `HOP_LIMIT` lines, so older records may be missing: counts drawn from it
    *  are "at least" (BAC-67). */
   truncated: boolean;
+  /** The projects (environments) the records came from, by their `project` label (BAC-89).
+   *  A trace ID opens whatever the picker says, so the page names where it came from.
+   *  Absent on results made before it existed (a pinned copy). */
+  projects?: string[];
 }
 
 /** Each window's bounds; windows do not overlap, so together they cover the whole retention once. */
@@ -67,8 +71,10 @@ export async function searchWindow(
   const entries = await query(`{kind="hop"} |= "${traceId}"`, { start, end, limit: HOP_LIMIT }, tenant);
   const records: HopRecord[] = [];
   const links: LinkedId[] = [];
+  const projects = new Set<string>();
   for (const e of entries) {
     const raw = toRaw(e);
+    if (e.labels.project) projects.add(e.labels.project);
     const rec = parseHopRecord(raw);
     if (rec && rec.traceId === traceId) {
       records.push(rec);
@@ -77,7 +83,7 @@ export async function searchWindow(
     const link = parseLinkLine(raw);
     if (link && link.traceId === traceId) links.push(link);
   }
-  return { window, found: records.length > 0 || links.length > 0, records, links, searchedFromMs: start, truncated: entries.length >= HOP_LIMIT };
+  return { window, found: records.length > 0 || links.length > 0, records, links, searchedFromMs: start, truncated: entries.length >= HOP_LIMIT, projects: [...projects].sort() };
 }
 
 export interface ProgressiveLookup {

@@ -126,7 +126,10 @@ export async function scanPeers(tenant: Tenant, read: LearnQueryFn = loki.queryR
  *  organisation: a recent scan's result is returned as is, an older one at once while the next
  *  scan runs in the background. Only the first call for an organisation waits. */
 export function learnPeers(tenant: Tenant, read: LearnQueryFn = loki.queryRange, store: PeerStore = peerStore, now: () => number = Date.now): Promise<LearnResult> {
-  return cachedStale(`peers-learn:${tenant.orgId}`, LEARN_EVERY_MS, LEARN_MAX_STALE_MS, () => scanPeers(tenant, read, store, now()), now);
+  // The peer map is organisation-wide (peer_services has no project), so learn from every
+  // project even when the page asking is limited to one environment (BAC-89).
+  const orgWide: Tenant = { orgId: tenant.orgId, platform: tenant.platform };
+  return cachedStale(`peers-learn:${tenant.orgId}`, LEARN_EVERY_MS, LEARN_MAX_STALE_MS, () => scanPeers(orgWide, read, store, now()), now);
 }
 
 /** Known peers among the ones these records call, after saving the pairs they link. Never throws:

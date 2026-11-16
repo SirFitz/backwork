@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link, isRouteErrorResponse, useRouteError } from "@remix-run/react";
+import { isRouteErrorResponse, useRouteError } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { ErrorKind, describeError, type ErrorCopy } from "~/lib/error-copy";
 
 const RECOVERY_POLL_MS = 6000;

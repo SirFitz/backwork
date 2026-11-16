@@ -86,8 +86,10 @@ export async function deleteDeploy(orgId: string, id: string): Promise<boolean> 
 
 // ---------------------------------------------------------------- reads
 
-/** Deploys between two instants (ms, inclusive), oldest first; every service when `service` is null. */
-export async function deploysBetween(orgId: string, service: string | null, fromMs: number, toMs: number): Promise<Deploy[]> {
+/** Deploys between two instants (ms, inclusive), oldest first; every service when `service` is null.
+ *  With `project` (a project slug, BAC-89) only that project's deploys plus the ones reported
+ *  without a project (organisation level, e.g. through an API key). */
+export async function deploysBetween(orgId: string, service: string | null, fromMs: number, toMs: number, project: string | null = null): Promise<Deploy[]> {
   await ensureSchema();
   const from = new Date(fromMs).toISOString();
   const to = new Date(toMs).toISOString();
@@ -95,6 +97,8 @@ export async function deploysBetween(orgId: string, service: string | null, from
     SELECT ${COLUMNS} FROM deploys
     WHERE org_id = ${orgId} AND deployed_at >= ${from}::timestamptz AND deployed_at <= ${to}::timestamptz
       AND (${service}::text IS NULL OR service = ${service})
+      AND (${project}::text IS NULL OR project_id IS NULL
+        OR project_id IN (SELECT id FROM projects WHERE org_id = ${orgId} AND slug = ${project}))
     ORDER BY deployed_at ASC, id ASC`);
   return res.rows.map(toDeploy);
 }

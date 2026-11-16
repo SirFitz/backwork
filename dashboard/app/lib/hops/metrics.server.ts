@@ -9,7 +9,7 @@
 import { COUNTER_LOOKBACK_SECONDS, windowIncrease, windowPerSecond, windowSeconds } from "./counter-window";
 import * as vm from "~/lib/vm.server";
 import { cached } from "~/lib/cache.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { Via } from "~/lib/hops/types";
 import { STORE_SHARE_MATCHER, StoreSeries } from "~/lib/hops/store-fields";
 import { hitRatio, waitShare } from "~/lib/hops/cache-pool";
@@ -442,7 +442,7 @@ function figuresFor(
 const TTL_MS = 10_000;
 
 function cacheKey(tenant: Tenant, range: PerfRange, table: string, selection = "", health: HealthChecks = HealthChecks.Hidden): string {
-  return `perf:${tenant.platform ? "platform" : tenant.orgId}:${range}:${table}:${selection}:${health}`;
+  return `perf:${tenantKey(tenant)}:${range}:${table}:${selection}:${health}`;
 }
 
 // ---------------------------------------------------------------- tables

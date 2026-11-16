@@ -3,7 +3,8 @@
 // on a phone and by toggle. The figures load deferred with their own skeleton and error state.
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link, useEnvNavigate } from "~/components/env-link";
 import { useState } from "react";
 import { Network } from "lucide-react";
 import { Card, CardHead, Empty, InfoTip } from "~/components/ui";
@@ -11,9 +12,8 @@ import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { Building } from "~/components/insights/building";
 import { MapDetails, MapGraph } from "~/components/insights/map-graph";
 import { MapList } from "~/components/insights/map-list";
-import { requireOrg } from "~/lib/auth/context.server";
 import { safe } from "~/lib/config.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import type { PerfRange } from "~/lib/hops/figures";
 import { serviceMap, type ServiceMapResult } from "~/lib/hops/service-map.server";
 import { MAP_FRESH_MS, MAP_RANGES, parseMapRange } from "~/lib/hops/service-map";
@@ -35,8 +35,7 @@ interface MapPanel {
 const MAP_BUDGET_MS = 3_500;
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
-  const tenant = tenantOf(ctx.org.id);
+  const { ctx, tenant } = await requireScope(request);
   const url = new URL(request.url);
   const range = parseMapRange(url.searchParams.get("range"));
   const view = parseMapView(url.searchParams.get("view"));
@@ -57,7 +56,7 @@ const SEGMENTS = "inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg borde
 const segment = (on: boolean): string => cn("rounded-[5px] px-[9px] py-1 font-medium", on ? "bg-surface-2 text-fg" : "hover:text-fg");
 
 function Controls({ range, view }: { range: PerfRange; view: MapView }) {
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   return (
     <div className="flex items-center gap-2">
       <nav aria-label="View" className={cn(SEGMENTS, "hidden md:inline-flex")}>

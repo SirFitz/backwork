@@ -56,8 +56,8 @@ export interface UpsertedGroup {
 export interface DerivedErrorStore {
   /** Insert or update groups in one statement. */
   upsertGroups(orgId: string, project: string, groups: readonly GroupWrite[]): Promise<UpsertedGroup[]>;
-  /** Update existing groups only (never creates one), in one statement. */
-  updateGroups(orgId: string, groups: readonly GroupWrite[]): Promise<UpsertedGroup[]>;
+  /** Update existing groups of one project only (never creates one), in one statement. */
+  updateGroups(orgId: string, project: string, groups: readonly GroupWrite[]): Promise<UpsertedGroup[]>;
   insertEvents(orgId: string, events: readonly EventWrite[]): Promise<void>;
 }
 
@@ -181,7 +181,9 @@ export class DerivedErrorSink {
   async flush(orgId: string, project: string, errors: readonly DerivedError[]): Promise<FlushResult> {
     this.roll();
     const grouped = groupEvents(errors);
-    const known = this.knownOf(orgId);
+    // Groups are per project (BAC-89): the same error in dev and production is two groups.
+    const scope = `${orgId}\u0000${project}`;
+    const known = this.knownOf(scope);
     const used = this.newGroups.get(orgId) ?? 0;
     let allowance = Math.max(0, this.limits.newGroupsPerMinute - used);
     const mayCreate: GroupWrite[] = [];
@@ -196,12 +198,12 @@ export class DerivedErrorSink {
 
     const written: UpsertedGroup[] = [];
     if (mayCreate.length) written.push(...(await this.store.upsertGroups(orgId, project, mayCreate)));
-    if (updateOnly.length) written.push(...(await this.store.updateGroups(orgId, updateOnly)));
+    if (updateOnly.length) written.push(...(await this.store.updateGroups(orgId, project, updateOnly)));
 
     let created = 0;
     for (const w of written) {
       if (w.inserted) created++;
-      this.remember(orgId, w.fingerprint);
+      this.remember(scope, w.fingerprint);
     }
     this.newGroups.set(orgId, used + created);
 
@@ -217,7 +219,7 @@ export class DerivedErrorSink {
         continue;
       }
       counted += occ.length;
-      const key = `${orgId}|${fp}`;
+      const key = `${scope}|${fp}`;
       const already = this.eventsByGroup.get(key) ?? 0;
       const room = Math.max(0, this.limits.eventsPerGroupPerMinute - already);
       // keep the newest occurrences when sampling
@@ -249,17 +251,18 @@ export class DerivedErrorSink {
     this.eventsByGroup.clear();
   }
 
-  private knownOf(orgId: string): Set<string> {
-    let s = this.known.get(orgId);
+  /** Fingerprints known to exist for one organisation + project scope. */
+  private knownOf(scope: string): Set<string> {
+    let s = this.known.get(scope);
     if (!s) {
       s = new Set();
-      this.known.set(orgId, s);
+      this.known.set(scope, s);
     }
     return s;
   }
 
-  private remember(orgId: string, fp: string): void {
-    const s = this.knownOf(orgId);
+  private remember(scope: string, fp: string): void {
+    const s = this.knownOf(scope);
     if (s.size >= this.limits.knownPerOrg) s.clear();
     s.add(fp);
   }

@@ -11,7 +11,7 @@
 // Health checks are left out (`health.ts`). The rules are pure functions, tested on their own.
 
 import * as loki from "~/lib/loki.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { cached } from "~/lib/cache.server";
 import { parseHopRecord } from "~/lib/hops/parse";
 import { STALL_AFTER_MS, isStoreVia } from "~/lib/hops/tree";
@@ -113,7 +113,7 @@ async function readWindow(client: PromClient, tenant: Tenant, offset: string | n
 }
 
 const TTL_MS = 10_000;
-const keyOf = (tenant: Tenant, part: string): string => `attention:${tenant.platform ? "platform" : tenant.orgId}:${part}`;
+const keyOf = (tenant: Tenant, part: string): string => `attention:${tenantKey(tenant)}:${part}`;
 
 export function serviceJumps(tenant: Tenant, client: PromClient = vmClient): Promise<ServiceJump[]> {
   return cached(keyOf(tenant, "jumps"), TTL_MS, async () => {

@@ -6,7 +6,7 @@
 // the ones the Performance tables send. The verdict rules are pure (`compare.ts`).
 
 import { cached } from "~/lib/cache.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { HealthChecks } from "~/lib/hops/health";
 import {
   COMPARE_OFFSET,
@@ -72,7 +72,7 @@ async function compareScope(client: PromClient, scope: Scope, range: PerfRange, 
 }
 
 function cacheKey(tenant: Tenant, range: PerfRange, scope: string, health: HealthChecks): string {
-  return `compare:${tenant.platform ? "platform" : tenant.orgId}:${range}:${scope}:${health}`;
+  return `compare:${tenantKey(tenant)}:${range}:${scope}:${health}`;
 }
 
 /** Every service against the same hours last week. Empty for a range that cannot be compared. */
@@ -180,7 +180,7 @@ export function serviceTrend(
 /** The range the Overview compares: the last hour against the same hour last week. */
 export const OVERVIEW_COMPARE_RANGE: PerfRange = PerfRange.H1;
 
-export type DeploysBetweenFn = (orgId: string, service: string | null, fromMs: number, toMs: number) => Promise<Deploy[]>;
+export type DeploysBetweenFn = (orgId: string, service: string | null, fromMs: number, toMs: number, project?: string | null) => Promise<Deploy[]>;
 
 /**
  * Services slower or failing more than the same hour last week, worst first, each with the newest
@@ -195,7 +195,7 @@ export async function serviceRegressions(
   const rows = regressions(await compareServices(OVERVIEW_COMPARE_RANGE, tenant, client));
   if (!rows.length) return [];
   const windowStart = now - rangeSeconds(OVERVIEW_COMPARE_RANGE) * 1000;
-  const deploys = await readDeploys(tenant.orgId, null, windowStart - REGRESSION_DEPLOY_LOOKBACK_MS, now).catch((): Deploy[] => []);
+  const deploys = await readDeploys(tenant.orgId, null, windowStart - REGRESSION_DEPLOY_LOOKBACK_MS, now, tenant.project ?? null).catch((): Deploy[] => []);
   const newest = new Map<string, Deploy>();
   for (const d of deploys) {
     const cur = newest.get(d.service);

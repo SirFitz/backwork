@@ -1,6 +1,6 @@
 // Insights > Fix first (BAC-74): the ranked rows, their skeleton and the notes for sources that did
 // not contribute. Rows are 38 px: rank, kind, title, service, impact, why (wide screens), chevron.
-import { Link } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { ChevronRight, ListOrdered } from "lucide-react";
 import { Badge, Empty, Skeleton } from "~/components/ui";
 import {

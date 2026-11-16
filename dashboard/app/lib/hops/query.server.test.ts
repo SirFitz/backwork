@@ -42,6 +42,13 @@ describe("searchWindow", () => {
     const { fn } = fake(() => [rec(NOW - 1000, "in", "1f0a6c2e9b7d4405", OTHER)]);
     expect((await searchWindow(T, SearchWindow.Hour, tenant, NOW, fn)).found).toBe(false);
   });
+  test("names the environments the records came from (BAC-89)", async () => {
+    const withProject = (e: LogEntry, project: string): LogEntry => ({ ...e, labels: { ...e.labels, project } });
+    const { fn } = fake(() => [withProject(rec(NOW - 1000, "in"), "production"), withProject(rec(NOW - 900, "out", "2f0a6c2e9b7d4405"), "production")]);
+    expect((await searchWindow(T, SearchWindow.Hour, tenant, NOW, fn)).projects).toEqual(["production"]);
+    const { fn: none } = fake(() => [rec(NOW - 1000, "in")]);
+    expect((await searchWindow(T, SearchWindow.Hour, tenant, NOW, none)).projects).toEqual([]);
+  });
   test("refuses a value that is not a trace ID", async () => {
     const { fn, calls } = fake(() => []);
     await expect(searchWindow('x" or {a="b' as TraceId, SearchWindow.Hour, tenant, NOW, fn)).rejects.toThrow();
