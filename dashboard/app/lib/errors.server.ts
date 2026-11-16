@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
 import { errorGroups, errorEvents } from "~/db/schema";
+import { ErrorSource, isErrorSource } from "~/lib/errors-derive";
 
 export type ErrStatus = "open" | "resolved" | "ignored";
 const LEVELS = ["fatal", "error", "warning", "info"];
@@ -64,7 +65,7 @@ export async function recordError(orgId: string, project: string, raw: IncomingE
 
   const up = await db
     .insert(errorGroups)
-    .values({ id: ulid(), orgId, project, fingerprint: fp, type, message, service, level, status: "open", count: 1, sample, firstSeen: now, lastSeen: now })
+    .values({ id: ulid(), orgId, project, fingerprint: fp, source: ErrorSource.Reported, type, message, service, level, status: "open", count: 1, sample, firstSeen: now, lastSeen: now })
     .onConflictDoUpdate({
       target: [errorGroups.orgId, errorGroups.fingerprint],
       set: {
@@ -78,13 +79,13 @@ export async function recordError(orgId: string, project: string, raw: IncomingE
     .returning({ id: errorGroups.id });
 
   const groupId = up[0].id;
-  await db.insert(errorEvents).values({ id: ulid(), groupId, orgId, payload: sample });
+  await db.insert(errorEvents).values({ id: ulid(), groupId, orgId, source: ErrorSource.Reported, payload: sample });
   return { groupId };
 }
 
 export type ErrGroupRow = {
   id: string; project: string; fingerprint: string; type: string; message: string;
-  service: string; level: string; status: ErrStatus; count: number;
+  service: string; level: string; status: ErrStatus; source: ErrorSource; count: number;
   firstSeen: Date; lastSeen: Date; sample: Record<string, unknown>;
 };
 
@@ -94,7 +95,12 @@ export async function listErrorGroups(orgId: string, opts: { status?: string; se
   if (opts.status && opts.status !== "all") conds.push(eq(errorGroups.status, opts.status as ErrStatus));
   if (opts.service && opts.service !== "all") conds.push(eq(errorGroups.service, opts.service));
   const rows = await db.select().from(errorGroups).where(and(...conds)).orderBy(desc(errorGroups.lastSeen)).limit(opts.limit ?? 100);
-  return rows as unknown as ErrGroupRow[];
+  return rows.map(withSource) as unknown as ErrGroupRow[];
+}
+
+/** A row read before the source column existed reads as reported. */
+function withSource<T extends { source?: unknown }>(r: T): T & { source: ErrorSource } {
+  return { ...r, source: isErrorSource(r.source) ? r.source : ErrorSource.Reported };
 }
 
 export async function errorStatusCounts(orgId: string): Promise<Record<string, number>> {
@@ -121,7 +127,7 @@ export async function errorServices(orgId: string): Promise<string[]> {
 export async function getErrorGroup(orgId: string, id: string): Promise<ErrGroupRow | null> {
   await ensureSchema();
   const rows = await db.select().from(errorGroups).where(and(eq(errorGroups.id, id), eq(errorGroups.orgId, orgId))).limit(1);
-  return (rows[0] as unknown as ErrGroupRow) ?? null;
+  return rows[0] ? (withSource(rows[0]) as unknown as ErrGroupRow) : null;
 }
 
 export async function recentEvents(orgId: string, groupId: string, limit = 25): Promise<Array<{ id: string; createdAt: Date; payload: Record<string, unknown> }>> {

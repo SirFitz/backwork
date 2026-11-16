@@ -1,5 +1,6 @@
 import { pgTable, text, boolean, integer, smallint, bigint, doublePrecision, date, timestamp, jsonb, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { ErrorSource } from "~/lib/error-kinds";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
 export const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
@@ -164,6 +165,7 @@ export const errorGroups = pgTable("error_groups", {
   service: text("service").notNull().default(""),
   level: text("level").notNull().default("error"),
   status: text("status").$type<"open" | "resolved" | "ignored">().notNull().default("open"),
+  source: text("source").$type<ErrorSource>().notNull().default("reported"),
   count: integer("count").notNull().default(0),
   sample: jsonb("sample").$type<Record<string, unknown>>().default({}),
   firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
@@ -177,6 +179,7 @@ export const errorEvents = pgTable("error_events", {
   id: id(),
   groupId: text("group_id").notNull().references(() => errorGroups.id, { onDelete: "cascade" }),
   orgId: text("org_id").notNull(),
+  source: text("source").$type<ErrorSource>().notNull().default("reported"),
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ groupIdx: index("error_events_group_idx").on(t.groupId, t.createdAt) }));

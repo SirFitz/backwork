@@ -7,6 +7,7 @@ import { requireOrg } from "~/lib/auth/context.server";
 import { listErrorGroups, errorStatusCounts, errorServices } from "~/lib/errors.server";
 import { cn } from "~/lib/utils";
 import { Ago } from "~/components/time";
+import { ErrorSourceLabel } from "~/components/error-source";
 
 export const meta: MetaFunction = () => [{ title: "Errors · backwork" }];
 
@@ -39,7 +40,7 @@ export default function Errors() {
     <div className="space-y-5 animate-fade-in">
       <PageTitle
         title="Errors"
-        sub="Exceptions reported by your services, grouped by fingerprint — newest activity first. Resolve a group and it reopens automatically if it happens again."
+        sub="Error-level log lines, failed requests and reported exceptions, grouped so repeats of one failure are one group. Newest activity first; a resolved group reopens if it happens again."
         right={
           <>
             {/* phone: status and service as two selects so the header stays one row */}
@@ -83,7 +84,7 @@ export default function Errors() {
         {d.groups.length === 0 ? (
           <Empty icon={<Bug className="h-5 w-5" />} title="No errors here">
             {d.status === "open"
-              ? "No open errors — nice. Report exceptions by POSTing them to /ingest/errors with your project token (see Projects for the snippet)."
+              ? "No open errors. Groups appear here from error-level log lines, requests that end with a 5xx status, and exceptions your services POST to /ingest/errors with their project token (see Projects for the snippet)."
               : `No ${d.status} errors.`}
           </Empty>
         ) : (
@@ -104,6 +105,7 @@ export default function Errors() {
                       <div className="flex items-center gap-2">
                         <Badge tone={levelTone(g.level)}>{g.level}</Badge>
                         <span className="font-mono text-xs font-semibold text-fg">{g.type}</span>
+                        <ErrorSourceLabel source={g.source} />
                         {g.status !== "open" ? <Badge tone="neutral">{g.status}</Badge> : null}
                       </div>
                       <div className="mt-0.5 truncate text-2xs text-muted" title={g.message}>{g.message || "—"}</div>

@@ -32,7 +32,7 @@ labels (or the PM2 process name), so the dashboard speaks in app names.
 - **Request view** (`/requests/<id>`, also the header search): the path through each service with time bars, database and cache calls, gaps, linked IDs, named fields and the log lines under each hop
 - **Performance**: services, routes and connections with request rate, errors, p50/p95/p99 and time in databases and caches
 - **Logs**: full-text and LogQL search, live tail, a link to the request from every line that carries a trace ID
-- **Errors**: grouped exceptions from the error ingest endpoint
+- **Errors**: grouped errors from three sources, each labelled: error- and fatal-level log lines (grouped by service and the message with ids, numbers, IPs, quoted values and times replaced), inbound requests that end with a 5xx status (grouped by service, method and route), and exceptions POSTed to `/ingest/errors`. Derived at the ingest proxy after the switches, excluded paths and the filter; written off the request path with per-organisation caps (BAC-85)
 - **Alerts**: thresholds on error and log rates, delivered to webhook, Slack, Discord, email or SMS
 - **Projects / Settings**: ingest tokens, the switches, the sensitive-data filter and excluded paths
 
