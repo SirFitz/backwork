@@ -56,6 +56,8 @@ export type LogEntry = {
   /** Epoch ms with the sub-millisecond part Loki keeps (BAC-63): orders records written within
    *  one millisecond, such as the commands of a redis MULTI block. Set by queryRange. */
   tsExactMs?: number;
+  /** Loki's nanosecond timestamp, exactly as returned. Set by queryRange. */
+  tsNs?: string;
   line: string;
   labels: Record<string, string>;
   level: string;
@@ -103,14 +105,15 @@ function safeParse(s: string): any | null {
 /** Query a LogQL expression over a time range, newest first. */
 export async function queryRange(
   query: string,
-  opts: { start?: number; end?: number; limit?: number } = {},
+  /** `startNs` (a nanosecond string, inclusive) wins over `start` when given: the Logs live tail (BAC-83). */
+  opts: { start?: number; startNs?: string; end?: number; limit?: number } = {},
   tenant?: Tenant
 ): Promise<LogEntry[]> {
   const end = opts.end ?? Date.now();
   const start = opts.start ?? end - 60 * 60 * 1000;
   const params = new URLSearchParams({
     query: scoped(query, tenant),
-    start: String(start * 1e6), // ns
+    start: opts.startNs ?? String(start * 1e6), // ns
     end: String(end * 1e6),
     limit: String(opts.limit ?? 200),
     direction: "backward",
@@ -127,6 +130,7 @@ export async function queryRange(
       out.push({
         ts: Math.floor(Number(tsNs) / 1e6),
         tsExactMs: exactMs(tsNs),
+        tsNs,
         line,
         labels,
         level: parsed.level || labels.level || "info",

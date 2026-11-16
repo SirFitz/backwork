@@ -2,6 +2,10 @@
 
 export const LIVE_PAUSED_KEY = "backwork.live.paused";
 
+/** Window event fired when the toggle changes, so a page with its own poll (Logs, BAC-83) follows it.
+ *  `detail` is the new paused state. */
+export const LIVE_PAUSED_EVENT = "backwork:live-paused";
+
 /** The slice of the Storage interface used here, so tests can pass a plain object. */
 export interface PrefStorage {
   getItem(key: string): string | null;
@@ -31,4 +35,6 @@ export function writeLivePaused(paused: boolean, storage: PrefStorage | null = b
   } catch {
     // Not persisted; the toggle still works for this page view.
   }
+  // After the current render: the header calls this from inside a state update.
+  if (typeof window !== "undefined") queueMicrotask(() => window.dispatchEvent(new CustomEvent<boolean>(LIVE_PAUSED_EVENT, { detail: paused })));
 }
