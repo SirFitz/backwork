@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 const url = process.env.USAGE_TEST_DATABASE_URL;
 const ready = !!url && process.env.DATABASE_URL === url;
 
-/** Tables the insights features use (BAC-67), plus the billing tables of BAC-66. */
+/** Tables the insights features use (BAC-67), the billing tables of BAC-66 and excluded paths (BAC-82). */
 const REQUIRED = [
   "deploys",
   "alert_state",
@@ -19,6 +19,7 @@ const REQUIRED = [
   "pin_settings",
   "org_billing",
   "billing_events",
+  "excluded_paths",
 ] as const;
 
 describe("schema bootstrap", () => {

@@ -17,6 +17,7 @@ import {
   type CompiledFilter,
   type ControlRow,
 } from "~/lib/controls.server";
+import { lineExcluded, pathExcluded, type ExcludedPathMatcher } from "~/lib/excluded-paths";
 import { PATH_FIELD } from "~/lib/hops/paths";
 import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN } from "~/lib/hops/store-fields";
 import { STATEMENT_FIELDS, StatementField, recordPairs, splitStatement } from "~/lib/hops/stmt";
@@ -156,6 +157,20 @@ export interface EnforceContext {
   serviceOf?: ReadonlyMap<string, string>;
   /** The organisation's compiled filter (applied where the filter switch is on). */
   filter: CompiledFilter;
+  /** Excluded paths for this project (BAC-82): matching hop records and log lines are not saved. */
+  excluded?: ExcludedPathMatcher;
+}
+
+/** Excluded paths (BAC-82), the same rule as the agent: a hop record whose `path` or `op` matches,
+ *  or an ordinary line that mentions a matching path. Link lines are kept. */
+export function isExcludedLine(raw: string, c: Classified, m: ExcludedPathMatcher | undefined): boolean {
+  if (!m) return false;
+  if (c.kind === LineKind.Hop) {
+    const path = typeof c.fields.path === "string" ? c.fields.path : null;
+    const op = typeof c.fields.op === "string" ? c.fields.op : null;
+    return pathExcluded(m, path) || pathExcluded(m, op);
+  }
+  return c.kind === LineKind.Log && lineExcluded(m, raw);
 }
 
 export interface EnforceResult {
@@ -208,7 +223,8 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
         (kindLabel === "log" && !on[Feature.Logs]) ||
         (kindLabel === "hop" && !on[Feature.Hops]) ||
         (c.kind === LineKind.Link && !on[Feature.LinkedIds]) ||
-        (isDataStore(c) && !on[Feature.Stores]);
+        (isDataStore(c) && !on[Feature.Stores]) ||
+        isExcludedLine(raw, c, ctx.excluded);
       if (off) {
         dropped++;
         continue;

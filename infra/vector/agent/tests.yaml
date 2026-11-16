@@ -1,5 +1,6 @@
 # Agent config + generated controls: project has named fields off;
-# svc-no-hops has hop records off; svc-no-logs has ordinary logs and stores off.
+# svc-no-hops has hop records off; svc-no-logs has ordinary logs and stores off;
+# excluded paths /sinktest, /socket.io/* and /assets/*.js (BAC-82).
 tests:
   - name: org pattern and built-ins filtered before leaving the host; ids kept
     inputs:
@@ -296,3 +297,100 @@ tests:
         log_fields:
           container_name: quiet-box
           message: "ordinary line of commerce-api-quiet"
+
+  - name: excluded path drops the hop pair before sending, and its metrics (BAC-82)
+    no_outputs_from: [bw_controls, bw_metric_prep, bw_hop_duration, bw_hop_started]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e10 hop=in hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-web adapter=fastify via=http method=GET op=/sinktest path=/sinktest"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e10 hop=in_end hop_id=1f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-web adapter=fastify via=http method=GET op=/sinktest path=/sinktest?probe=1 outcome=ok status=200 duration_us=900"
+
+  - name: excluded wildcard matches path or route template, kv and json (BAC-82)
+    no_outputs_from: [bw_controls, bw_hop_started, bw_hop_duration]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: '{"level":30,"trace_id":"8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e11","hop":"in","hop_id":"2f0a6c2e9b7d4405","parent_id":"b7ad6b7169203331","via":"http","method":"GET","op":"/socket.io/","path":"/socket.io/?EIO=4&transport=polling","msg":"hop"}'
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e12 hop=in_end hop_id=3f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 via=http method=GET op=/socket.io/* outcome=ok status=200 duration_us=500"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e13 hop=in hop_id=4f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 via=http method=GET op=/assets/:file path=/assets/app.4f2c.js"
+
+  - name: a path that only starts like an excluded one is kept, with its metrics (BAC-82)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e14 hop=in hop_id=5f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 service=commerce-web adapter=fastify via=http method=GET op=/sinktest-keep path=/sinktest-keep"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert!(contains(to_string(.message) ?? "", "path=/sinktest-keep"))
+      - extract_from: bw_hop_started
+        conditions:
+          - type: vrl
+            source: assert_eq!(.tags.op, "/sinktest-keep")
+
+  - name: other files under an excluded folder pattern are kept (BAC-82)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "trace_id=8a1e3c5b9d2f4a6c8e0b1d3f5a7c9e15 hop=in hop_id=6f0a6c2e9b7d4405 parent_id=b7ad6b7169203331 via=http method=GET op=/assets/:file path=/assets/app.css"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert!(contains(to_string(.message) ?? "", "path=/assets/app.css"))
+
+  - name: ordinary lines that mention an excluded path are dropped (BAC-82)
+    no_outputs_from: [bw_controls]
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "GET /sinktest 200 1.2ms"
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: '{"level":30,"msg":"request completed","url":"/socket.io/?EIO=4&transport=websocket"}'
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "10.0.0.4 - - \"GET /sinktest?probe=1 HTTP/1.1\" 200 2"
+
+  - name: ordinary lines with a different path are kept (BAC-82)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-web
+          message: "GET /api/sinktest 200 then GET /sinktest-keep 200"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "log")

@@ -3,9 +3,9 @@
 // through a fetcher, so the page never reloads and the panel stays open in place.
 
 import { useFetcher } from "@remix-run/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Plus, X } from "lucide-react";
-import type { CellView, ControlResult, ControlsView, PatternView, SwitchView } from "~/lib/controls-view.server";
+import type { CellView, ControlResult, ControlsView, ExcludedPathView, PatternView, ProjectChoice, SwitchView } from "~/lib/controls-view.server";
 import { cn } from "~/lib/utils";
 
 /** Mirrors ControlIntent in controls-view.server.ts (a client module cannot import server values). */
@@ -14,6 +14,8 @@ const Intent = {
   PatternToggle: "pattern-toggle",
   PatternAdd: "pattern-add",
   PatternDelete: "pattern-delete",
+  PathAdd: "path-add",
+  PathDelete: "path-delete",
 } as const;
 
 function Toggle({ on, disabled, label, busy }: { on: boolean; disabled: boolean; label: string; busy: boolean }) {
@@ -145,6 +147,96 @@ function AddPattern() {
   );
 }
 
+/** One excluded path. Removable by managers at its own scope; an organisation-wide entry shown on a
+ *  project is read-only there. */
+function ExcludedPathChip({ p, canManage, showScope }: { p: ExcludedPathView; canManage: boolean; showScope: boolean }) {
+  const remove = useFetcher<ControlResult>();
+  const failed = remove.state === "idle" && remove.data !== undefined && !remove.data.ok;
+  if (remove.formData) return null;
+  const removable = canManage && !p.inherited;
+  const scope = showScope || p.inherited ? p.scopeLabel : null;
+  return (
+    <span className="inline-flex items-center" title={failed ? remove.data?.error : p.inherited ? "Set for all projects, on Settings." : undefined}>
+      <span className={cn("inline-flex items-center gap-[6px] rounded-md border border-border bg-bg px-2 py-[3px] text-xs", removable && "rounded-r-none", failed && "border-err/50")}>
+        <span className="font-mono text-[11.5px]">{p.pattern}</span>
+        {scope ? <span className="text-faint">{scope}</span> : null}
+      </span>
+      {removable ? (
+        <remove.Form method="post">
+          <input type="hidden" name="intent" value={Intent.PathDelete} />
+          <input type="hidden" name="pathProject" value={p.projectId ?? ""} />
+          <input type="hidden" name="pattern" value={p.pattern} />
+          <button type="submit" aria-label={`Stop excluding ${p.pattern}`} className="inline-flex h-[24px] items-center rounded-r-md border border-l-0 border-border bg-bg px-1.5 text-faint hover:text-err">
+            <X className="h-3 w-3" />
+          </button>
+        </remove.Form>
+      ) : null}
+    </span>
+  );
+}
+
+/** Add an excluded path. On a project it adds to that project; on Settings the scope is picked. */
+function AddExcludedPath({ projectId, projects }: { projectId: string | null; projects: readonly ProjectChoice[] }) {
+  const fetcher = useFetcher<ControlResult>();
+  const [open, setOpen] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const saved = fetcher.state === "idle" && fetcher.data?.ok === true;
+  useEffect(() => {
+    if (saved) setOpen(false);
+  }, [saved, fetcher.data]);
+  useEffect(() => {
+    if (open) input.current?.focus();
+  }, [open]);
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="inline-flex h-[26px] items-center gap-[5px] rounded-md border border-border bg-surface px-[9px] text-xs font-medium hover:border-border-strong">
+        <Plus className="h-[13px] w-[13px]" />
+        Add a path
+      </button>
+    );
+  }
+  const field = "h-8 rounded-md border border-border bg-bg px-2.5 text-xs outline-none focus:border-brand/40";
+  const busy = fetcher.state !== "idle";
+  return (
+    <fetcher.Form method="post" className="mt-1 flex w-full flex-wrap items-center gap-2">
+      <input type="hidden" name="intent" value={Intent.PathAdd} />
+      {projectId !== null ? <input type="hidden" name="pathProject" value={projectId} /> : null}
+      <input ref={input} name="pattern" required maxLength={200} placeholder="Path, e.g. /health or /socket.io/*" className={cn(field, "min-w-0 flex-[2] basis-56 font-mono")} aria-label="Path to exclude" autoComplete="off" spellCheck={false} />
+      {projectId === null ? (
+        <select name="pathProject" defaultValue="" className={cn(field, "min-w-0 flex-1 basis-36 pr-7")} aria-label="Where it applies">
+          <option value="">All projects</option>
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      ) : null}
+      <button type="submit" disabled={busy} className="inline-flex h-8 items-center rounded-md bg-brand px-3 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">{busy ? "Adding..." : "Add"}</button>
+      <button type="button" onClick={() => setOpen(false)} className="h-8 px-1 text-xs text-muted hover:text-fg">Cancel</button>
+      {fetcher.state === "idle" && fetcher.data && !fetcher.data.ok ? <p className="w-full text-xs text-err">{fetcher.data.error}</p> : null}
+    </fetcher.Form>
+  );
+}
+
+/** Excluded paths (BAC-82): requests dropped on the customer's server before anything is sent. */
+function ExcludedPathsSection({ view }: { view: ControlsView }) {
+  const own = view.excludedPaths.filter((p) => !p.inherited).length;
+  return (
+    <div className="mt-5 border-t border-border pt-5">
+      <div className="flex items-baseline gap-3">
+        <h3 className="mr-auto text-[13.5px] font-semibold tracking-tight">Excluded paths</h3>
+        {view.projectId !== null && own > 0 ? <em className="text-[11.5px] not-italic text-muted">{own} of {view.maxExcludedPaths}</em> : null}
+      </div>
+      <p className="mt-2 text-[12.5px] leading-normal text-muted">
+        Requests to these paths are dropped on your server before anything is sent, so they are never stored or counted. Use <span className="font-mono">*</span> as a wildcard.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {view.excludedPaths.map((p) => (
+          <ExcludedPathChip key={`${p.projectId ?? ""} ${p.pattern}`} p={p} canManage={view.canManage} showScope={view.projectId === null} />
+        ))}
+        {view.canManage ? <AddExcludedPath projectId={view.projectId} projects={view.pathProjects} /> : view.excludedPaths.length ? null : <span className="text-xs text-faint">None yet.</span>}
+      </div>
+    </div>
+  );
+}
+
 function Cell({ c, projectId, service, canManage, label }: { c: CellView; projectId: string; service: string; canManage: boolean; label: string }) {
   return (
     <td className="border-b border-border px-3 py-2 text-center">
@@ -218,6 +310,8 @@ export function DataControlsPanel({
           </div>
         </div>
       </div>
+
+      <ExcludedPathsSection view={view} />
 
       {view.projectId !== null ? (
         <>

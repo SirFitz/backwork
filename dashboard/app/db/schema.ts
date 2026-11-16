@@ -218,6 +218,17 @@ export const filterPatterns = pgTable("filter_patterns", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ orgNameUniq: uniqueIndex("filter_patterns_org_name_uniq").on(t.orgId, t.name) }));
 
+// Excluded paths (BAC-82): request path patterns dropped before collection. project_id null =
+// every project of the organisation. Unique per scope and pattern (an expression index in the DDL).
+export const excludedPaths = pgTable("excluded_paths", {
+  id: id(),
+  orgId: text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  pattern: text("pattern").notNull(),
+  createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ orgIdx: index("excluded_paths_org_idx").on(t.orgId) }));
+
 /** An organisation's billing state (BAC-57): trial, subscription at Inkress, scheduled change. */
 export const orgBilling = pgTable("org_billing", {
   orgId: text("org_id").primaryKey().references(() => orgs.id, { onDelete: "cascade" }),

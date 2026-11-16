@@ -21,6 +21,7 @@ import {
   canManageControls,
   isControlIntent,
   loadControlsView,
+  orgProjects,
   type ControlsView,
 } from "~/lib/controls-view.server";
 
@@ -42,7 +43,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // The same switches as on Projects, for the whole organisation (design 19.1).
   const controls: Promise<{ data: ControlsView | null; error: string | null }> = safe(
-    () => loadControlsView({ orgId: ctx.org.id, projectId: null, services: async () => [], canManage: canManageControls(ctx) }),
+    async () =>
+      loadControlsView({
+        orgId: ctx.org.id,
+        projectId: null,
+        services: async () => [],
+        canManage: canManageControls(ctx),
+        projects: await orgProjects(ctx.org.id),
+      }),
     null
   );
 
@@ -83,10 +91,12 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: true });
   }
   if (!isControlIntent(intent)) return json({ ok: false, error: "Unknown action." }, { status: 400 });
-  // Organisation level only: a project id is never accepted here.
+  // Switches: organisation level only, a project id is never accepted here. Excluded paths
+  // (BAC-82) take their own scope, any project of this organisation.
   fd.set("projectId", "");
   fd.set("service", "");
-  return applyControlChange(request, ctx, fd, new Set<string>());
+  const own = await orgProjects(ctx.org.id);
+  return applyControlChange(request, ctx, fd, new Set(own.map((p) => p.id)));
 }
 
 function CodeBlock({ children }: { children: string }) {

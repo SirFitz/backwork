@@ -28,6 +28,8 @@ snap.services = { "svc-no-hops": muted, "svc-no-logs": noLogs, "svc-no-query": n
 const quietLogs = { ...snap.project, logs: false } as Record<Feature, boolean>;
 snap.services["commerce-api-quiet"] = quietLogs;
 snap.serviceNames = { "dev-commerce-api-dserve": "commerce-api", "quiet-box": "commerce-api-quiet" };
+// Excluded paths (BAC-82): an exact path, a wildcard tail and a wildcard inside a segment.
+snap.excludedPaths = ["/sinktest", "/socket.io/*", "/assets/*.js"];
 snap.patterns = [...snap.patterns, { name: "member", pattern: "MBR-\\d{6}", replacement: "[filtered]" }, { name: "end", pattern: "secret-tail$", replacement: "[filtered]" }];
 writeFileSync(join(out, "controls.yaml"), controlsTransformYaml(snap));
 console.log(`wrote ${out}`);
