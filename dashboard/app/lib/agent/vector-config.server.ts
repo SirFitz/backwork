@@ -28,6 +28,7 @@ import {
   type ControlsSnapshot,
   type Feature,
 } from "~/lib/controls.server";
+import { lineMatchSource, pathMatchSource } from "~/lib/excluded-paths";
 import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN, StoreSeries } from "~/lib/hops/store-fields";
 
 /** Histogram buckets in seconds, design 5.3. */
@@ -272,7 +273,28 @@ export function defaultSnapshot(): ControlsSnapshot {
     services: {},
     patterns: BUILT_IN_PATTERNS.map((p) => ({ name: p.name, pattern: p.pattern, replacement: p.replacement })),
     serviceNames: {},
+    excludedPaths: [],
   };
+}
+
+/**
+ * Excluded paths (BAC-82): drop a hop record whose `path` or `op` (the route template) matches,
+ * and an ordinary line that mentions a matching path, before anything leaves the host. Runs in
+ * bw_controls, which feeds both the loki sink and bw_metric_prep, so a dropped record is neither
+ * stored nor counted. Needs `bw_kind`, `bw_type` and `bw_h` set. No patterns: nothing.
+ */
+export function excludedPathsVrl(patterns: readonly string[]): string {
+  const whole = pathMatchSource(patterns);
+  const line = lineMatchSource(patterns);
+  if (whole === null || line === null) return "";
+  return `# Excluded paths (BAC-82): matching requests are dropped here, before sending.
+if bw_type == "hop" {
+  bw_xp = replace(to_string(get(bw_h, ["path"]) ?? "") ?? "", r'[?#].*$', "")
+  bw_xo = replace(to_string(get(bw_h, ["op"]) ?? "") ?? "", r'[?#].*$', "")
+  if match(bw_xp, ${vrlRegex(whole)}) || match(bw_xo, ${vrlRegex(whole)}) { abort }
+}
+if bw_kind == "log" && match(to_string(.message) ?? "", ${vrlRegex(line)}) { abort }
+`;
 }
 
 /** VRL variable for a feature switch. */
@@ -299,8 +321,10 @@ export function controlsVrl(snap: ControlsSnapshot): string {
   lines.push(`bw_kind = to_string(.kind) ?? "log"
 bw_type = to_string(%bw_type) ?? ""
 bw_h = object(%bw_hop) ?? {}
-bw_via = to_string(get(bw_h, ["via"]) ?? "") ?? ""
-if bw_kind == "log" && !${sw("logs")} { abort }
+bw_via = to_string(get(bw_h, ["via"]) ?? "") ?? ""`);
+  const excluded = excludedPathsVrl(snap.excludedPaths);
+  if (excluded) lines.push(excluded.trimEnd());
+  lines.push(`if bw_kind == "log" && !${sw("logs")} { abort }
 if bw_kind == "hop" && !${sw("hops")} { abort }
 if bw_type == "link" && !${sw("linked_ids")} { abort }
 if bw_type == "hop" && (bw_via == "db" || bw_via == "cache") && !${sw("stores")} { abort }

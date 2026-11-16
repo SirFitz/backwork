@@ -65,6 +65,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
               services: (controlRows) => projectServices(tenant, open.slug, controlRows, open.id, names.bySource),
               canManage: canManageControls(ctx),
               serviceOf: names.bySource,
+              projects: rows.map((p) => ({ id: p.id, name: p.name })),
             })
           ),
         null

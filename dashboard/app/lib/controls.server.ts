@@ -20,11 +20,13 @@
  *  - The filter never changes the values of `trace_id`, `hop_id`, `parent_hop`
  *    or `parent_id`.
  */
+import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
 import { dataControls, filterPatterns } from "~/db/schema";
 import { logAudit } from "./audit.server";
+import { effectiveExcludedPaths, getExcludedPaths } from "./excluded-paths.server";
 
 // ---------------------------------------------------------------------------
 // Features
@@ -483,12 +485,24 @@ export interface ControlsSnapshot {
   /** Container or process name (`source`) -> the service its hop records name, where they
    *  differ: ordinary lines of that source are stored under the service's own name (BAC-51). */
   serviceNames: Record<string, string>;
+  /** Request path patterns whose hop records and log lines are dropped before sending (BAC-82):
+   *  the organisation's and this project's. */
+  excludedPaths: string[];
 }
 
 /** Switch rows with any service written under a source name moved to that service's own name,
  *  so a switch acts on the lines it names whichever label they were stored under. Off wins. */
 export function canonicalRows(rows: readonly ControlRow[], bySource: ReadonlyMap<string, string>): ControlRow[] {
   return rows.map((r) => (r.service !== null && bySource.has(r.service) ? { ...r, service: bySource.get(r.service) as string } : r));
+}
+
+/** The version of a snapshot's content: changes whenever anything in it changes. An empty
+ *  excluded-path list (BAC-82) leaves it as it was before the list existed, so agents do not
+ *  reload for nothing. */
+export function snapshotVersion(content: Omit<ControlsSnapshot, "version">): string {
+  const { project, services, patterns, serviceNames, excludedPaths } = content;
+  const body = JSON.stringify({ project, services, patterns, serviceNames, ...(excludedPaths.length ? { excludedPaths } : {}) });
+  return createHash("sha256").update(body).digest("hex").slice(0, 16);
 }
 
 /** What an agent for one project must enforce. */
@@ -512,8 +526,7 @@ export async function controlsSnapshot(
       }))
     : [];
   const names = Object.fromEntries(Object.entries(serviceNames).sort(([a], [b]) => a.localeCompare(b)));
-  const body = JSON.stringify({ project, services, patterns, serviceNames: names });
-  const { createHash } = await import("node:crypto");
-  const version = createHash("sha256").update(body).digest("hex").slice(0, 16);
-  return { version, project, services, patterns, serviceNames: names };
+  const excludedPaths = effectiveExcludedPaths(await getExcludedPaths(orgId), projectId);
+  const content = { project, services, patterns, serviceNames: names, excludedPaths };
+  return { version: snapshotVersion(content), ...content };
 }

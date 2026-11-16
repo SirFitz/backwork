@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { gunzipSync } from "node:zlib";
 import { config } from "~/lib/config.server";
 import { getCompiledFilter, getControls } from "~/lib/controls.server";
+import { getExcludedPathMatcher } from "~/lib/excluded-paths.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
 import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
@@ -46,12 +47,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return new Response("invalid JSON", { status: 400 });
   }
 
-  const [rows, filter, names] = await Promise.all([
+  const [rows, filter, names, excluded] = await Promise.all([
     getControls(tenant.orgId),
     getCompiledFilter(tenant.orgId),
     serviceNamesWithin(tenantOf(tenant.orgId), 1500),
+    getExcludedPathMatcher(tenant.orgId, tenant.projectId),
   ]);
-  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource });
+  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource, excluded });
   for (const s of result.streams) s.stream = { ...s.stream, org_id: tenant.orgId, project: tenant.project };
   if (result.streams.length === 0) return new Response(null, { status: 204 });
 

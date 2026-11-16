@@ -34,7 +34,7 @@ labels (or the PM2 process name), so the dashboard speaks in app names.
 - **Logs**: full-text and LogQL search, live tail, a link to the request from every line that carries a trace ID
 - **Errors**: grouped exceptions from the error ingest endpoint
 - **Alerts**: thresholds on error and log rates, delivered to webhook, Slack, Discord, email or SMS
-- **Projects / Settings**: ingest tokens, the switches and the sensitive-data filter
+- **Projects / Settings**: ingest tokens, the switches, the sensitive-data filter and excluded paths
 
 Health checks (`/healthz`, `/health`, `/ready`, `/live`, `/livez`, `/readyz`,
 `/ping`) are left out of the Overview, Requests and Performance figures unless
@@ -76,6 +76,15 @@ anything is saved. Hop records are kept 30 days, ordinary lines 7.
   off at organisation, project or service level wins. The ingest proxies enforce
   them and filter again; agents read them from `GET /ingest/controls?format=vector`
   every 30 s and reload Vector when they change.
+- Excluded paths (BAC-82, Settings and each project's data controls): path patterns, exact
+  (`/health`) or with `*` wildcards (`/socket.io/*`), per organisation or per project, at most 100
+  per scope. Stored in `excluded_paths` (`dashboard/app/lib/excluded-paths.server.ts`, matching
+  rules in `excluded-paths.ts`). They reach agents in the controls file, where `bw_controls` drops
+  hop records whose `path` or `op` matches and ordinary lines that mention a matching path (best
+  effort) before anything is sent; `bw_metric_prep` reads from `bw_controls`, so they are never
+  counted either. The ingest proxy applies the same rule again to log pushes. The query string is
+  ignored. Hop metrics written straight to the metrics endpoint are not path-filtered there (they
+  carry no path), which is why the agent drops first.
 - Agents on hosts that run services under PM2 read PM2's log files too
   (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
 - Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local

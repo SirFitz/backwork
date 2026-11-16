@@ -203,6 +203,19 @@ CREATE TABLE IF NOT EXISTS filter_patterns (
   updated_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS filter_patterns_org_name_uniq ON filter_patterns (org_id, name);
 
+-- Excluded paths (BAC-82): requests whose path matches are dropped before collection.
+-- project_id null = every project of the organisation.
+CREATE TABLE IF NOT EXISTS excluded_paths (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id text REFERENCES projects(id) ON DELETE CASCADE,
+  pattern text NOT NULL,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS excluded_paths_scope_uniq
+  ON excluded_paths (org_id, (coalesce(project_id, '')), pattern);
+CREATE INDEX IF NOT EXISTS excluded_paths_org_idx ON excluded_paths (org_id);
+
 -- Insights (BAC-67): created once here for the twelve features that use them.
 CREATE TABLE IF NOT EXISTS deploys (
   id text PRIMARY KEY,

@@ -4,6 +4,9 @@
 // and calls `setControl` / `upsertFilterPattern` / `deleteFilterPattern`.
 
 import { json } from "@remix-run/node";
+import { eq } from "drizzle-orm";
+import { db, ensureSchema } from "~/db/index.server";
+import { projects as projectsTable } from "~/db/schema";
 import {
   BUILT_IN_PATTERNS,
   FEATURE_LABEL,
@@ -23,6 +26,14 @@ import {
   canonicalRows,
 } from "~/lib/controls.server";
 import { config, fetchJson } from "~/lib/config.server";
+import { EXCLUDED_PATH_ERROR_TEXT, MAX_EXCLUDED_PATHS } from "~/lib/excluded-paths";
+import {
+  ExcludedPathRefused,
+  addExcludedPath,
+  getExcludedPaths,
+  removeExcludedPath,
+  type ExcludedPathRow,
+} from "~/lib/excluded-paths.server";
 import { hasRole, type OrgContext } from "~/lib/auth/context.server";
 import { tenantOf, type Tenant } from "~/lib/tenant.server";
 import { canonicalName } from "~/lib/service-names";
@@ -86,6 +97,8 @@ export const ControlIntent = {
   PatternToggle: "pattern-toggle",
   PatternAdd: "pattern-add",
   PatternDelete: "pattern-delete",
+  PathAdd: "path-add",
+  PathDelete: "path-delete",
 } as const;
 export type ControlIntent = (typeof ControlIntent)[keyof typeof ControlIntent];
 const INTENTS: readonly string[] = Object.values(ControlIntent);
@@ -119,6 +132,22 @@ export interface PatternView {
   builtIn: boolean;
 }
 
+/** A project an excluded path can be scoped to. */
+export interface ProjectChoice {
+  id: string;
+  name: string;
+}
+
+export interface ExcludedPathView {
+  pattern: string;
+  /** null = every project of the organisation. */
+  projectId: string | null;
+  /** "All projects" or the project's name. */
+  scopeLabel: string;
+  /** Set at a wider scope than the one shown (the organisation, on a project): read-only here. */
+  inherited: boolean;
+}
+
 export interface ControlsView {
   /** null = the organisation (Settings). */
   projectId: string | null;
@@ -129,6 +158,13 @@ export interface ControlsView {
   example: { before: string; saved: string };
   lastChange: string | null;
   canManage: boolean;
+  /** Excluded paths (BAC-82) for this scope: on Settings every entry of the organisation, on a
+   *  project the organisation's (inherited) and its own. */
+  excludedPaths: ExcludedPathView[];
+  /** Scopes a new excluded path can take: on Settings the organisation's projects; empty on a project. */
+  pathProjects: ProjectChoice[];
+  /** Most entries one scope holds. */
+  maxExcludedPaths: number;
 }
 
 function isOrgRow(r: ControlRow): boolean {
@@ -173,6 +209,35 @@ export function describeLastChange(rows: readonly ControlRow[], projectId: strin
   return `${what} switched ${last.enabled ? "on" : "off"}${where}, ${fmtWhen(new Date(last.updatedAt))}.`;
 }
 
+export const ALL_PROJECTS_LABEL = "All projects";
+
+/** The organisation's projects, for the excluded-path scope picker and the action's scope check. */
+export async function orgProjects(orgId: string): Promise<ProjectChoice[]> {
+  await ensureSchema();
+  return db.select({ id: projectsTable.id, name: projectsTable.name }).from(projectsTable).where(eq(projectsTable.orgId, orgId));
+}
+
+/** Pure: the excluded paths shown for one scope, organisation-wide first, then by project and pattern. */
+export function excludedPathViews(
+  rows: readonly ExcludedPathRow[],
+  projectId: string | null,
+  projects: readonly ProjectChoice[],
+): ExcludedPathView[] {
+  const nameOf = new Map(projects.map((p) => [p.id, p.name]));
+  return rows
+    .filter((r) => projectId === null || r.projectId === null || r.projectId === projectId)
+    .map((r) => ({
+      pattern: r.pattern,
+      projectId: r.projectId,
+      scopeLabel: r.projectId === null ? ALL_PROJECTS_LABEL : nameOf.get(r.projectId) ?? "A removed project",
+      inherited: projectId !== null && r.projectId === null,
+    }))
+    .sort((a, b) => {
+      if ((a.projectId === null) !== (b.projectId === null)) return a.projectId === null ? -1 : 1;
+      return a.scopeLabel.localeCompare(b.scopeLabel) || a.pattern.localeCompare(b.pattern);
+    });
+}
+
 /** Pure: the whole panel from the org's rows, patterns and service names. */
 export function buildControlsView(input: {
   rows: readonly ControlRow[];
@@ -180,6 +245,8 @@ export function buildControlsView(input: {
   projectId: string | null;
   services: readonly string[];
   canManage: boolean;
+  excludedPaths?: readonly ExcludedPathRow[];
+  projects?: readonly ProjectChoice[];
 }): ControlsView {
   const { rows, projectId } = input;
   const switches = COLLECTED.map((f) => switchView(rows, projectId, f));
@@ -209,6 +276,9 @@ export function buildControlsView(input: {
     example: { before: EXAMPLE_LINE, saved },
     lastChange: describeLastChange(rows, projectId),
     canManage: input.canManage,
+    excludedPaths: excludedPathViews(input.excludedPaths ?? [], projectId, input.projects ?? []),
+    pathProjects: projectId === null ? [...(input.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)) : [],
+    maxExcludedPaths: MAX_EXCLUDED_PATHS,
   };
 }
 
@@ -260,11 +330,17 @@ export async function loadControlsView(opts: {
   canManage: boolean;
   /** source -> service: switch rows written under a container name show on its service's row. */
   serviceOf?: ReadonlyMap<string, string>;
+  /** The organisation's projects, to name each excluded path's scope. */
+  projects?: readonly ProjectChoice[];
 }): Promise<ControlsView> {
-  const [stored, patterns] = await Promise.all([getControls(opts.orgId, { fresh: true }), getFilterPatterns(opts.orgId)]);
+  const [stored, patterns, excludedPaths] = await Promise.all([
+    getControls(opts.orgId, { fresh: true }),
+    getFilterPatterns(opts.orgId),
+    getExcludedPaths(opts.orgId, { fresh: true }),
+  ]);
   const rows = opts.serviceOf ? canonicalRows(stored, opts.serviceOf) : stored;
   const services = await opts.services(rows);
-  return buildControlsView({ rows, patterns, projectId: opts.projectId, services, canManage: opts.canManage });
+  return buildControlsView({ rows, patterns, projectId: opts.projectId, services, canManage: opts.canManage, excludedPaths, projects: opts.projects });
 }
 
 // ---------------------------------------------------------------- applying a change
@@ -345,11 +421,26 @@ export async function applyControlChange(
       await upsertFilterPattern(orgId, { name, pattern, enabled: true }, userId, request);
       return json<ControlResult>({ ok: true });
     }
+    if (intent === ControlIntent.PathAdd || intent === ControlIntent.PathDelete) {
+      // Excluded paths (BAC-82). Scope is its own field, `pathProject` ("" = every project).
+      const pathProject = String(fd.get("pathProject") ?? "") || null;
+      if (pathProject && !allowedProjectIds.has(pathProject)) return json<ControlResult>({ ok: false, error: "Project not found." }, { status: 404 });
+      const pattern = String(fd.get("pattern") ?? "");
+      if (intent === ControlIntent.PathAdd) {
+        await addExcludedPath(orgId, pathProject, pattern, userId, request);
+      } else if (!(await removeExcludedPath(orgId, pathProject, pattern, userId, request))) {
+        return json<ControlResult>({ ok: false, error: "That path is not excluded." }, { status: 404 });
+      }
+      return json<ControlResult>({ ok: true });
+    }
     if (intent === ControlIntent.PatternDelete) {
       await deleteFilterPattern(orgId, String(fd.get("name") ?? ""), userId, request);
       return json<ControlResult>({ ok: true });
     }
   } catch (e) {
+    if (e instanceof ExcludedPathRefused) {
+      return json<ControlResult>({ ok: false, error: EXCLUDED_PATH_ERROR_TEXT[e.code] }, { status: 400 });
+    }
     const code = e instanceof Error ? e.message : String(e);
     return json<ControlResult>({ ok: false, error: PATTERN_ERROR_TEXT[code] ?? "The change was not saved." }, { status: 400 });
   }
