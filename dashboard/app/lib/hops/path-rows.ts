@@ -63,27 +63,35 @@ function nodeOf(h: Hop): PathNode {
   return { key: h.hopId, hop: h, call: null, members: null, kids: kidsOf(h) };
 }
 
-/** Children in order; repeated store calls of one shape gather at the place of the first. */
+/** A store call that can join a group: a leaf with nothing wrong recorded on it. */
+function groupable(h: Hop): boolean {
+  return h.isStore && h.children.length === 0 && h.gaps.length === 0;
+}
+
+/**
+ * Children in the order they started. Consecutive store calls of one shape (nothing else between
+ * them) fold into one row when there are at least GROUP_MIN of them (BAC-87). A repeat after any
+ * other call starts a new run, so rows never leave their place in time and calls made apart, often
+ * by different code, are never shown as one group. The request-wide repeated finding counts all.
+ */
 function kidsOf(parent: Hop): PathNode[] {
-  const byShape = new Map<string, Hop[]>();
-  for (const c of parent.children) {
-    if (c.isStore && c.children.length === 0 && c.gaps.length === 0) {
-      const k = shapeKey(c);
-      byShape.set(k, [...(byShape.get(k) ?? []), c]);
-    }
-  }
-  const grouped = new Set<string>();
   const out: PathNode[] = [];
-  for (const c of parent.children) {
-    const k = c.isStore ? shapeKey(c) : "";
-    const same = c.isStore ? byShape.get(k) : undefined;
-    if (same && same.length >= GROUP_MIN) {
-      if (grouped.has(k)) continue;
-      grouped.add(k);
-      out.push({ key: `group-${same[0].hopId}`, hop: same[0], call: null, members: same, kids: same.map(nodeOf) });
+  const kids = parent.children;
+  let i = 0;
+  while (i < kids.length) {
+    const c = kids[i];
+    if (!groupable(c)) {
+      out.push(nodeOf(c));
+      i++;
       continue;
     }
-    out.push(nodeOf(c));
+    const k = shapeKey(c);
+    let j = i + 1;
+    while (j < kids.length && groupable(kids[j]) && shapeKey(kids[j]) === k) j++;
+    const run = kids.slice(i, j);
+    if (run.length >= GROUP_MIN) out.push({ key: `group-${run[0].hopId}`, hop: run[0], call: null, members: run, kids: run.map(nodeOf) });
+    else out.push(...run.map(nodeOf));
+    i = j;
   }
   return out;
 }
