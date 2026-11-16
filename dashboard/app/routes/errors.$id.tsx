@@ -8,6 +8,8 @@ import { assertSameOrigin } from "~/lib/auth/security.server";
 import { getErrorGroup, recentEvents, setErrorStatus, type ErrStatus } from "~/lib/errors.server";
 import { logAudit } from "~/lib/audit.server";
 import { cn } from "~/lib/utils";
+import { ErrorSourceLabel } from "~/components/error-source";
+import { ErrorSource } from "~/lib/error-kinds";
 
 export const meta: MetaFunction = () => [{ title: "Error · backwork" }];
 
@@ -46,6 +48,8 @@ export default function ErrorDetail() {
   const canAct = role === "owner" || role === "admin" || role === "member";
   const stack = typeof sample.stack === "string" ? sample.stack : "";
   const context = sample.context && Object.keys(sample.context).length ? sample.context : null;
+  const traceId = typeof sample.traceId === "string" ? sample.traceId : null;
+  const derived = g.source !== ErrorSource.Reported;
   const tone = g.level === "fatal" || g.level === "error" ? "err" : g.level === "warning" ? "warn" : "neutral";
 
   const Btn = ({ intent, label, icon: Icon }: { intent: string; label: string; icon: any }) => (
@@ -65,10 +69,16 @@ export default function ErrorDetail() {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Badge tone={tone}>{g.level}</Badge>
+            <ErrorSourceLabel source={g.source} />
             {g.status !== "open" ? <Badge tone="neutral">{g.status}</Badge> : null}
             <h1 className="truncate font-mono text-lg font-semibold text-fg">{g.type}</h1>
           </div>
           <p className="mt-1 break-words text-sm text-muted">{g.message || "—"}</p>
+          {traceId ? (
+            <Link to={`/requests/${traceId}`} className="mt-1 inline-flex items-center gap-1 text-2xs text-brand hover:underline">
+              Latest request <span className="font-mono">{traceId}</span>
+            </Link>
+          ) : null}
         </div>
         {canAct ? (
           <div className="flex flex-wrap gap-2">
@@ -95,6 +105,7 @@ export default function ErrorDetail() {
         ))}
       </div>
 
+      {derived ? null : (
       <Card>
         <CardHead title="Stack trace" sub={`fingerprint ${g.fingerprint}`} />
         {stack ? (
@@ -103,6 +114,7 @@ export default function ErrorDetail() {
           <Empty title="No stack trace">This error was reported without a stack trace.</Empty>
         )}
       </Card>
+      )}
 
       {context ? (
         <Card>
@@ -122,7 +134,10 @@ export default function ErrorDetail() {
               return (
                 <li key={e.id} className={cn("flex items-center justify-between gap-4 px-4 py-2 text-2xs")}>
                   <span className="font-mono text-faint">{stamp(e.createdAt)}</span>
-                  <span className="truncate text-muted" title={p.message}>{p.message || "—"}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted" title={p.message}>{p.message || "—"}</span>
+                  {typeof p.traceId === "string" ? (
+                    <Link to={`/requests/${p.traceId}`} className="shrink-0 font-mono text-brand hover:underline">request</Link>
+                  ) : null}
                 </li>
               );
             })}

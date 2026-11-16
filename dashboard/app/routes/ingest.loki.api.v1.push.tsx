@@ -9,6 +9,7 @@ import { serviceNamesWithin } from "~/lib/service-names.server";
 import { isCapped } from "~/lib/plans/limits";
 import { addToBucket, addToDaily, orgLimits } from "~/lib/plans/usage.server";
 import { startBackgroundJobs } from "~/lib/jobs.server";
+import { derivedErrorSink } from "~/lib/errors-store.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
 // <endpoint>/loki/api/v1/push. The bearer token resolves to an org + project;
@@ -53,7 +54,7 @@ export async function action({ request }: ActionFunctionArgs) {
     serviceNamesWithin(tenantOf(tenant.orgId), 1500),
     getExcludedPathMatcher(tenant.orgId, tenant.projectId),
   ]);
-  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource, excluded });
+  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource, excluded, deriveErrors: true });
   for (const s of result.streams) s.stream = { ...s.stream, org_id: tenant.orgId, project: tenant.project };
   if (result.streams.length === 0) return new Response(null, { status: 204 });
 
@@ -66,6 +67,9 @@ export async function action({ request }: ActionFunctionArgs) {
     // A metered organisation's intake is counted per day (the Usage page). A limited one also keeps a
     // rolling window: count what was stored per 5 minutes, and the trim job drops the oldest.
     if (res.ok) {
+      // Error groups from error-level lines and 5xx requests (BAC-85): off the request path, never awaited,
+      // failures counted and swallowed inside the sink. Only after Loki took the push, so a retried push is not counted twice.
+      derivedErrorSink().submit(tenant.orgId, tenant.project, result.errors);
       const limits = await orgLimits(tenant.orgId);
       if (limits) {
         const add = { requests: result.requests, bytes: result.bytes };

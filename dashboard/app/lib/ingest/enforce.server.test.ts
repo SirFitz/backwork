@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BUILT_IN_PATTERNS, Feature, compileFilter, type ControlRow, type FilterPattern } from "~/lib/controls.server";
+import { compileExcludedPaths } from "~/lib/excluded-paths";
 import { classifyLine, enforceStreams, hopMetricsAllowed, LineKind, stripHopFields, type LokiStream } from "./enforce.server";
 
 const T = "6503f5f183b828139d5b143365ad72fa";
@@ -206,5 +207,57 @@ describe("hopMetricsAllowed", () => {
     const none = enforceStreams(push([KV_IN]), { projectId: "p", rows: [off(Feature.Hops)], filter });
     expect(none.requests).toBe(0);
     expect(none.bytes).toBe(0);
+  });
+});
+
+describe("derived errors (BAC-85)", () => {
+  // Real Courier Portal shapes: Vector envelopes with the level as a stream label, and kv inbound end records.
+  const CP = { service: "courier-portal-client", level: "error", source: "prod-courier-portal-client" };
+  const errLine = (m: string) => JSON.stringify({ host: "dserve", level: "error", message: m, service: "courier-portal-client", source: "prod-courier-portal-client" });
+  const end500 = (path: string, extra = "") =>
+    JSON.stringify({ message: `trace_id=${T} hop=in_end hop_id=af77fedfbed3e6be parent_id=067ac66f0add67ec service=courier-portal-client adapter=express via=http method=POST host=client.example path=${path}${extra} outcome=error status=500 error=Error duration_us=4105`, service: "courier-portal-client" });
+  const end200 = JSON.stringify({ message: `trace_id=${T} hop=in_end hop_id=af77fedfbed3e6be parent_id=067ac66f0add67ec via=http method=GET op=/ok outcome=ok status=200 duration_us=10`, service: "courier-portal-client" });
+  const ctx = (rows: ControlRow[] = [], more: Record<string, unknown> = {}) => ({ projectId: null, rows, filter, deriveErrors: true, ...more });
+
+  test("error-level lines and 5xx end records become events; info lines and 2xx do not", () => {
+    const r = enforceStreams(
+      [
+        { stream: CP, values: [["1794804028563274641", errLine("[error] Uncaught in POST /RSC/mh3605y3mbzshuo.txt | POST /RSC/mh3605y3mbzshuo.txt")], ["1794804028563274642", errLine("[error] Uncaught in POST /RSC/5j42raitcsgjeak.txt | POST /RSC/5j42raitcsgjeak.txt")]] },
+        { stream: { ...CP, level: "info" }, values: [["1", errLine("all fine")], ["2", end500("/RSC/mh3605y3mbzshuo.txt")], ["3", end500("/RSC/5j42raitcsgjeak.txt")], ["4", end200]] },
+      ],
+      ctx(),
+    );
+    const logs = r.errors.filter((e) => e.source === "log");
+    const reqs = r.errors.filter((e) => e.source === "request");
+    expect(logs.length).toBe(2);
+    expect(new Set(logs.map((e) => e.fingerprint)).size).toBe(1);
+    expect(logs[0].title).toBe("Uncaught in POST /RSC/<id>.txt | POST /RSC/<id>.txt");
+    expect(logs[0].at).toBe(1794804028563);
+    expect(reqs.length).toBe(2);
+    expect(new Set(reqs.map((e) => e.fingerprint)).size).toBe(1);
+    expect(reqs[0].title).toBe("POST /RSC/:id.txt → 500");
+    expect(reqs[0].traceId).toBe(T);
+    expect(reqs[0].service).toBe("courier-portal-client");
+  });
+
+  test("Logs off → no log-derived errors; Hop records off → no request-derived errors", () => {
+    const streams: LokiStream[] = [{ stream: CP, values: [["1", errLine("boom")], ["2", end500("/x")]] }];
+    expect(enforceStreams(streams, ctx([off(Feature.Logs)])).errors.map((e) => e.source)).toEqual(["request"]);
+    expect(enforceStreams(streams, ctx([off(Feature.Hops)])).errors.map((e) => e.source)).toEqual(["log"]);
+    expect(enforceStreams(streams, ctx([off(Feature.Logs), off(Feature.Hops)])).errors).toEqual([]);
+  });
+
+  test("excluded paths drop the request's error; the filter runs before the message is kept; Request paths off hides the path", () => {
+    const streams: LokiStream[] = [{ stream: CP, values: [["1", errLine("card 4111 1111 1111 1111 failed MBR-123456")], ["2", end500("/health")]] }];
+    const r = enforceStreams(streams, ctx([], { excluded: compileExcludedPaths(["/health"]) }));
+    expect(r.errors.map((e) => e.source)).toEqual(["log"]);
+    expect(r.errors[0].message).not.toContain("4111");
+    expect(r.errors[0].message).not.toContain("MBR-123456");
+    const hidden = enforceStreams([{ stream: CP, values: [["1", end500("/orders/42")]] }], ctx([off(Feature.Paths)]));
+    expect(hidden.errors[0].route).toBe("(unknown route)");
+  });
+
+  test("not derived unless asked (other callers of enforceStreams)", () => {
+    expect(enforceStreams([{ stream: CP, values: [["1", errLine("boom")]] }], { projectId: null, rows: [], filter }).errors).toEqual([]);
   });
 });

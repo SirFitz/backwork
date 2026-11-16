@@ -21,6 +21,7 @@ import { lineExcluded, pathExcluded, type ExcludedPathMatcher } from "~/lib/excl
 import { PATH_FIELD } from "~/lib/hops/paths";
 import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN } from "~/lib/hops/store-fields";
 import { STATEMENT_FIELDS, StatementField, recordPairs, splitStatement } from "~/lib/hops/stmt";
+import { fromHopEnd, fromLogLine, type DerivedError } from "~/lib/errors-derive";
 
 export const LineKind = { Log: "log", Hop: "hop", Link: "link" } as const;
 export type LineKind = (typeof LineKind)[keyof typeof LineKind];
@@ -159,6 +160,8 @@ export interface EnforceContext {
   filter: CompiledFilter;
   /** Excluded paths for this project (BAC-82): matching hop records and log lines are not saved. */
   excluded?: ExcludedPathMatcher;
+  /** Collect error events from what is kept (BAC-85): error-level log lines and 5xx inbound requests. */
+  deriveErrors?: boolean;
 }
 
 /** Excluded paths (BAC-82), the same rule as the agent: a hop record whose `path` or `op` matches,
@@ -181,6 +184,8 @@ export interface EnforceResult {
   requests: number;
   /** Bytes of the kept lines, after the filter and field stripping: what is stored. */
   bytes: number;
+  /** Error events derived from the kept lines, after the switches, excluded paths and the filter (BAC-85). */
+  errors: DerivedError[];
 }
 
 function isDataStore(c: Classified): boolean {
@@ -197,6 +202,7 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
   let dropped = 0;
   let requests = 0;
   let bytes = 0;
+  const errors: DerivedError[] = [];
   for (const s of streams) {
     if (!isObject(s) || !isObject(s.stream) || !Array.isArray(s.values)) continue;
     const sent = typeof s.stream.service === "string" ? s.stream.service : null;
@@ -233,6 +239,7 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
         raw = stripHopFields(raw, c, { named: !on[Feature.NamedFields], stores: !on[Feature.Stores], statements: !on[Feature.Statements], paths: !on[Feature.Paths] });
       }
       let out: string;
+      let saved: string;
       if (envelope) {
         const display = typeof envelope.display === "string" ? envelope.display : null;
         const orig = envelope.message as string;
@@ -241,9 +248,20 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
           envelope.display = display === orig ? envelope.message : on[Feature.Filter] ? applyFilter(display, ctx.filter) : display;
         }
         envelope.kind = kindLabel;
+        saved = envelope.message as string;
         out = JSON.stringify(envelope);
       } else {
         out = on[Feature.Filter] ? applyFilter(raw, ctx.filter) : raw;
+        saved = out;
+      }
+      if (ctx.deriveErrors) {
+        const e = deriveError(c, saved, {
+          service: (c.kind === LineKind.Log ? own : null) ?? service ?? "",
+          level: s.stream.level ?? envelope?.level ?? null,
+          pathsOn: on[Feature.Paths],
+          at: nsToMs(v[0]),
+        });
+        if (e) errors.push(e);
       }
       // Never relabel a line whose source has no hop records (`own` is null then).
       const labels = { ...s.stream, kind: kindLabel, ...(own !== null && kindLabel === "log" ? { service: own } : {}) };
@@ -259,7 +277,24 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
       if (c.kind === LineKind.Hop && c.fields.hop === "in" && (c.fields.via === "http" || c.fields.via === "rpc")) requests++;
     }
   }
-  return { streams: [...groups.values()], kept, dropped, requests, bytes };
+  return { streams: [...groups.values()], kept, dropped, requests, bytes, errors };
+}
+
+function nsToMs(ns: string): number {
+  const n = Number(ns);
+  return Number.isFinite(n) ? Math.floor(n / 1e6) : Date.now();
+}
+
+const STATUS_5XX = /\bstatus"?\s*[:=]\s*"?5\d\d\b/;
+
+/** One kept line's error event, read from the line as it is saved (filtered, fields stripped). */
+function deriveError(c: Classified, saved: string, at: { service: string; level: unknown; pathsOn: boolean; at: number }): DerivedError | null {
+  if (c.kind === LineKind.Log) {
+    return fromLogLine({ line: saved, service: at.service, level: at.level, traceId: c.fields.trace_id, at: at.at });
+  }
+  if (c.kind !== LineKind.Hop || c.fields.hop !== "in_end" || !STATUS_5XX.test(saved)) return null;
+  const fields = classifyLine(saved).fields;
+  return fromHopEnd({ fields, service: at.service, pathsOn: at.pathsOn, at: at.at });
 }
 
 /** Whether a hop-metrics remote write for this project is saved (design 19.1). */

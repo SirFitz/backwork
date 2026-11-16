@@ -167,6 +167,9 @@ CREATE TABLE IF NOT EXISTS error_events (
   payload jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS error_events_group_idx ON error_events (group_id, created_at);
+-- BAC-85: where a group's events come from (reported | log | request)
+ALTER TABLE error_groups ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'reported';
+ALTER TABLE error_events ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'reported';
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id text PRIMARY KEY,
