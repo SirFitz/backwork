@@ -42,6 +42,22 @@ function reader(entries: LogEntry[]) {
   return { read, calls };
 }
 
+describe("scanRepeats with other queries between the repeats (BAC-88)", () => {
+  test("a repeat interleaved with another query counts as one at a time but saves nothing", async () => {
+    const USERS = "select users.id, users.name from users where users.id = ?";
+    const entries: LogEntry[] = [];
+    for (let i = 0; i < 6; i++) {
+      entries.push(kv(9, 900 + i * 2, 1009, PLANS, NOW - 60_000 + i * 3, 1000));
+      entries.push(kv(9, 901 + i * 2, 1009, USERS, NOW - 60_000 + i * 3 + 1.5, 400, "users"));
+    }
+    const scan = await scanRepeats(tenant(), REPEATS_WINDOW_MS, reader(entries).read, NOW);
+    const plans = scan.rows.find((r) => r.label === "select plans")!;
+    expect(plans.requests).toBe(1);
+    expect(plans.sequentialRequests).toBe(1);
+    expect(plans.wastedUs).toBe(0);
+  });
+});
+
 describe("scanRepeats", () => {
   test("groups by request, keeps repeats from the minimum, aggregates by shape with the median and an example", async () => {
     const entries = [

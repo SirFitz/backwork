@@ -141,7 +141,7 @@ describe("repeated calls in one request", () => {
     expect(report([...request(30), ...sequential(14)], true).groups[0].atLeast).toBe(true);
     const short = report([...request(30, { dbCalls: 20, dbUs: 20_000, cacheCalls: 0, cacheUs: 0 }), ...sequential(14)]);
     expect(short.groups[0].atLeast).toBe(true);
-    expect(repeatSentence(short.groups[0])).toMatch(/^select plans ran at least 14 times, one after another/);
+    expect(repeatSentence(short.groups[0])).toMatch(/^select plans ran at least 14 times back to back/);
     // A cache shortfall does not make a database count a floor.
     const cacheShort = report([...request(30, { dbCalls: 14, dbUs: 14_910, cacheCalls: 3, cacheUs: 1000 }), ...sequential(14)]);
     expect(cacheShort.groups[0].atLeast).toBe(false);
@@ -160,7 +160,7 @@ describe("repeated calls in one request", () => {
     expect(g.label).toBe("set redis.internal");
     expect(g.count).toBe(7);
     expect(g.repetition).toBe(Repetition.Sequential);
-    expect(repeatSentence(g)).toBe("set redis.internal ran 7 times, one after another, 2.10 s in all.");
+    expect(repeatSentence(g)).toBe("set redis.internal ran 7 times back to back, 2.10 s in all.");
     expect(repeatHint(g)).toBe("Use one multi-key command or a pipeline.");
     expect(repeatChip(g)).toBe(RepeatChip.Repeated);
   });
@@ -168,7 +168,7 @@ describe("repeated calls in one request", () => {
   test("sentence, hint, chip and note of a sequential database group", () => {
     const calls = Array.from({ length: 14 }, (_, i) => db(100 + i, 2 + (i + 1) * 4.5, 4430));
     const g = report([...request(80), ...calls]).groups[0];
-    expect(repeatSentence(g)).toBe("select plans ran 14 times, one after another, 62.0 ms in all.");
+    expect(repeatSentence(g)).toBe("select plans ran 14 times back to back, 62.0 ms in all.");
     expect(repeatHint(g)).toBe("Fetch them together with one query that takes a list of IDs.");
     expect(repeatChip(g)).toBe(RepeatChip.NPlusOne);
     expect(repeatNote(g)).toBe("repeated 14 times");
@@ -194,6 +194,38 @@ describe("repeated calls in one request", () => {
     // A generous bound: it only guards against a pathological slowdown. A tight one failed whenever
     // the machine was busy (load average above 100), which says nothing about the code.
     expect(ms).toBeLessThan(MAX_LARGE_REQUEST_MS);
+  });
+});
+
+describe("calls spread through the request (BAC-88)", () => {
+  test("repeats with other calls between them are spread: own sentence, no hint, no N+1, nothing to save", () => {
+    // 6 plans selects, each followed by a get: one at a time, never back to back.
+    const calls: HopRecord[] = [];
+    for (let i = 0; i < 6; i++) {
+      calls.push(db(100 + i, 2 + i * 3 + 1, 1000));
+      calls.push(cache(200 + i, "get", 2 + i * 3 + 2.5, 500));
+    }
+    const r = report([...request(30), ...calls]);
+    const g = r.groups.find((x) => x.label === "select plans")!;
+    expect(g.repetition).toBe(Repetition.Spread);
+    expect(repeatSentence(g)).toBe("select plans ran 6 times at different points of the request, with other calls in between, 6.0 ms in all.");
+    expect(repeatHint(g)).toBeNull();
+    expect(repeatChip(g)).toBe(RepeatChip.Repeated);
+    expect(g.wastedUs).toBe(0);
+  });
+
+  test("the same calls with nothing between them stay back to back", () => {
+    const g = report([...request(30), ...sequential(6)]).groups[0];
+    expect(g.repetition).toBe(Repetition.Sequential);
+    expect(repeatSentence(g)).toMatch(/^select plans ran 6 times back to back, /);
+  });
+
+  test("classifyRepetition: a call of another kind starting between the first and the last makes it spread", () => {
+    const calls = [{ startMs: 0, endMs: 1 }, { startMs: 1, endMs: 2 }, { startMs: 5, endMs: 6 }];
+    expect(classifyRepetition(calls, false)).toBe(Repetition.Sequential);
+    expect(classifyRepetition(calls, false, [{ startMs: 2, endMs: 4 }])).toBe(Repetition.Spread);
+    expect(classifyRepetition(calls, false, [{ startMs: 7, endMs: 8 }])).toBe(Repetition.Sequential);
+    expect(wastedUsOf(Repetition.Spread, [1000, 1000, 1000])).toBe(0);
   });
 });
 

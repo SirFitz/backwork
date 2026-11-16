@@ -90,7 +90,7 @@ function ScanBody({ scan, words }: { scan: RepeatScan; words: string }) {
 
 function Row({ row }: { row: RepeatRow }) {
   const together = row.requests - row.sequentialRequests;
-  const how = together === 0 ? "one after another" : row.sequentialRequests === 0 ? "together" : `one after another in ${row.sequentialRequests} of ${row.requests} requests`;
+  const how = together === 0 ? "one at a time" : row.sequentialRequests === 0 ? "together" : `one at a time in ${row.sequentialRequests} of ${row.requests} requests`;
   return (
     <tr className="hover:bg-surface-2/60">
       {/* takes the rest of the row and truncates (max-w-0), so the table never scrolls sideways */}

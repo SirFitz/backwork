@@ -230,7 +230,7 @@ function repeatCount(n: number): string {
 export function repeatItem(r: FixRepeatInput, window: FixWindow, sampled: boolean): FixItem {
   const savedS = r.wastedUs / 1e6;
   const floor = sampled ? "at least " : "";
-  const how = r.sequentialRequests === r.requests ? "one after another" : r.sequentialRequests === 0 ? "together" : `one after another in ${r.sequentialRequests} of them`;
+  const how = r.sequentialRequests === r.requests ? "one at a time" : r.sequentialRequests === 0 ? "together" : `one at a time in ${r.sequentialRequests} of them`;
   return {
     id: `${FixKind.Repeat}:${r.service}:${r.shapeId}:${r.table ?? ""}`,
     kind: FixKind.Repeat,

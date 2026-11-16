@@ -36,7 +36,8 @@ export interface RepeatRow {
   requests: number;
   /** The median repeat count of those requests. */
   medianRepeats: number;
-  /** Of those requests, the ones whose calls ran one after another. */
+  /** Of those requests, the ones whose calls ran one at a time (did not overlap): back to back or
+   *  spread through the request. */
   sequentialRequests: number;
   /** The calls' durations added up, microseconds. */
   totalUs: number;
@@ -73,7 +74,11 @@ function median(values: readonly number[]): number {
 /** The rows of the board from database end records (pure; `scanRepeats` reads and caches). */
 export function aggregateRepeats(records: readonly HopRecord[], fromMs: number): { rows: RepeatRow[]; statementsOff: boolean } {
   const seen = new Set<HopId>();
-  const byCall = new Map<string, { rec: HopRecord; shape: string; calls: Call[] }>();
+  const byCall = new Map<string, { rec: HopRecord; shape: string; calls: Call[]; parent: string }>();
+  // Every database call of a hop, so a repeat with other queries between its calls counts as
+  // spread, not back to back (BAC-88). Only database records are read here, so a cache or HTTP
+  // call between them is not seen.
+  const byParent = new Map<string, Array<Call & { key: string }>>();
   let dbRecords = 0;
   let withStatement = 0;
   for (const r of records) {
@@ -86,15 +91,20 @@ export function aggregateRepeats(records: readonly HopRecord[], fromMs: number):
     const shape = statementShape(r.stmt);
     const key = `${r.traceId}|${r.parentHop}|${r.service}|${r.peer ?? ""}|${r.table ?? ""}|${shape}`;
     const call: Call = { startMs: r.timeMs - r.durationUs / 1000, endMs: r.timeMs, durationUs: r.durationUs };
+    const parent = `${r.traceId}|${r.parentHop}`;
+    const sibs = byParent.get(parent);
+    if (sibs) sibs.push({ ...call, key });
+    else byParent.set(parent, [{ ...call, key }]);
     const g = byCall.get(key);
     if (g) g.calls.push(call);
-    else byCall.set(key, { rec: r, shape, calls: [call] });
+    else byCall.set(key, { rec: r, shape, calls: [call], parent });
   }
   const rows = new Map<string, RepeatRow & { counts: number[] }>();
-  for (const { rec, shape, calls } of byCall.values()) {
+  for (const [callKey, { rec, shape, calls, parent }] of byCall) {
     if (calls.length < REPEAT_MIN_DB) continue;
     calls.sort((a, b) => a.startMs - b.startMs);
-    const repetition = classifyRepetition(calls, false);
+    const others = (byParent.get(parent) ?? []).filter((c) => c.key !== callKey);
+    const repetition = classifyRepetition(calls, false, others);
     const durations = calls.map((c) => c.durationUs);
     const endMs = Math.max(...calls.map((c) => c.endMs));
     const key = `${rec.service}|${rec.table ?? ""}|${shape}`;
@@ -105,7 +115,7 @@ export function aggregateRepeats(records: readonly HopRecord[], fromMs: number):
     };
     row.requests++;
     row.counts.push(calls.length);
-    if (repetition === Repetition.Sequential) row.sequentialRequests++;
+    if (repetition === Repetition.Sequential || repetition === Repetition.Spread) row.sequentialRequests++;
     row.totalUs += durations.reduce((a, d) => a + d, 0);
     row.wastedUs += wastedUsOf(repetition, durations);
     if (endMs > row.exampleAtMs) {
