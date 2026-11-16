@@ -266,7 +266,11 @@ function geometry(hop: Hop, axisStart: number, axisMs: number, now: number): Bar
   return { left, width: Math.max(width, 0.9), open: false, later: null };
 }
 
-function Bar({ hop, colour, geom, thin = false }: { hop: Hop; colour: string; geom: BarGeom; thin?: boolean }) {
+/**
+ * A hop's time bar. `segments` (a repeated-call group) draws each call at its own time on the one
+ * track, so 9 calls of ~1 ms read as 9 ticks, not one block from the first start to the last end.
+ */
+function Bar({ hop, colour, geom, segments, thin = false }: { hop: Hop; colour: string; geom: BarGeom; segments?: readonly BarGeom[]; thin?: boolean }) {
   const failed = isFailed(hop) || hop.gaps.some((g) => g.kind === GapKind.Stopped);
   const style: CSSProperties = { left: `${geom.left}%`, width: `${geom.width}%` };
   if (geom.open) Object.assign(style, HATCH(colour));
@@ -290,7 +294,13 @@ function Bar({ hop, colour, geom, thin = false }: { hop: Hop; colour: string; ge
       {geom.later ? (
         <span className="absolute right-[28%] top-0 border-r border-dashed border-border-strong pr-2 font-mono text-[10.5px] leading-4 text-faint">{geom.later}</span>
       ) : null}
-      <span className={cn("absolute top-0 min-w-[3px] rounded", thin ? "h-2" : "h-4")} style={style} />
+      {(segments ?? [geom]).map((g, i) => (
+        <span
+          key={i}
+          className={cn("absolute top-0 min-w-[3px] rounded", thin ? "h-2" : "h-4")}
+          style={{ ...style, left: `${g.left}%`, width: `${g.width}%` }}
+        />
+      ))}
     </div>
   );
 }
@@ -740,7 +750,7 @@ function groupedHops(nodes: readonly PathNode[]): Set<HopId> {
   return out;
 }
 
-/** A group of repeated calls drawn as one hop: from the first start to the last end. */
+/** A group of repeated calls as one hop (its row's text and timing); its bar draws the calls one by one. */
 function groupSpan(members: readonly Hop[]): Hop {
   const first = members[0];
   const start = Math.min(...members.map((m) => m.startMs));
@@ -918,6 +928,8 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
   const status = statusOf(hop);
   const note = [node.call ? callNote(node.call, hop) : "", members ? `${members.length} calls · ${fmtUs(rowUs(node))} in all` : noteOf(hop), !members && repeat ? repeatNote(repeat) : ""].filter(Boolean).join(" · ");
   const geom = geometry(timed, ctx.axisStart, ctx.axisMs, ctx.now);
+  // BAC-86: a group's bar shows each call where it ran, not the span between the first and the last.
+  const segments = members ? members.map((m) => geometry(m, ctx.axisStart, ctx.axisMs, ctx.now)) : undefined;
   const selected = !members && ctx.openHop === hop.hopId;
   const colour = ctx.colours.get(hop.service) as string;
   const toggle = () => (members ? onFold(!row.expanded) : ctx.setOpenHop(selected ? null : hop.hopId));
@@ -949,7 +961,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
       <div className="hidden font-mono text-[11.5px] text-faint md:block">{hop.via}</div>
       <div className="hidden md:block"><Badge tone={status.tone}>{status.text}</Badge></div>
       <div className="hidden text-right font-mono text-[12.5px] tabular-nums md:block">{took}</div>
-      <div className="hidden md:block"><Bar hop={timed} colour={colour} geom={geom} /></div>
+      <div className="hidden md:block"><Bar hop={timed} colour={colour} geom={geom} segments={segments} /></div>
       {/* phone: the hop stacks and keeps its own time bar under its text */}
       <div className="md:hidden" style={{ paddingLeft: depth * 12 }}>
         <div className="flex min-w-0 items-center gap-[7px] text-[12.5px]">
@@ -968,7 +980,7 @@ function HopRow({ row, ctx, onFold, grouped }: { row: VisibleRow; ctx: RowCtx; o
         <div className="mb-[7px] ml-[34px] mt-[3px] font-mono text-2xs text-faint">
           {[hop.via, members ? `${members.length} calls` : null, waited, hop.error ?? (hop.state === HopState.Finished ? hop.status ?? hop.outcome : hop.gaps.some((g) => g.kind === GapKind.Stopped) ? "no end record" : "open"), took, members ? null : row.summary, repeat ? (members ? repeatChip(repeat) : repeatNote(repeat)) : null, parallel ? PARALLEL_CHIP : null].filter(Boolean).join(" · ")}
         </div>
-        <Bar hop={timed} colour={colour} geom={geom} thin />
+        <Bar hop={timed} colour={colour} geom={geom} segments={segments} thin />
       </div>
     </div>
   );
