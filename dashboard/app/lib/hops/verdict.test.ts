@@ -74,7 +74,7 @@ describe("why was this request slow", () => {
     expect(v.kind).toBe(VerdictKind.RepeatedCalls);
     expect(v.culpritHopId).toBe(hid(100));
     expect(v.share).toBeCloseTo(140 / 240, 2);
-    expect(v.sentence).toBe("58 percent of the 240 ms went on select plans, run 14 times one after another (140 ms in all).");
+    expect(v.sentence).toBe("58 percent of the 240 ms went on select plans, run 14 times back to back (140 ms in all).");
     expect(v.detail).toBe("The next biggest is shop-api's own code (42 percent, 100 ms).");
   });
 
@@ -91,7 +91,7 @@ describe("why was this request slow", () => {
     const v = verdict([...request(36), ...calls, db(10, 20, 3000)]);
     expect(v.kind).toBe(VerdictKind.RepeatedCalls);
     expect(v.share).toBeCloseTo(16.8 / 36, 3);
-    expect(v.sentence).toBe("47 percent of the 36.0 ms went on select plans, run 14 times one after another (16.8 ms in all).");
+    expect(v.sentence).toBe("47 percent of the 36.0 ms went on select plans, run 14 times back to back (16.8 ms in all).");
     // Own code is what the calls' summed time leaves: 36 - 16.8 - 3 ms.
     expect(v.detail).toBe("The next biggest is shop-api's own code (45 percent, 16.2 ms).");
   });

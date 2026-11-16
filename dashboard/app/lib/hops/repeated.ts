@@ -1,6 +1,7 @@
 /**
  * Repeated calls inside one request (BAC-68): the same database query or cache command issued
- * many times by one hop, whether the calls ran one after another (the N+1 shape) or together, and
+ * many times by one hop, whether the calls ran back to back (the N+1 shape), one at a time but at
+ * different points of the request with other calls between them (BAC-88), or together, and
  * what they cost. The request view marks them on the Path card; the Insights board and later
  * features (why slow, chatty, fix first, request diff) read the same groups. Pure, so it runs in
  * the browser on every request view and is tested with plain objects.
@@ -22,8 +23,11 @@ import { HopDir, StoreKind, Via, type Hop, type HopId, type RequestTree } from "
 
 /** How repeated calls ran against each other. */
 export const Repetition = {
-  /** One after another: each waited for the one before (the N+1 shape). */
+  /** Back to back: one at a time, with no other call of the hop between them (the N+1 shape). */
   Sequential: "sequential",
+  /** One at a time, but at different points of the request, with other calls between them: made
+   *  from different places in the code, so one batch would not replace them (BAC-88). */
+  Spread: "spread",
   /** Overlapping: sent together, answered together. */
   Concurrent: "concurrent",
   /** Cache commands started together on one client: a plain pipeline, one round trip. Not reported. */
@@ -33,7 +37,7 @@ export type Repetition = (typeof Repetition)[keyof typeof Repetition];
 
 /** The marker a repeated call carries on the Path card. */
 export const RepeatChip = {
-  /** Database queries run one after another. */
+  /** Database queries run back to back. */
   NPlusOne: "N+1",
   /** Everything else that repeats. */
   Repeated: "repeated",
@@ -44,12 +48,13 @@ export type RepeatChip = (typeof RepeatChip)[keyof typeof RepeatChip];
 export const REPEAT_MIN_DB = 5;
 /** Cache commands that ran together need this many before they are a finding (they are cheap). */
 export const REPEAT_MIN_CACHE = 10;
-/** Cache commands that ran one after another are a finding from this many (each waited a round trip). */
+/** Cache commands that ran one at a time (back to back or spread) are a finding from this many
+ *  (each waited a round trip). */
 export const REPEAT_MIN_CACHE_SEQUENTIAL = 5;
 /** Two calls are "one after another" when the second starts no earlier than this before the first
  *  ended: some sources write whole milliseconds, so touching calls can look overlapped. */
 export const SLACK_MS = 1;
-/** Calls are sequential when at least this share of consecutive pairs ran one after another. */
+/** Calls ran one at a time when at least this share of consecutive pairs did not overlap. */
 export const SEQUENTIAL_SHARE = 0.8;
 /** Calls are also sequential when, on average, no more than this many were in flight at once (their
  *  durations added up over the time from the first start to the last end). Log lines are often
@@ -79,8 +84,9 @@ export interface RepeatGroup {
   count: number;
   /** The calls' durations added up, microseconds. */
   totalUs: number;
-  /** What fetching them together could save: the total minus the first call (sequential) or minus
-   *  the longest call (concurrent), microseconds, never negative. */
+  /** What fetching them together could save: the total minus the first call (back to back) or
+   *  minus the longest call (concurrent), microseconds, never negative; 0 for calls spread through
+   *  the request, which one batch would not replace. */
   wastedUs: number;
   repetition: Repetition;
   /** In start order. */
@@ -129,11 +135,13 @@ export function callShapeKey(h: Pick<Hop, "via" | "op" | "peer" | "table" | "stm
 /**
  * How a set of repeated calls ran. `batchable` is true for cache commands from one client: started
  * all within BATCH_WINDOW_MS, at least BATCH_MIN_CALLS of them, they were one pipeline.
- * Otherwise sequential when at least SEQUENTIAL_SHARE of consecutive pairs (in start order) ran
- * one after another, within SLACK_MS, or when on average at most SEQUENTIAL_MAX_IN_FLIGHT calls
- * were in flight; concurrent when neither holds.
+ * Otherwise one at a time when at least SEQUENTIAL_SHARE of consecutive pairs (in start order) did
+ * not overlap, within SLACK_MS, or when on average at most SEQUENTIAL_MAX_IN_FLIGHT calls were in
+ * flight; concurrent when neither holds. Calls that ran one at a time are `Sequential` (back to
+ * back) unless one of `others` (the same hop's other calls) started between the first and the last
+ * of them: then they are `Spread` (BAC-88).
  */
-export function classifyRepetition(calls: readonly CallSpan[], batchable: boolean): Repetition {
+export function classifyRepetition(calls: readonly CallSpan[], batchable: boolean, others: readonly CallSpan[] = []): Repetition {
   const sorted = [...calls].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   if (sorted.length < 2) return Repetition.Sequential;
   if (batchable && sorted.length >= BATCH_MIN_CALLS && sorted[sorted.length - 1].startMs - sorted[0].startMs <= BATCH_WINDOW_MS) {
@@ -141,16 +149,19 @@ export function classifyRepetition(calls: readonly CallSpan[], batchable: boolea
   }
   let after = 0;
   for (let i = 1; i < sorted.length; i++) if (sorted[i].startMs >= sorted[i - 1].endMs - SLACK_MS) after++;
-  if (after / (sorted.length - 1) >= SEQUENTIAL_SHARE) return Repetition.Sequential;
   const spanMs = Math.max(...sorted.map((c) => c.endMs)) - sorted[0].startMs;
   const busyMs = sorted.reduce((a, c) => a + Math.max(0, c.endMs - c.startMs), 0);
-  return spanMs > 0 && busyMs / spanMs <= SEQUENTIAL_MAX_IN_FLIGHT ? Repetition.Sequential : Repetition.Concurrent;
+  const oneAtATime = after / (sorted.length - 1) >= SEQUENTIAL_SHARE || (spanMs > 0 && busyMs / spanMs <= SEQUENTIAL_MAX_IN_FLIGHT);
+  if (!oneAtATime) return Repetition.Concurrent;
+  const first = sorted[0].startMs;
+  const last = sorted[sorted.length - 1].startMs;
+  return others.some((o) => o.startMs > first && o.startMs < last) ? Repetition.Spread : Repetition.Sequential;
 }
 
 /** What doing the calls at once could save, microseconds (see `RepeatGroup.wastedUs`). `durationsUs`
  *  in start order. */
 export function wastedUsOf(repetition: Repetition, durationsUs: readonly number[]): number {
-  if (!durationsUs.length || repetition === Repetition.Batched) return 0;
+  if (!durationsUs.length || repetition === Repetition.Batched || repetition === Repetition.Spread) return 0;
   const total = durationsUs.reduce((a, d) => a + d, 0);
   const keep = repetition === Repetition.Sequential ? durationsUs[0] : Math.max(...durationsUs);
   return Math.max(0, total - keep);
@@ -160,7 +171,7 @@ export function wastedUsOf(repetition: Repetition, durationsUs: readonly number[
 export function qualifies(kind: StoreKind, count: number, repetition: Repetition): boolean {
   if (repetition === Repetition.Batched) return false;
   if (kind === StoreKind.Db) return count >= REPEAT_MIN_DB;
-  return count >= (repetition === Repetition.Sequential ? REPEAT_MIN_CACHE_SEQUENTIAL : REPEAT_MIN_CACHE);
+  return count >= (repetition === Repetition.Concurrent ? REPEAT_MIN_CACHE : REPEAT_MIN_CACHE_SEQUENTIAL);
 }
 
 // ---------------------------------------------------------------- detection
@@ -174,7 +185,9 @@ function groupOf(parent: Hop, calls: Hop[], shapeKey: string, truncated: boolean
   const first = calls[0];
   const kind = first.via === Via.Db ? StoreKind.Db : StoreKind.Cache;
   const spans = calls.map((c) => ({ startMs: c.startMs, endMs: c.endMs ?? c.startMs }));
-  const repetition = classifyRepetition(spans, kind === StoreKind.Cache && oneClient(calls));
+  const members = new Set(calls);
+  const others = parent.children.filter((c) => !members.has(c)).map((c) => ({ startMs: c.startMs, endMs: c.endMs ?? c.startMs }));
+  const repetition = classifyRepetition(spans, kind === StoreKind.Cache && oneClient(calls), others);
   if (!qualifies(kind, calls.length, repetition)) return null;
   const durations = calls.map((c) => c.durationUs ?? 0);
   const shortfall = parent.unrecorded.some((u) => u.store === kind && u.calls > 0);
@@ -243,21 +256,23 @@ function times(g: RepeatGroup): string {
   return `${g.atLeast ? "at least " : ""}${g.count} times`;
 }
 
-/** The finding as a sentence: "select plans ran 14 times, one after another, 62.0 ms in all." */
+/** The finding as a sentence: "select plans ran 14 times back to back, 62.0 ms in all." */
 export function repeatSentence(g: RepeatGroup): string {
   const basis = g.statementKnown ? "" : " (matched by command and table: the query text was not recorded)";
-  if (g.repetition === Repetition.Sequential) return `${g.label} ran ${times(g)}, one after another, ${fmtUs(g.totalUs)} in all${basis}.`;
+  if (g.repetition === Repetition.Sequential) return `${g.label} ran ${times(g)} back to back, ${fmtUs(g.totalUs)} in all${basis}.`;
+  if (g.repetition === Repetition.Spread) return `${g.label} ran ${times(g)} at different points of the request, with other calls in between, ${fmtUs(g.totalUs)} in all${basis}.`;
   if (g.repetition === Repetition.Concurrent) return `${g.label} ran ${times(g)} together (about ${fmtUs(g.totalUs / Math.max(g.count, 1))} each)${basis}.`;
   return `${g.label} ran ${times(g)} in one batch${basis}.`;
 }
 
-/** A suggestion for calls that waited on each other; null when they already ran together. */
+/** A suggestion for calls that ran back to back; null otherwise (calls that ran together are already
+ *  batched in effect, and calls spread through the request are not one batch to make). */
 export function repeatHint(g: RepeatGroup): string | null {
   if (g.repetition !== Repetition.Sequential) return null;
   return g.kind === StoreKind.Db ? "Fetch them together with one query that takes a list of IDs." : "Use one multi-key command or a pipeline.";
 }
 
-/** "N+1" for database queries run one after another, "repeated" otherwise. */
+/** "N+1" for database queries run back to back, "repeated" otherwise. */
 export function repeatChip(g: RepeatGroup): RepeatChip {
   return g.kind === StoreKind.Db && g.repetition === Repetition.Sequential && g.count >= REPEAT_MIN_DB ? RepeatChip.NPlusOne : RepeatChip.Repeated;
 }

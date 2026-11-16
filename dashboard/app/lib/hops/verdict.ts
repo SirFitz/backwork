@@ -188,10 +188,11 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
   const grouped = new Set<string>();
   const groupC: Array<Contributor & { group: RepeatGroup }> = groups.map((g) => {
     for (const id of g.hopIds) grouped.add(id);
-    // Calls that ran one after another took their summed time (stored end times come in bursts,
+    // Calls that ran one at a time took their summed time (stored end times come in bursts,
     // so their intervals can look overlapped); calls that ran together took their union.
     const members = g.hopIds.map((id) => byId.get(id)).filter((h): h is Hop => h !== undefined);
-    const us = g.repetition === Repetition.Sequential ? Math.min(g.totalUs, headUs) : clippedUs(members, startMs, endMs);
+    const oneAtATime = g.repetition === Repetition.Sequential || g.repetition === Repetition.Spread;
+    const us = oneAtATime ? Math.min(g.totalUs, headUs) : clippedUs(members, startMs, endMs);
     return { key: `group:${g.key}`, us, hopId: g.hopIds[0] ?? null, name: groupName(g), showUs: false, group: g };
   });
   // Single database and cache calls not already in a group.
@@ -232,8 +233,8 @@ export function whyItWasSlow(tree: RequestTree, repeats: RepeatReport, now: numb
   const topDest = biggest(destC);
   if (topGroup && share(topGroup.us) >= CULPRIT_SHARE) {
     const g = topGroup.group;
-    const how = g.repetition === Repetition.Sequential ? "one after another" : "together";
-    const spent = g.repetition === Repetition.Sequential ? `${fmtUs(g.totalUs)} in all` : `${fmtUs(g.totalUs)} of call time`;
+    const how = g.repetition === Repetition.Sequential ? "back to back" : g.repetition === Repetition.Spread ? "at different points of the request" : "together";
+    const spent = g.repetition === Repetition.Concurrent ? `${fmtUs(g.totalUs)} of call time` : `${fmtUs(g.totalUs)} in all`;
     kind = VerdictKind.RepeatedCalls;
     culprit = topGroup;
     sentence = `${pct(share(topGroup.us))} percent of the ${total} went on ${g.label}, run ${g.atLeast ? "at least " : ""}${g.count} times ${how} (${spent}).`;
