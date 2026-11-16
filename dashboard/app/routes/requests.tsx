@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useSearchParams, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigation, useSearchParams, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
 import { Link, useCurrentEnv, useEnvNavigate } from "~/components/env-link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Network, Search, X } from "lucide-react";
@@ -202,12 +202,33 @@ function Feed({
   // the search box replaces it (debounced) so typing does not flood history.
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseRequestFilters(params), [params]);
+  // While a change that reloads (service, range, health checks) is loading, the controls already
+  // show the new choice: Remix's pending location, else the committed one.
+  const pending = useNavigation().location;
+  const shownSearch = pending && pending.pathname === "/requests" ? pending.search : null;
+  const shown = useMemo<RequestFilters>(() => {
+    const f = shownSearch !== null ? parseRequestFilters(new URLSearchParams(shownSearch)) : filters;
+    // A service the server does not know reads as "all", as the loader does.
+    return f.service !== ALL_SERVICES && !services.includes(f.service) ? { ...f, service: service } : f;
+  }, [shownSearch, filters, services, service]);
   const { status: statusFilter, method, q, route: exactRoute, sort, chatty: chattyOnly } = filters;
+  // Changes build on the newest intended URL, not on the one this render saw: a click made while
+  // another change is still loading, or a search written after its debounce, must not undo it.
+  const liveParams = useRef(params);
+  liveParams.current = params;
+  const intended = useRef<URLSearchParams | null>(null);
+  useEffect(() => {
+    intended.current = null; // a committed location is the truth again (also after back/forward)
+  }, [params]);
   const update = useCallback(
-    // The environment being shown is written too when the URL did not name it yet, so the
-    // address always restores (and shares) exactly this view.
-    (patch: Partial<RequestFilters>, replace = false) =>
-      setParams((prev) => withRequestFilters(prev, { ...(prev.has(RequestParam.Env) || !currentEnv ? {} : { env: currentEnv }), ...patch }), { replace, preventScrollReset: true }),
+    (patch: Partial<RequestFilters>, replace = false) => {
+      const base = intended.current ?? liveParams.current;
+      // The environment being shown is written too when the URL did not name it yet, so the
+      // address always restores (and shares) exactly this view.
+      const next = withRequestFilters(base, { ...(base.has(RequestParam.Env) || !currentEnv ? {} : { env: currentEnv }), ...patch });
+      intended.current = next;
+      setParams(next, { replace, preventScrollReset: true });
+    },
     [setParams, currentEnv],
   );
   const setStatusFilter = (s: StatusFilter): void => update({ status: s });
@@ -329,9 +350,9 @@ function Feed({
       {/* controls: desktop in one wrapping row; phone (frame 8) service and search in one row, the rest folded.
           No forms (BAC-90): every control writes its own parameter into the URL and keeps the rest. */}
       <div className="hidden flex-wrap items-center gap-2 md:flex">
-        <ServiceSelect services={services} service={service} onChange={(v) => update({ service: v })} />
-        <RangeSelect range={range} onChange={(v) => update({ range: v })} />
-        <HealthBox health={health} onChange={(v) => update({ health: v })} />
+        <ServiceSelect services={services} service={shown.service} onChange={(v) => update({ service: v })} />
+        <RangeSelect range={shown.range} onChange={(v) => update({ range: v })} />
+        <HealthBox health={shown.health} onChange={(v) => update({ health: v })} />
         <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
         <MethodSelect methods={methods} value={method} onChange={setMethod} />
         {chattyControls}
@@ -339,7 +360,7 @@ function Feed({
       </div>
       <div className="space-y-2 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="w-[42%] min-w-0 shrink-0"><ServiceSelect services={services} service={service} onChange={(v) => update({ service: v })} full /></div>
+          <div className="w-[42%] min-w-0 shrink-0"><ServiceSelect services={services} service={shown.service} onChange={(v) => update({ service: v })} full /></div>
           <RouteSearch q={exactRoute ?? q} exactRoute={exactRoute} onChange={setSearch} onClear={clearSearch} />
         </div>
         <details className="group rounded-lg border border-border bg-surface">
@@ -348,8 +369,8 @@ function Feed({
             <span className="text-2xs text-faint">{[range !== DEFAULT_RANGE ? `last ${range}` : null, method !== ALL_METHODS ? method : null, statusFilter !== StatusFilter.All ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === SortKey.Calls ? "most calls" : null, health === HealthChecks.Shown ? HEALTH_TOGGLE_SHORT : null].filter(Boolean).join(" · ") || `last ${DEFAULT_RANGE}`}</span>
           </summary>
           <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border p-2">
-            <RangeSelect range={range} onChange={(v) => update({ range: v })} />
-            <HealthBox health={health} onChange={(v) => update({ health: v })} />
+            <RangeSelect range={shown.range} onChange={(v) => update({ range: v })} />
+            <HealthBox health={shown.health} onChange={(v) => update({ health: v })} />
             <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
             <MethodSelect methods={methods} value={method} onChange={setMethod} />
             {chattyControls}
