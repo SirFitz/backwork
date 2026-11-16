@@ -565,13 +565,18 @@ const ENV_RESET_PARAMS = ["before"] as const;
  * pages when the organisation has more than one project; the choice lives in `?env=` and is
  * remembered per viewer (cookie) as the default for the next visit.
  */
+/** Whether the picker shows on this page: data pages of an organisation with two or more projects. */
+function pickerShown(env: EnvState, pathname: string): boolean {
+  return env.options.length >= 2 && env.current !== null && isDataPath(pathname);
+}
+
 function EnvPicker({ env }: { env: EnvState }) {
   const location = useLocation();
   const navigate = useNavigate();
-  if (env.options.length < 2 || !env.current || !isDataPath(location.pathname)) return null;
+  if (!pickerShown(env, location.pathname)) return null;
   return (
     <select
-      value={env.current}
+      value={env.current ?? undefined}
       onChange={(e) => {
         const params = new URLSearchParams(location.search);
         for (const p of ENV_RESET_PARAMS) params.delete(p);
@@ -580,7 +585,7 @@ function EnvPicker({ env }: { env: EnvState }) {
       }}
       aria-label="Environment"
       title="Environment: every page shows this project's data"
-      className="h-8 max-w-[132px] shrink-0 truncate rounded-lg border border-border bg-surface px-2.5 text-[13px] outline-none focus:border-brand/40 sm:max-w-[180px]"
+      className="h-8 max-w-[104px] shrink-0 truncate rounded-lg border border-border bg-surface px-2.5 text-[13px] outline-none focus:border-brand/40 sm:max-w-[180px]"
     >
       {env.options.map((o) => <option key={o.slug} value={o.slug}>{o.name}</option>)}
     </select>
@@ -589,6 +594,8 @@ function EnvPicker({ env }: { env: EnvState }) {
 
 function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: React.ReactNode }) {
   useRememberEnv(auth.org.id, auth.env.current);
+  // On a phone the picker needs the room of the wordmark: the "b" mark stays, the word goes.
+  const picker = pickerShown(auth.env, useLocation().pathname);
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[224px_minmax(0,1fr)]">
       <aside className="hidden flex-col border-r border-border bg-surface lg:flex lg:sticky lg:top-0 lg:h-screen">
@@ -620,16 +627,17 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
       </aside>
 
       <div className="flex min-h-screen min-w-0 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-bg/85 px-4 backdrop-blur-sm sm:px-6">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-border bg-bg/85 px-4 backdrop-blur-sm sm:gap-3 sm:px-6">
           <div className="flex items-center gap-2 lg:hidden">
             <span className="grid h-6 w-6 place-items-center rounded bg-brand font-mono text-xs font-bold text-brand-fg">b</span>
-            <span className="text-sm font-semibold">backwork<span className="hidden text-brand min-[360px]:inline">.dev</span></span>
+            <span className={cn("text-sm font-semibold", picker && "hidden min-[440px]:inline")}>backwork<span className="hidden text-brand min-[360px]:inline">.dev</span></span>
           </div>
           <FindRequest />
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <EnvPicker env={auth.env} />
             <LiveStatus />
-            <ThemeToggle />
+            {/* Under 360 px the picker takes the theme switch's room on data pages; it is back on any other page. */}
+            <span className={picker ? "hidden min-[360px]:contents" : "contents"}><ThemeToggle /></span>
             <AuthMenu auth={auth} />
           </div>
         </header>
