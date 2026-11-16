@@ -75,20 +75,37 @@ describe("path rows", () => {
     expect(rows.map((r) => r.node.hop)).toEqual([root, call, inner]);
   });
 
-  test("repeated store calls of one shape fold into one row at the first one's place, with their total", () => {
-    const calls = [db("pc"), db("user"), db("pc"), db("pc"), db("user"), db("pc")];
+  test("consecutive store calls of one shape fold into one row in their place, with their total", () => {
+    const calls = [db("user"), db("pc"), db("pc"), db("pc"), db("pc"), db("user")];
     const root = mk({ dir: HopDir.In, durationUs: 100000, children: calls });
     const nodes = buildPathNodes([root]);
     const rows = visibleRows(nodes, none, 100000);
-    // pc x4 (grouped), user x2 (below the minimum, kept as they are)
-    expect(rows.length).toBe(1 + 1 + 2);
-    const group = rows[1];
-    expect(group.node.members?.length).toBe(4);
+    // user, pc x4 (grouped), user
+    expect(rows.length).toBe(1 + 3);
+    expect(rows[1].node.hop).toBe(calls[0]);
+    const group = rows[2];
+    expect(group.node.members).toEqual(calls.slice(1, 5));
     expect(group.expanded).toBe(false);
     expect(group.summary).toBe("4 database calls");
+    expect(rows[3].node.hop).toBe(calls[5]);
     expect(GROUP_MIN).toBe(3);
     const open = visibleRows(nodes, new Map([[group.node.key, true]]), 100000);
     expect(open.length).toBe(rows.length + 4);
+  });
+
+  test("calls of one shape with other calls between them are not grouped and keep their order (BAC-87)", () => {
+    const calls = [db("pc"), db("user"), db("pc"), db("pc"), db("user"), db("pc")];
+    const root = mk({ dir: HopDir.In, durationUs: 100000, children: calls });
+    const [node] = buildPathNodes([root]);
+    expect(node.kids.map((k) => k.members?.length ?? 1)).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(node.kids.map((k) => k.hop)).toEqual(calls);
+  });
+
+  test("two separate runs of one shape are two groups, each in its own place", () => {
+    const calls = [db("pc"), db("pc"), db("pc"), db("user"), db("pc"), db("pc"), db("pc")];
+    const [node] = buildPathNodes([mk({ dir: HopDir.In, durationUs: 100000, children: calls })]);
+    expect(node.kids.map((k) => k.members?.length ?? 1)).toEqual([3, 1, 3]);
+    expect(new Set(node.kids.map((k) => k.key)).size).toBe(3);
   });
 
   test("calls recorded only as a count are part of a folded row's summary", () => {
