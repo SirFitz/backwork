@@ -35,9 +35,11 @@ export function lineKey(l: LogLine): string {
   return `${l.tsNs}\u0000${l.service}\u0000${l.message}`;
 }
 
-/** The newest timestamp in a newest-first list, or `fallback` when the list is empty. */
+/** The newest timestamp in a list, or `fallback` only when the list is empty: the first list can come
+ *  from a cache a few seconds old, so starting from the page's load time would skip lines. */
 export function newestNs(lines: readonly LogLine[], fallback: string): string {
-  let best = BigInt(fallback);
+  if (lines.length === 0) return fallback;
+  let best = BigInt(lines[0].tsNs);
   for (const l of lines) {
     const n = BigInt(l.tsNs);
     if (n > best) best = n;

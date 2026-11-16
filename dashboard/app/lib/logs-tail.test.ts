@@ -31,6 +31,9 @@ describe("newestNs", () => {
   test("the largest timestamp, compared exactly", () => {
     expect(newestNs([line("1763200000000000002"), line("1763200000000000009"), line("1763200000000000001")], "0")).toBe("1763200000000000009");
   });
+  test("the lines win over a later fallback (the first list may be cached)", () => {
+    expect(newestNs([line("1763200000000000005")], "1763200009000000000")).toBe("1763200000000000005");
+  });
   test("the fallback when nothing is shown", () => {
     expect(newestNs([], "1763200000000000000")).toBe("1763200000000000000");
   });
