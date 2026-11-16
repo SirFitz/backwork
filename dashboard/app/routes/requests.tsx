@@ -1,17 +1,37 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
-import { Form, Link, useFetcher, useLoaderData, useNavigate, useSearchParams, useSubmit } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useFetcher, useLoaderData, useSearchParams, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
+import { Link, useCurrentEnv, useEnvNavigate } from "~/components/env-link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Network, Search, X } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { safe } from "~/lib/config.server";
-import { requireOrg } from "~/lib/auth/context.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { inboundHttpTotals, inboundServices, type InboundTotals } from "~/lib/hops/metrics.server";
 import { hopRequestPage, type HopPage, type RequestListRow } from "~/lib/hops/requests.server";
 import { pathTitle } from "~/lib/hops/paths";
-import { HEALTH_PARAM, HEALTH_TOGGLE_LABEL, HEALTH_TOGGLE_SHORT, HealthChecks, MONITOR_BADGE, MONITOR_TITLE, healthChecksFrom } from "~/lib/hops/health";
+import { HEALTH_PARAM, HEALTH_TOGGLE_LABEL, HEALTH_TOGGLE_SHORT, HealthChecks, MONITOR_BADGE, MONITOR_TITLE } from "~/lib/hops/health";
+import {
+  ALL_METHODS,
+  ALL_SERVICES,
+  BEFORE_PARAM,
+  DEFAULT_RANGE,
+  REQUEST_RANGES,
+  STATUS_FILTERS,
+  SortDir,
+  SortKey,
+  StatusFilter,
+  isRequestRange,
+  onlyClientFiltersChanged,
+  parseRequestFilters,
+  resultSetKey,
+  withRequestFilters,
+  RequestParam,
+  type RequestFilters,
+  type RequestRange,
+} from "~/lib/request-filters";
+import { withEnv } from "~/lib/env";
 import { matchesRequestText } from "~/lib/hops/request-filter";
 import { CHATTY_BADGE, byMostCalls, chattyRows, chattySentence, type ChattyVerdict } from "~/lib/hops/chatty";
 import { cn, fmtMs, fmtPct } from "~/lib/utils";
@@ -20,7 +40,8 @@ import { parsePinCursor, type PinPage } from "~/lib/pins";
 import { PINNED_PARAM, PinnedChip, PinnedList } from "~/components/insights/pinned-list";
 import { Clock } from "~/components/time";
 
-const RANGES: Record<string, number> = { "1h": 1, "6h": 6, "24h": 24 };
+/** Typing in the search box writes the URL after this pause (replace, so history is not flooded). */
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface FeedData {
   rows: RequestListRow[];
@@ -29,19 +50,20 @@ interface FeedData {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
-  const t = tenantOf(ctx.org.id);
+  const { ctx, tenant: t } = await requireScope(request);
   const url = new URL(request.url);
-  const requested = url.searchParams.get("service") || "all";
-  const rangeKey = RANGES[url.searchParams.get("range") ?? ""] ? (url.searchParams.get("range") as string) : "1h";
-  const hrs = RANGES[rangeKey];
+  // BAC-90: one parser for the URL; the server reads the filters that choose what is loaded.
+  const filters = parseRequestFilters(url.searchParams);
+  const requested = filters.service;
+  const rangeKey: RequestRange = filters.range;
+  const hrs = REQUEST_RANGES[rangeKey];
   const sinceMs = Date.now() - hrs * 3600_000;
-  const beforeRaw = Number(url.searchParams.get("before"));
-  const health = healthChecksFrom(url.searchParams.get(HEALTH_PARAM));
+  const beforeRaw = Number(url.searchParams.get(BEFORE_PARAM));
+  const health = filters.health;
 
   // The Pinned view (BAC-78): pinned requests from Postgres instead of the live feed.
   if (url.searchParams.get(PINNED_PARAM) === "1") {
-    const cursor = parsePinCursor(url.searchParams.get("before"));
+    const cursor = parsePinCursor(url.searchParams.get(BEFORE_PARAM));
     if (cursor) {
       const page = await safe(() => listPinsPage(ctx.org.id, cursor), { rows: [], next: null } as PinPage);
       return json({ kind: "pinned-older" as const, page: page.data, error: page.error });
@@ -52,8 +74,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const services = await safe(() => inboundServices(t), [] as string[]);
   const list = services.data;
-  const chosen = requested === "all" ? "all" : list.includes(requested) ? requested : "all";
-  const hopService = chosen === "all" ? null : chosen;
+  const chosen = requested === ALL_SERVICES ? ALL_SERVICES : list.includes(requested) ? requested : ALL_SERVICES;
+  const hopService = chosen === ALL_SERVICES ? null : chosen;
 
   // "Load older requests": the next 100 hop rows before the cursor (design 13).
   if (Number.isFinite(beforeRaw) && beforeRaw > 0) {
@@ -69,6 +91,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return defer({
     kind: "page" as const,
+    env: t.project ?? null,
     services: list,
     service: chosen,
     range: rangeKey,
@@ -76,6 +99,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     feed,
     totals,
   });
+}
+
+/** Search, route, status, method, sort and "chatty only" narrow the rows already loaded (BAC-90):
+ *  changing only those updates the URL without asking the server again. The header's 10 s poll
+ *  and every other change still reload. */
+export function shouldRevalidate({ currentUrl, nextUrl, formMethod, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs): boolean {
+  if (formMethod && formMethod.toUpperCase() !== "GET") return defaultShouldRevalidate;
+  if (currentUrl.pathname === nextUrl.pathname && onlyClientFiltersChanged(currentUrl.searchParams, nextUrl.searchParams)) return false;
+  return defaultShouldRevalidate;
 }
 
 function statusTone(s: number | null) {
@@ -95,9 +127,7 @@ function pctl(nums: number[], p: number) {
   return a[Math.min(a.length - 1, Math.max(0, Math.ceil((p / 100) * a.length) - 1))];
 }
 
-const FILTERS = ["all", "2xx", "3xx", "4xx", "5xx"] as const;
-type StatusFilter = (typeof FILTERS)[number];
-type SortKey = "time" | "status" | "latency" | "calls";
+const FILTERS = STATUS_FILTERS;
 
 /** One list row's identity, as the dedupe uses it. */
 const rowKey = (r: RequestListRow): string => `${r.traceID}|${r.service}|${r.startMs}`;
@@ -137,11 +167,12 @@ export default function Requests() {
               <div className="grid grid-cols-3 gap-3">
                 {[0, 1, 2].map((i) => <Card key={i} className="px-4 py-3.5"><Skeleton className="h-3 w-16" /><Skeleton className="mt-2 h-6 w-20" /></Card>)}
               </div>
-              <Card><CardHead title="Recent requests" sub={`${d.service === "all" ? "all services" : d.service} · last ${d.range}`} /><RowsSkeleton rows={8} /></Card>
+              <Card><CardHead title="Recent requests" sub={`${d.service === ALL_SERVICES ? "all services" : d.service} · last ${d.range}`} /><RowsSkeleton rows={8} /></Card>
             </>
           }
         >
-          {(feed) => <Feed key={`${d.service}|${d.range}|${d.health}`} feed={feed} totals={d.totals} services={d.services} service={d.service} range={d.range} health={d.health} />}
+          {/* No remount key (BAC-90): the filters live in the URL, and Feed resets its older rows itself when the result set changes. */}
+          {(feed) => <Feed feed={feed} totals={d.totals} services={d.services} service={d.service} range={d.range} health={d.health} env={d.env} />}
         </Deferred>
       )}
     </div>
@@ -155,34 +186,62 @@ function Feed({
   service,
   range,
   health,
+  env,
 }: {
   feed: FeedData;
   totals: Promise<{ data: InboundTotals | null; error: string | null }>;
   services: string[];
   service: string;
-  range: string;
+  range: RequestRange;
   health: HealthChecks;
+  env: string | null;
 }) {
-  const submit = useSubmit();
-  const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const routeParam = params.get("route");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [method, setMethod] = useState(params.get("method") || "all");
-  const [q, setQ] = useState(routeParam ?? "");
-  const [exactRoute, setExactRoute] = useState<string | null>(routeParam);
-  const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "desc" });
-  const [chattyOnly, setChattyOnly] = useState(false);
-  const toggleSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
+  const navigate = useEnvNavigate();
+  const currentEnv = useCurrentEnv();
+  // BAC-90: the URL is the only store of the filters. Discrete choices push a history entry;
+  // the search box replaces it (debounced) so typing does not flood history.
+  const [params, setParams] = useSearchParams();
+  const filters = useMemo(() => parseRequestFilters(params), [params]);
+  const { status: statusFilter, method, q, route: exactRoute, sort, chatty: chattyOnly } = filters;
+  const update = useCallback(
+    // The environment being shown is written too when the URL did not name it yet, so the
+    // address always restores (and shares) exactly this view.
+    (patch: Partial<RequestFilters>, replace = false) =>
+      setParams((prev) => withRequestFilters(prev, { ...(prev.has(RequestParam.Env) || !currentEnv ? {} : { env: currentEnv }), ...patch }), { replace, preventScrollReset: true }),
+    [setParams, currentEnv],
+  );
+  const setStatusFilter = (s: StatusFilter): void => update({ status: s });
+  const setMethod = (m: string): void => update({ method: m });
+  const setChattyOnly = (on: boolean): void => update({ chatty: on });
+  const toggleSort = (key: SortKey): void =>
+    update({ sort: sort.key === key ? { key, dir: sort.dir === SortDir.Asc ? SortDir.Desc : SortDir.Asc } : { key, dir: SortDir.Desc } });
+  const setSearch = (v: string): void => update({ q: v, route: null }, true);
+  const clearSearch = (): void => update({ q: "", route: null });
 
   // Older pages are appended in place; the live poll refreshes only the newest page.
   const older = useFetcher<typeof loader>();
   const [olderRows, setOlderRows] = useState<RequestListRow[]>([]);
   const [next, setNext] = useState<number | null>(feed.next);
   const [olderError, setOlderError] = useState<string | null>(null);
+  // A new result set (environment, service, range or health checks): the older rows belonged to
+  // the old one, so they go and paging starts again from the new first page.
+  const setKey = resultSetKey({ env, service, range, health });
+  const lastSetKey = useRef(setKey);
+  /** The result set an "older" page was asked for; a page for another set is never appended. */
+  const loadingFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastSetKey.current === setKey) return;
+    lastSetKey.current = setKey;
+    setOlderRows([]);
+    setOlderError(null);
+    setNext(feed.next);
+  }, [setKey, feed.next]);
   useEffect(() => {
     const data = older.data;
-    if (older.state !== "idle" || !data || data.kind !== "older") return;
+    if (older.state !== "idle" || !data || data.kind !== "older" || loadingFor.current === null) return;
+    const forSet = loadingFor.current;
+    loadingFor.current = null;
+    if (forSet !== lastSetKey.current) return;
     setOlderRows((prev) => [...prev, ...data.page.rows]);
     setNext(data.page.next);
     setOlderError(data.error);
@@ -212,21 +271,21 @@ function Feed({
 
   const methods = useMemo(() => {
     const set = new Set(all.map((r) => r.method).filter(Boolean));
-    if (method !== "all") set.add(method);
+    if (method !== ALL_METHODS) set.add(method);
     return ["all", ...Array.from(set).sort()];
   }, [all, method]);
 
   const rows = useMemo(() => {
     let r = all;
-    if (statusFilter !== "all") r = r.filter((x) => cls(x.status) === statusFilter);
-    if (method !== "all") r = r.filter((x) => x.method === method);
+    if (statusFilter !== StatusFilter.All) r = r.filter((x) => cls(x.status) === statusFilter);
+    if (method !== ALL_METHODS) r = r.filter((x) => x.method === method);
     if (chattyOnly) r = r.filter((x) => chatty.get(rowKey(x))?.chatty === true);
     if (exactRoute !== null) r = r.filter((x) => x.route === exactRoute);
     else if (q.trim()) r = r.filter((x) => matchesRequestText(x, q));
-    if (sort.key === "calls") r = sort.dir === "desc" ? byMostCalls(r) : [...byMostCalls(r)].reverse();
+    if (sort.key === SortKey.Calls) r = sort.dir === SortDir.Desc ? byMostCalls(r) : [...byMostCalls(r)].reverse();
     else if (sort.key) {
-      const m = sort.dir === "asc" ? 1 : -1;
-      const val = (x: RequestListRow) => (sort.key === "time" ? x.startMs : sort.key === "latency" ? x.durationMs : x.status ?? 0);
+      const m = sort.dir === SortDir.Asc ? 1 : -1;
+      const val = (x: RequestListRow) => (sort.key === SortKey.Time ? x.startMs : sort.key === SortKey.Latency ? x.durationMs : x.status ?? 0);
       r = [...r].sort((a, b) => (val(a) - val(b)) * m);
     }
     return r;
@@ -234,14 +293,14 @@ function Feed({
 
   // The Domain column (HOP-27) only when a loaded row has a host: older records show no empty column.
   const hasHosts = useMemo(() => all.some((r) => !!r.host), [all]);
-  const filtered = statusFilter !== "all" || method !== "all" || exactRoute !== null || q.trim() !== "" || chattyOnly;
+  const filtered = statusFilter !== StatusFilter.All || method !== ALL_METHODS || exactRoute !== null || q.trim() !== "" || chattyOnly;
   const chattyControls = (
     <ChattyControls
       count={chattyCount}
       only={chattyOnly}
       onOnly={setChattyOnly}
-      mostCalls={sort.key === "calls"}
-      onMostCalls={(on) => setSort(on ? { key: "calls", dir: "desc" } : { key: null, dir: "desc" })}
+      mostCalls={sort.key === SortKey.Calls}
+      onMostCalls={(on) => update({ sort: on ? { key: SortKey.Calls, dir: SortDir.Desc } : { key: null, dir: SortDir.Desc } })}
     />
   );
   const loadedCounts = useMemo(() => {
@@ -267,36 +326,30 @@ function Feed({
         }}
       </Deferred>
 
-      {/* controls: desktop in one wrapping row; phone (frame 8) service and search in one row, the rest folded */}
+      {/* controls: desktop in one wrapping row; phone (frame 8) service and search in one row, the rest folded.
+          No forms (BAC-90): every control writes its own parameter into the URL and keeps the rest. */}
       <div className="hidden flex-wrap items-center gap-2 md:flex">
-        <Form method="get" className="flex flex-wrap items-center gap-2">
-          <ServiceSelect services={services} service={service} />
-          <RangeSelect range={range} />
-          <HealthBox health={health} />
-        </Form>
+        <ServiceSelect services={services} service={service} onChange={(v) => update({ service: v })} />
+        <RangeSelect range={range} onChange={(v) => update({ range: v })} />
+        <HealthBox health={health} onChange={(v) => update({ health: v })} />
         <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
         <MethodSelect methods={methods} value={method} onChange={setMethod} />
         {chattyControls}
-        <RouteSearch q={q} exactRoute={exactRoute} onChange={(v) => { setQ(v); setExactRoute(null); }} onClear={() => { setExactRoute(null); setQ(""); }} />
+        <RouteSearch q={exactRoute ?? q} exactRoute={exactRoute} onChange={setSearch} onClear={clearSearch} />
       </div>
       <div className="space-y-2 md:hidden">
-        <Form method="get" className="flex min-w-0 items-center gap-2">
-          <input type="hidden" name="range" value={range} />
-          {health === HealthChecks.Shown ? <input type="hidden" name={HEALTH_PARAM} value="1" /> : null}
-          <div className="w-[42%] min-w-0 shrink-0"><ServiceSelect services={services} service={service} full /></div>
-          <RouteSearch q={q} exactRoute={exactRoute} onChange={(v) => { setQ(v); setExactRoute(null); }} onClear={() => { setExactRoute(null); setQ(""); }} />
-        </Form>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="w-[42%] min-w-0 shrink-0"><ServiceSelect services={services} service={service} onChange={(v) => update({ service: v })} full /></div>
+          <RouteSearch q={exactRoute ?? q} exactRoute={exactRoute} onChange={setSearch} onClear={clearSearch} />
+        </div>
         <details className="group rounded-lg border border-border bg-surface">
           <summary className="flex h-9 cursor-pointer list-none items-center justify-between px-3 text-[13px] text-muted">
             More filters
-            <span className="text-2xs text-faint">{[range !== "1h" ? `last ${range}` : null, method !== "all" ? method : null, statusFilter !== "all" ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === "calls" ? "most calls" : null, health === HealthChecks.Shown ? HEALTH_TOGGLE_SHORT : null].filter(Boolean).join(" · ") || "last 1h"}</span>
+            <span className="text-2xs text-faint">{[range !== DEFAULT_RANGE ? `last ${range}` : null, method !== ALL_METHODS ? method : null, statusFilter !== StatusFilter.All ? statusFilter : null, chattyOnly ? "chatty only" : null, sort.key === SortKey.Calls ? "most calls" : null, health === HealthChecks.Shown ? HEALTH_TOGGLE_SHORT : null].filter(Boolean).join(" · ") || `last ${DEFAULT_RANGE}`}</span>
           </summary>
           <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border p-2">
-            <Form method="get" className="flex min-w-0 flex-wrap items-center gap-2">
-              <input type="hidden" name="service" value={service} />
-              <RangeSelect range={range} />
-              <HealthBox health={health} />
-            </Form>
+            <RangeSelect range={range} onChange={(v) => update({ range: v })} />
+            <HealthBox health={health} onChange={(v) => update({ health: v })} />
             <StatusPicker totals={totals} loadedCounts={loadedCounts} value={statusFilter} onChange={setStatusFilter} />
             <MethodSelect methods={methods} value={method} onChange={setMethod} />
             {chattyControls}
@@ -307,7 +360,7 @@ function Feed({
       <Card>
         <CardHead
           title="Recent requests"
-          sub={`${service === "all" ? "all services" : service}${exactRoute !== null ? ` · ${method !== "all" ? method + " " : ""}${exactRoute}` : ""} · last ${range}`}
+          sub={`${service === ALL_SERVICES ? "all services" : service}${exactRoute !== null ? ` · ${method !== ALL_METHODS ? method + " " : ""}${exactRoute}` : ""} · last ${range}`}
           right={<Badge tone="neutral">{rows.length}</Badge>}
         />
         <ErrorNote error={feed.error ?? olderError} />
@@ -343,13 +396,13 @@ function Feed({
             <table className="w-full text-[13px]">
               <thead className="sticky top-0 bg-surface">
                 <tr className="border-b border-border text-left text-2xs uppercase tracking-wide text-faint">
-                  <th className="px-4 py-2 font-medium"><button onClick={() => toggleSort("time")} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-fg">Time{sort.key === "time" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
+                  <th className="px-4 py-2 font-medium"><button onClick={() => toggleSort(SortKey.Time)} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-fg">Time{sort.key === SortKey.Time ? <span>{sort.dir === SortDir.Asc ? "↑" : "↓"}</span> : null}</button></th>
                   <th className="px-4 py-2 font-medium">Service</th>
                   {hasHosts ? <th className="px-4 py-2 font-medium">Domain</th> : null}
                   <th className="px-4 py-2 font-medium">Method</th>
                   <th className="px-4 py-2 font-medium">Route</th>
-                  <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort("status")} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Status{sort.key === "status" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
-                  <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort("latency")} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Latency{sort.key === "latency" ? <span>{sort.dir === "asc" ? "↑" : "↓"}</span> : null}</button></th>
+                  <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort(SortKey.Status)} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Status{sort.key === SortKey.Status ? <span>{sort.dir === SortDir.Asc ? "↑" : "↓"}</span> : null}</button></th>
+                  <th className="px-4 py-2 text-right font-medium"><button onClick={() => toggleSort(SortKey.Latency)} className="inline-flex flex-row-reverse items-center gap-1 uppercase tracking-wide hover:text-fg">Latency{sort.key === SortKey.Latency ? <span>{sort.dir === SortDir.Asc ? "↑" : "↓"}</span> : null}</button></th>
                   <th className="px-4 py-2"></th>
                 </tr>
               </thead>
@@ -384,9 +437,10 @@ function Feed({
               type="button"
               disabled={older.state !== "idle"}
               onClick={() => {
-                const p = new URLSearchParams({ service, range, before: String(next) });
+                const p = new URLSearchParams({ service, range, [BEFORE_PARAM]: String(next) });
                 if (health === HealthChecks.Shown) p.set(HEALTH_PARAM, "1");
-                older.load(`/requests?${p.toString()}`);
+                loadingFor.current = setKey;
+                older.load(withEnv(`/requests?${p.toString()}`, env ?? currentEnv));
               }}
               className="inline-flex h-8 items-center rounded-lg border border-border bg-surface px-3 text-[12.5px] font-medium hover:border-border-strong disabled:opacity-60"
             >
@@ -461,30 +515,27 @@ function StatusSeg({ counts, value, onChange }: { counts: Record<string, number>
 
 // ---------------------------------------------------------------- filter controls (shared by both layouts)
 
-function ServiceSelect({ services, service, full = false }: { services: string[]; service: string; full?: boolean }) {
-  const submit = useSubmit();
+function ServiceSelect({ services, service, onChange, full = false }: { services: string[]; service: string; onChange: (v: string) => void; full?: boolean }) {
   return (
-    <select name="service" defaultValue={service} onChange={(e) => submit(e.currentTarget.form)} className={cn(SELECT, full && "w-full sm:w-full")} aria-label="Service">
-      <option value="all">All services</option>
+    <select value={service} onChange={(e) => onChange(e.target.value)} className={cn(SELECT, full && "w-full sm:w-full")} aria-label="Service">
+      <option value={ALL_SERVICES}>All services</option>
       {services.map((s) => <option key={s} value={s}>{s}</option>)}
     </select>
   );
 }
 
-function RangeSelect({ range }: { range: string }) {
-  const submit = useSubmit();
+function RangeSelect({ range, onChange }: { range: RequestRange; onChange: (v: RequestRange) => void }) {
   return (
-    <select name="range" defaultValue={range} onChange={(e) => submit(e.currentTarget.form)} className={cn(SELECT, "w-auto")} aria-label="Range">
-      {Object.keys(RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
+    <select value={range} onChange={(e) => { const v = e.target.value; if (isRequestRange(v)) onChange(v); }} className={cn(SELECT, "w-auto")} aria-label="Range">
+      {Object.keys(REQUEST_RANGES).map((r) => <option key={r} value={r}>last {r}</option>)}
     </select>
   );
 }
 
-function HealthBox({ health }: { health: HealthChecks }) {
-  const submit = useSubmit();
+function HealthBox({ health, onChange }: { health: HealthChecks; onChange: (v: HealthChecks) => void }) {
   return (
     <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-muted">
-      <input type="checkbox" name={HEALTH_PARAM} value="1" defaultChecked={health === HealthChecks.Shown} onChange={(e) => submit(e.currentTarget.form)} className="accent-brand" />
+      <input type="checkbox" checked={health === HealthChecks.Shown} onChange={(e) => onChange(e.target.checked ? HealthChecks.Shown : HealthChecks.Hidden)} className="accent-brand" />
       {HEALTH_TOGGLE_LABEL}
     </label>
   );
@@ -498,19 +549,48 @@ function MethodSelect({ methods, value, onChange }: { methods: string[]; value: 
   );
 }
 
+/** The search box: shows what is typed at once and writes the URL after a short pause. A value
+ *  arriving from the URL (back, reload, a link) replaces the box unless it is what was just typed. */
 function RouteSearch({ q, exactRoute, onChange, onClear }: { q: string; exactRoute: string | null; onChange: (v: string) => void; onClear: () => void }) {
+  const [text, setText] = useState(q);
+  const written = useRef(q);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (q === written.current) return;
+    written.current = q;
+    setText(q);
+  }, [q]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const type = (v: string): void => {
+    setText(v);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      written.current = v;
+      onChange(v);
+    }, SEARCH_DEBOUNCE_MS);
+  };
   return (
     <div className="relative min-w-0 flex-1 md:min-w-[200px]">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
       <input
-        value={q}
-        onChange={(e) => onChange(e.target.value)}
+        value={text}
+        onChange={(e) => type(e.target.value)}
         placeholder="Filter by path, route, domain or service"
         aria-label="Filter by path, route, domain or service"
         className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-9 text-[13px] outline-none placeholder:text-faint focus:border-brand/40"
       />
-      {exactRoute !== null ? (
-        <button type="button" onClick={onClear} aria-label="Clear the route filter" className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-faint hover:text-fg">
+      {exactRoute !== null || text ? (
+        <button
+          type="button"
+          onClick={() => {
+            if (timer.current) clearTimeout(timer.current);
+            written.current = "";
+            setText("");
+            onClear();
+          }}
+          aria-label={exactRoute !== null ? "Clear the route filter" : "Clear the search"}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-faint hover:text-fg"
+        >
           <X className="h-3.5 w-3.5" />
         </button>
       ) : null}

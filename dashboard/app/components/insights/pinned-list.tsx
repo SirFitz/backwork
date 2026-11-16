@@ -1,6 +1,7 @@
 // The requests list's Pinned view (BAC-78): the `Pinned` chip that switches to it, and the list of
 // pinned requests with "Load older" paging. The rows come from Postgres, not Loki.
-import { Link, useFetcher, useNavigate } from "@remix-run/react";
+import { useFetcher } from "@remix-run/react";
+import { Link, useEnvNavigate } from "~/components/env-link";
 import { useEffect, useState } from "react";
 import { Pin } from "lucide-react";
 import { Badge, Card, CardHead, Empty, ErrorNote } from "~/components/ui";
@@ -47,7 +48,7 @@ function took(p: PinnedRequest): string {
 }
 
 export function PinnedList({ first, error }: { first: PinPage; error: string | null }) {
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   const older = useFetcher<PinnedOlder>();
   const [rows, setRows] = useState<PinnedRequest[]>(first.rows);
   const [next, setNext] = useState<string | null>(first.next);

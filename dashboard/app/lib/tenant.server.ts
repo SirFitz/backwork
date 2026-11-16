@@ -7,14 +7,41 @@ import { projects } from "~/db/schema";
 // backwork's containers, which carry no org_id). It is UNFILTERED: it sees every
 // series and stream. Every other org is scoped to its own org_id label, stamped
 // at ingest and filtered at query time.
-export type Tenant = { orgId: string; platform: boolean };
+//
+// BAC-89: a tenant may also carry one project (environment). Every stream and hop series is
+// stamped `project=<project slug>` at ingest, so a project-scoped tenant reads only that
+// environment. Background jobs (alerts, digests, auto-pins, peer learning) keep using the
+// org-wide tenant.
+export type Tenant = {
+  orgId: string;
+  platform: boolean;
+  /** The project slug every read is limited to; absent or null = the whole organisation. */
+  project?: string | null;
+};
 
 export function platformOrgId(): string {
   return process.env.PLATFORM_ORG_ID || "";
 }
 
-export function tenantOf(orgId: string): Tenant {
-  return { orgId, platform: orgId === platformOrgId() };
+/** The tenant for an organisation, optionally limited to one project (by slug). The platform
+ *  org is never limited: its own telemetry carries no org or project labels. */
+export function tenantOf(orgId: string, project?: string | null): Tenant {
+  const platform = orgId === platformOrgId();
+  return platform || !project ? { orgId, platform } : { orgId, platform, project };
+}
+
+/** A stable cache key part for a tenant: what it can read, so two scopes never share a cache entry. */
+export function tenantKey(t: Tenant): string {
+  if (t.platform) return "platform";
+  return t.project ? `${t.orgId}/${t.project}` : t.orgId;
+}
+
+/** The label matchers that scope a selector to this tenant (empty for the platform org). */
+export function scopeMatchers(t: Tenant): string[] {
+  if (t.platform) return [];
+  const m = [`org_id=${JSON.stringify(t.orgId)}`];
+  if (t.project) m.push(`project=${JSON.stringify(t.project)}`);
+  return m;
 }
 
 export function hashToken(token: string): string {

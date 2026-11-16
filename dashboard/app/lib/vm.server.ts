@@ -1,6 +1,6 @@
 import { config, fetchJson } from "./config.server";
 import { cached } from "./cache.server";
-import type { Tenant } from "./tenant.server";
+import { scopeMatchers, type Tenant } from "./tenant.server";
 
 type VectorResp = {
   status: string;
@@ -18,8 +18,9 @@ export type Series = { metric: Record<string, string>; points: Array<{ t: number
 // query server-side (robust for bare/multi-metric expressions), so a customer
 // only sees its own series. The platform org (backwork's own series, which have
 // no org_id) gets no filter.
-function applyScope(params: URLSearchParams, t?: Tenant): URLSearchParams {
-  if (t && !t.platform) params.append("extra_filters[]", `{org_id=${JSON.stringify(t.orgId)}}`);
+// A project-scoped tenant (BAC-89) also filters on the `project` label the ingest proxy stamps.
+export function applyScope(params: URLSearchParams, t?: Tenant): URLSearchParams {
+  if (t && !t.platform) params.append("extra_filters[]", `{${scopeMatchers(t).join(",")}}`);
   // The hop counters arrive in short bursts with long silences. VictoriaMetrics' rollup result
   // cache answered increase() over 6 h with 200 for a series whose samples add up to 180 (and
   // the same query uncached with 180, matching the records in Loki), so results are never

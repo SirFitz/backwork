@@ -2,17 +2,17 @@
 // kind it is (route, slow query, repeated query, regression), so the first thing to fix is on top.
 // The page renders at once; the list is one deferred promise (so the order never reshuffles as
 // sources answer), served from a stale-while-revalidate cache.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { Card, CardHead } from "~/components/ui";
 import { Deferred } from "~/components/defer";
 import { Building } from "~/components/insights/building";
 import { FixList, FixListSkeleton, SourceNotes } from "~/components/insights/fix-list";
-import { requireOrg } from "~/lib/auth/context.server";
 import { safe } from "~/lib/config.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { fixFirst, type FixFirstResult } from "~/lib/insights/fix-first.server";
 import {
   DEFAULT_FIX_WINDOW,
@@ -36,24 +36,30 @@ export const meta: MetaFunction = () => [{ title: "Fix first · Insights · back
 
 /** Search parameter of the page. */
 const WINDOW_PARAM = "window";
+/** The kind filter (BAC-90): in the URL so reload, back and a shared link keep it. */
+const KIND_PARAM = "kind";
 const ALL_KINDS = "all";
 /** The first list of an organisation reads four sources; past this the page shows "building" instead
  *  of waiting (Remix gives up on a slow stream after 5 seconds) and asks again until it is ready. */
 const FIX_BUDGET_MS = 3_500;
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
+  const { tenant } = await requireScope(request);
   const w = new URL(request.url).searchParams.get(WINDOW_PARAM);
   const window: FixWindow = isFixWindow(w) ? w : DEFAULT_FIX_WINDOW;
   const list = safe<{ result: FixFirstResult | null }>(
-    async () => ({ result: await withBudget(fixFirst(tenantOf(ctx.org.id), window), FIX_BUDGET_MS) }),
+    async () => ({ result: await withBudget(fixFirst(tenant, window), FIX_BUDGET_MS) }),
     { result: null },
   );
   return defer({ window, now: Date.now(), list });
 }
 
-function windowHref(w: FixWindow): string {
-  return w === DEFAULT_FIX_WINDOW ? "/insights" : `/insights?${WINDOW_PARAM}=${w}`;
+function windowHref(w: FixWindow, kind: FixKind | null): string {
+  const p = new URLSearchParams();
+  if (w !== DEFAULT_FIX_WINDOW) p.set(WINDOW_PARAM, w);
+  if (kind) p.set(KIND_PARAM, kind);
+  const q = p.toString();
+  return q ? `/insights?${q}` : "/insights";
 }
 
 function clockUtc(ms: number): string {
@@ -102,13 +108,13 @@ function KindChips({ kind, onChange }: { kind: FixKind | null; onChange: (k: Fix
   );
 }
 
-function WindowControl({ window }: { window: FixWindow }) {
+function WindowControl({ window, kind }: { window: FixWindow; kind: FixKind | null }) {
   return (
     <nav aria-label="Window" className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface p-[3px] text-xs text-muted">
       {FIX_WINDOWS.map((w) => (
         <Link
           key={w}
-          to={windowHref(w)}
+          to={windowHref(w, kind)}
           preventScrollReset
           replace
           aria-current={w === window ? "true" : undefined}
@@ -123,11 +129,21 @@ function WindowControl({ window }: { window: FixWindow }) {
 
 export default function FixFirst() {
   const d = useLoaderData<typeof loader>();
-  const [kind, setKind] = useState<FixKind | null>(null);
+  const [params, setParams] = useSearchParams();
+  const kindRaw = params.get(KIND_PARAM);
+  const kind: FixKind | null = isFixKind(kindRaw) ? kindRaw : null;
   const [shown, setShown] = useState<number>(FIX_PAGE_ROWS);
+  useEffect(() => setShown(FIX_PAGE_ROWS), [kind]);
   const pick = (k: FixKind | null) => {
-    setKind(k);
-    setShown(FIX_PAGE_ROWS);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (k) next.set(KIND_PARAM, k);
+        else next.delete(KIND_PARAM);
+        return next;
+      },
+      { preventScrollReset: true },
+    );
   };
   return (
     <Card>
@@ -143,7 +159,7 @@ export default function FixFirst() {
         right={
           <div className="flex items-center gap-1.5">
             <KindChips kind={kind} onChange={pick} />
-            <WindowControl window={d.window} />
+            <WindowControl window={d.window} kind={kind} />
           </div>
         }
       />
@@ -154,7 +170,7 @@ export default function FixFirst() {
           ) : panel.error || !panel.data.result ? (
             <div className="px-4 py-10 text-center text-[13px]">
               <p className="text-warn">The list could not be built{panel.error ? `: ${panel.error.slice(0, 160)}` : "."}</p>
-              <Link to={windowHref(d.window)} replace preventScrollReset reloadDocument className="mt-2 inline-block text-xs font-medium text-brand hover:underline">Retry</Link>
+              <Link to={windowHref(d.window, kind)} replace preventScrollReset reloadDocument className="mt-2 inline-block text-xs font-medium text-brand hover:underline">Retry</Link>
             </div>
           ) : (
             <>

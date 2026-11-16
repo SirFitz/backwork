@@ -1,9 +1,11 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useLoaderData, useNavigate, useSubmit } from "@remix-run/react";
+import { Form, useLoaderData, useSubmit } from "@remix-run/react";
+import { EnvField, useCurrentEnv, useEnvNavigate } from "~/components/env-link";
+import { withEnv } from "~/lib/env";
 import { Bug } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
-import { requireOrg } from "~/lib/auth/context.server";
+import { requireScope } from "~/lib/env.server";
 import { listErrorGroups, errorStatusCounts, errorServices } from "~/lib/errors.server";
 import { cn } from "~/lib/utils";
 import { Ago } from "~/components/time";
@@ -15,14 +17,15 @@ const STATUSES = ["open", "resolved", "ignored", "all"] as const;
 const FILTER_SELECT = "h-8 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
+  const { ctx, env } = await requireScope(request);
   const url = new URL(request.url);
   const status = url.searchParams.get("status") || "open";
   const service = url.searchParams.get("service") || "all";
+  // Groups are per project (BAC-89): only the chosen environment's.
   const [groups, counts, services] = await Promise.all([
-    listErrorGroups(ctx.org.id, { status, service, limit: 100 }),
-    errorStatusCounts(ctx.org.id),
-    errorServices(ctx.org.id),
+    listErrorGroups(ctx.org.id, { status, service, project: env, limit: 100 }),
+    errorStatusCounts(ctx.org.id, env),
+    errorServices(ctx.org.id, env),
   ]);
   return json({ groups, counts, services, status, service });
 }
@@ -34,7 +37,8 @@ function levelTone(l: string): "err" | "warn" | "neutral" {
 export default function Errors() {
   const d = useLoaderData<typeof loader>();
   const submit = useSubmit();
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
+  const env = useCurrentEnv();
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -45,6 +49,7 @@ export default function Errors() {
           <>
             {/* phone: status and service as two selects so the header stays one row */}
             <Form method="get" className="flex min-w-0 items-center gap-2 md:hidden">
+              <EnvField />
               <select name="status" aria-label="Status" defaultValue={d.status} onChange={(e) => submit(e.currentTarget.form)} className={cn(FILTER_SELECT, "capitalize")}>
                 {STATUSES.map((s) => <option key={s} value={s}>{s} {d.counts[s] ?? 0}</option>)}
               </select>
@@ -59,7 +64,7 @@ export default function Errors() {
               {STATUSES.map((s) => (
                 <a
                   key={s}
-                  href={`/errors?status=${s}${d.service !== "all" ? `&service=${encodeURIComponent(d.service)}` : ""}`}
+                  href={withEnv(`/errors?status=${s}${d.service !== "all" ? `&service=${encodeURIComponent(d.service)}` : ""}`, env)}
                   className={cn("rounded-md px-2 py-1 font-medium capitalize transition-colors", d.status === s ? "bg-surface-2 text-fg" : "text-muted hover:text-fg")}
                 >
                   {s} <span className="text-faint">{d.counts[s] ?? 0}</span>
@@ -69,6 +74,7 @@ export default function Errors() {
             {d.services.length ? (
               <Form method="get" className="hidden min-w-0 items-center gap-2 md:flex">
                 <input type="hidden" name="status" value={d.status} />
+                <EnvField />
                 <select name="service" defaultValue={d.service} onChange={(e) => submit(e.currentTarget.form)} className={FILTER_SELECT}>
                   <option value="all">all services</option>
                   {d.services.map((s) => <option key={s} value={s}>{s}</option>)}

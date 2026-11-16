@@ -3,7 +3,8 @@
 // each stream in on their own, with their own skeleton and error state.
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Await, Link, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
+import { Await, isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { Fragment, Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, Database, Link2, LogIn, OctagonX, RotateCcw, SearchX, Unplug, Zap,
@@ -66,6 +67,8 @@ interface Found {
   pin: PinnedRequest | null;
   /** Set when the records are the pinned copy, not Loki's. */
   copy: PinnedCopyInfo | null;
+  /** The environments (project slugs) the records came from (BAC-89). */
+  projects: string[];
 }
 
 /** A found window, with the peers it calls looked up (and the pairs it links saved). */
@@ -73,7 +76,7 @@ function toFound(orgId: string): (l: PinnedLookupResult) => Promise<Found | null
   return async ({ result: r, pin, copy }) => {
     if (!r.found) return null;
     const knownPeers = await knownPeersFor(orgId, peerPairs(r.records), calledPeers(r.records));
-    return { records: r.records, links: r.links, window: r.window, knownPeers, truncated: r.truncated, pin, copy };
+    return { records: r.records, links: r.links, window: r.window, knownPeers, truncated: r.truncated, pin, copy, projects: r.projects ?? [] };
   };
 }
 
@@ -88,6 +91,8 @@ function settle<T>(p: Promise<T>): Promise<Settled<T>> {
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const ctx = await requireOrg(request);
+  // Organisation-wide on purpose (BAC-89): a trace ID is unique, so it opens whichever
+  // environment the picker shows; the page names the environment it came from.
   const tenant = tenantOf(ctx.org.id);
   // Each part settles to a value, so a backend that is down shows that part's error state
   // and nothing is thrown into the browser.
@@ -470,7 +475,7 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   };
   return (
     <>
-      <Header tree={tree} head={head} d={d} pin={found.pin} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
+      <Header tree={tree} head={head} d={d} pin={found.pin} projects={found.projects} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
       <WhyLine verdict={verdict} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
@@ -520,7 +525,7 @@ function Title({ head, size = "lg", pinned = false }: { head: Hop; size?: "lg" |
   );
 }
 
-function Header({ tree, head, d, pin, repeats, onShowRepeat }: { tree: RequestTree; head: Hop; d: Data; pin: PinnedRequest | null; repeats: RepeatReport; onShowRepeat: (hopId: HopId) => void }) {
+function Header({ tree, head, d, pin, projects, repeats, onShowRepeat }: { tree: RequestTree; head: Hop; d: Data; pin: PinnedRequest | null; projects: string[]; repeats: RepeatReport; onShowRepeat: (hopId: HopId) => void }) {
   const counts = storeCallCounts(tree);
   const stores = counts.db + counts.cache;
   const chatty = chattyRequest(tree);
@@ -542,6 +547,8 @@ function Header({ tree, head, d, pin, repeats, onShowRepeat }: { tree: RequestTr
         <div className="mt-2 flex flex-wrap gap-x-[18px] gap-y-1 text-[12.5px] text-muted">
           <span className={fact}>Started <Mono className="font-medium text-fg"><Clock ts={head.startMs} /></Mono><span className="hidden md:inline"> <DayWord ts={head.startMs} now={d.now} /></span></span>
           <span className={fact}>Took <Mono className="font-medium text-fg">{tookText(head, d.now)}</Mono></span>
+          {/* BAC-89: a trace opens whatever the picker says, so say which environment it came from. */}
+          {projects.length ? <span className={fact} data-trace-env>Environment <Mono className="font-medium text-fg">{projects.join(", ")}</Mono></span> : null}
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{tree.services.length}</b> {tree.services.length === 1 ? "service" : "services"}</span>
           <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{hopCount}</b> {hopCount === 1 ? "hop" : "hops"}</span>
           {stores ? <span className={cn(fact, "hidden md:inline")}><b className="font-medium text-fg">{stores}</b> {stores === 1 ? storeWord[0] : storeWord[1]}{chatty.chatty ? <> <span title={chattySentence(chatty)}><Badge tone="neutral">{CHATTY_BADGE}</Badge></span></> : null}</span> : null}

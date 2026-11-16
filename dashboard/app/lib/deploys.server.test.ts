@@ -173,3 +173,28 @@ describe("deploys table", () => {
     }
   });
 });
+
+describe("deploys by environment (BAC-89)", () => {
+  test.skipIf(!ready)("a project-scoped read sees that project's deploys and the org-level ones", async () => {
+    const { db, ensureSchema } = await import("~/db/index.server");
+    const { sql } = await import("drizzle-orm");
+    const { recordDeploys, deploysBetween } = await import("./deploys.server");
+    await ensureSchema();
+    const org = `deploy-env-test-${Date.now()}`;
+    await db.execute(sql`INSERT INTO orgs (id, name, slug) VALUES (${org}, 'Deploy env test', ${org})`);
+    await db.execute(sql`INSERT INTO projects (id, org_id, name, slug) VALUES (${org + "-d"}, ${org}, 'dev', 'dev'), (${org + "-p"}, ${org}, 'production', 'production')`);
+    const base = { version: null, commit: null, environment: null, url: null, actor: null };
+    try {
+      await recordDeploys(org, `${org}-d`, [{ ...base, service: "api", version: "dev-1", atMs: NOW - 3000 }]);
+      await recordDeploys(org, `${org}-p`, [{ ...base, service: "api", version: "prod-1", atMs: NOW - 2000 }]);
+      await recordDeploys(org, null, [{ ...base, service: "api", version: "org-1", atMs: NOW - 1000 }]);
+      const versions = async (project: string | null) => (await deploysBetween(org, "api", NOW - 10_000, NOW, project)).map((d) => d.version);
+      expect(await versions(null)).toEqual(["dev-1", "prod-1", "org-1"]);
+      expect(await versions("dev")).toEqual(["dev-1", "org-1"]);
+      expect(await versions("production")).toEqual(["prod-1", "org-1"]);
+      expect(await versions("staging")).toEqual(["org-1"]);
+    } finally {
+      await db.execute(sql`DELETE FROM orgs WHERE id = ${org}`);
+    }
+  });
+});

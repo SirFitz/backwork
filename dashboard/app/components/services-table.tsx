@@ -2,7 +2,7 @@
 // with the figure formats and tones both pages use. Pure presentation: rows come from
 // `metrics.server.ts` through each page's loader.
 import type { ReactNode } from "react";
-import { Link } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { Sparkline } from "~/components/ui";
 import type { ServiceRow } from "~/lib/hops/metrics.server";
 import { cn } from "~/lib/utils";

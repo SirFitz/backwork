@@ -67,7 +67,7 @@ export async function recordError(orgId: string, project: string, raw: IncomingE
     .insert(errorGroups)
     .values({ id: ulid(), orgId, project, fingerprint: fp, source: ErrorSource.Reported, type, message, service, level, status: "open", count: 1, sample, firstSeen: now, lastSeen: now })
     .onConflictDoUpdate({
-      target: [errorGroups.orgId, errorGroups.fingerprint],
+      target: [errorGroups.orgId, errorGroups.project, errorGroups.fingerprint],
       set: {
         count: sql`${errorGroups.count} + 1`,
         lastSeen: now,
@@ -89,9 +89,16 @@ export type ErrGroupRow = {
   firstSeen: Date; lastSeen: Date; sample: Record<string, unknown>;
 };
 
-export async function listErrorGroups(orgId: string, opts: { status?: string; service?: string; limit?: number } = {}): Promise<ErrGroupRow[]> {
-  await ensureSchema();
+/** The groups' conditions for one organisation, limited to one project (slug) when given (BAC-89). */
+function scopeConds(orgId: string, project: string | null | undefined) {
   const conds = [eq(errorGroups.orgId, orgId)];
+  if (project) conds.push(eq(errorGroups.project, project));
+  return conds;
+}
+
+export async function listErrorGroups(orgId: string, opts: { status?: string; service?: string; project?: string | null; limit?: number } = {}): Promise<ErrGroupRow[]> {
+  await ensureSchema();
+  const conds = scopeConds(orgId, opts.project);
   if (opts.status && opts.status !== "all") conds.push(eq(errorGroups.status, opts.status as ErrStatus));
   if (opts.service && opts.service !== "all") conds.push(eq(errorGroups.service, opts.service));
   const rows = await db.select().from(errorGroups).where(and(...conds)).orderBy(desc(errorGroups.lastSeen)).limit(opts.limit ?? 100);
@@ -103,24 +110,24 @@ function withSource<T extends { source?: unknown }>(r: T): T & { source: ErrorSo
   return { ...r, source: isErrorSource(r.source) ? r.source : ErrorSource.Reported };
 }
 
-export async function errorStatusCounts(orgId: string): Promise<Record<string, number>> {
+export async function errorStatusCounts(orgId: string, project: string | null = null): Promise<Record<string, number>> {
   await ensureSchema();
   const rows = await db
     .select({ status: errorGroups.status, n: sql<number>`count(*)::int` })
     .from(errorGroups)
-    .where(eq(errorGroups.orgId, orgId))
+    .where(and(...scopeConds(orgId, project)))
     .groupBy(errorGroups.status);
   const out: Record<string, number> = { all: 0, open: 0, resolved: 0, ignored: 0 };
   for (const r of rows) { out[r.status] = r.n; out.all += r.n; }
   return out;
 }
 
-export async function errorServices(orgId: string): Promise<string[]> {
+export async function errorServices(orgId: string, project: string | null = null): Promise<string[]> {
   await ensureSchema();
   const rows = await db
     .selectDistinct({ service: errorGroups.service })
     .from(errorGroups)
-    .where(eq(errorGroups.orgId, orgId));
+    .where(and(...scopeConds(orgId, project)));
   return rows.map((r) => r.service).filter(Boolean).sort();
 }
 

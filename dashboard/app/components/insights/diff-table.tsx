@@ -1,7 +1,7 @@
 // The comparison of two requests (BAC-75, insights plan 08): the "What differs" list, the side by
 // side table, and the Compare button on the request view. Rows come from `diffRequests` (pure).
 // A slower row is amber at most, a faster one neutral: a difference is a finding, not a fault.
-import { Link } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { useEffect, useMemo, useState } from "react";
 import { GitCompare } from "lucide-react";
 import { Card, CardHead } from "~/components/ui";

@@ -2,10 +2,8 @@ import type { LinksFunction, LoaderFunctionArgs, MetaFunction, SerializeFrom } f
 import { json } from "@remix-run/node";
 import {
   Form,
-  Link,
   Links,
   Meta,
-  NavLink,
   Outlet,
   Scripts,
   ScrollRestoration,
@@ -54,12 +52,17 @@ import { readLivePaused, writeLivePaused } from "~/lib/live-pref";
 import type { LookupPreview } from "~/routes/lookup";
 import { Clock } from "~/components/time";
 import { ErrorScreen, useErrorCopy } from "~/components/error-screen";
+import { Link, NavLink, useEnvNavigate, useRememberEnv, type EnvState } from "~/components/env-link";
+import { resolveScope } from "~/lib/env.server";
+import { ENV_PARAM, isDataPath } from "~/lib/env";
 
 type AuthData = {
   user: { name: string; email: string };
   org: { id: string; name: string; slug: string };
   role: string;
   orgs: { id: string; name: string }[];
+  /** The environment picker (BAC-89): the chosen project and the org's projects. */
+  env: EnvState;
 } | null;
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: tailwind }];
@@ -87,6 +90,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // signed-in users. Only fall through to requireOrg (app shell) when signed in.
   if (path === "/" && !(await getUser(request))) return json({ theme, auth: null as AuthData });
   const ctx = await requireOrg(request); // redirects to /login or /onboarding
+  const scope = await resolveScope(request, ctx.org.id);
   return json({
     theme,
     auth: {
@@ -94,6 +98,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       org: ctx.org,
       role: ctx.role,
       orgs: ctx.memberships.map((m) => ({ id: m.orgId, name: m.orgName })),
+      env: { current: scope.env, options: scope.options.map((o) => ({ slug: o.slug, name: o.name })) },
     } as AuthData,
   });
 }
@@ -105,6 +110,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export function shouldRevalidate({ currentUrl, nextUrl, formMethod }: { currentUrl: URL; nextUrl: URL; formMethod?: string }) {
   if (formMethod && formMethod.toUpperCase() !== "GET") return true; // mutations
   if (currentUrl.pathname !== nextUrl.pathname) return true; // real navigation / redirects
+  if (currentUrl.searchParams.get(ENV_PARAM) !== nextUrl.searchParams.get(ENV_PARAM)) return true; // environment picked (BAC-89)
   return false; // same-path timed revalidation → skip root
 }
 
@@ -212,7 +218,7 @@ function shortId(id: string): string {
  *  (UI_ISSUES.md entry 2), positioned against the window, so no header, sidebar or table can cut them. */
 function FindRequest() {
   const fetcher = useFetcher<LookupData>();
-  const navigate = useNavigate();
+  const navigate = useEnvNavigate();
   const location = useLocation();
   const inputRef = useRef<HTMLInputElement>(null);
   const phoneInputRef = useRef<HTMLInputElement>(null);
@@ -551,7 +557,38 @@ function AuthMenu({ auth }: { auth: NonNullable<AuthData> }) {
   );
 }
 
+/** Pagination cursors are tied to one result set; a new environment starts from the newest rows. */
+const ENV_RESET_PARAMS = ["before"] as const;
+
+/**
+ * The environment (project) picker (BAC-89): which project every data page reads. Shown on data
+ * pages when the organisation has more than one project; the choice lives in `?env=` and is
+ * remembered per viewer (cookie) as the default for the next visit.
+ */
+function EnvPicker({ env }: { env: EnvState }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (env.options.length < 2 || !env.current || !isDataPath(location.pathname)) return null;
+  return (
+    <select
+      value={env.current}
+      onChange={(e) => {
+        const params = new URLSearchParams(location.search);
+        for (const p of ENV_RESET_PARAMS) params.delete(p);
+        params.set(ENV_PARAM, e.target.value);
+        navigate(`${location.pathname}?${params.toString()}`);
+      }}
+      aria-label="Environment"
+      title="Environment: every page shows this project's data"
+      className="h-8 max-w-[132px] shrink-0 truncate rounded-lg border border-border bg-surface px-2.5 text-[13px] outline-none focus:border-brand/40 sm:max-w-[180px]"
+    >
+      {env.options.map((o) => <option key={o.slug} value={o.slug}>{o.name}</option>)}
+    </select>
+  );
+}
+
 function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: React.ReactNode }) {
+  useRememberEnv(auth.org.id, auth.env.current);
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[224px_minmax(0,1fr)]">
       <aside className="hidden flex-col border-r border-border bg-surface lg:flex lg:sticky lg:top-0 lg:h-screen">
@@ -590,6 +627,7 @@ function Shell({ auth, children }: { auth: NonNullable<AuthData>; children: Reac
           </div>
           <FindRequest />
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <EnvPicker env={auth.env} />
             <LiveStatus />
             <ThemeToggle />
             <AuthMenu auth={auth} />

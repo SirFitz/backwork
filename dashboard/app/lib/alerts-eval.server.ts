@@ -5,7 +5,7 @@
 
 import { cached } from "./cache.server";
 import * as loki from "./loki.server";
-import type { Tenant } from "./tenant.server";
+import { tenantKey, type Tenant } from "./tenant.server";
 import { allRoutesScope, rateQuery, vmClient, PerfRange, type PromClient } from "./hops/metrics.server";
 import { slowQueries, SlowWindow } from "./hops/slow-queries.server";
 import type { QueryRow } from "./hops/slow-queries";
@@ -116,7 +116,7 @@ export function targetShapes(rows: readonly QueryRow[]): TargetShape[] {
 
 /** What the New rule form offers, cached per organisation. A failing half comes back empty. */
 export function alertTargets(tenant: Tenant, deps: EvalDeps = evalDeps): Promise<AlertTargets> {
-  return cached(`alert-targets:${tenant.orgId}`, TARGETS_TTL_MS, async () => {
+  return cached(`alert-targets:${tenantKey(tenant)}`, TARGETS_TTL_MS, async () => {
     const [routes, rows] = await Promise.all([
       targetRoutes(tenant, deps.prom).catch((): TargetRoute[] => []),
       deps.slowRows(tenant).catch((): readonly QueryRow[] => []),

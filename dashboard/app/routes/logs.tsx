@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
-import { Await, Form, Link, useFetcher, useLoaderData, useNavigation, useSubmit, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
+import { Await, Form, useFetcher, useLoaderData, useNavigation, useSubmit, type ShouldRevalidateFunctionArgs } from "@remix-run/react";
+import { EnvField, Link, useCurrentEnv } from "~/components/env-link";
+import { withEnv } from "~/lib/env";
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Search, SlidersHorizontal } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
@@ -8,8 +10,8 @@ import { ChartSkeleton, Deferred, RowsSkeleton } from "~/components/defer";
 import { AreaSeries } from "~/components/charts";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
-import { requireOrg } from "~/lib/auth/context.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { tenantKey } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { cn, fmtNum, LEVEL_TEXT } from "~/lib/utils";
 import { stripAnsi, traceIdOfLine } from "~/lib/hops/parse";
 import { Clock } from "~/components/time";
@@ -81,8 +83,7 @@ async function tailLoader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const since = parseSince(url.searchParams.get("since")) ?? msToNs(Date.now());
   const { service, level, q, showHops } = readFilters(url);
-  const ctx = await requireOrg(request);
-  const t = tenantOf(ctx.org.id);
+  const { ctx, tenant: t } = await requireScope(request);
   const names = await serviceNames(t);
   const query = buildQuery(service, level, q, showHops ? KindFilter.All : KindFilter.Ordinary, names);
   const list = await loki.queryRange(query, { startNs: since, end: Date.now(), limit: 200 }, t);
@@ -102,12 +103,11 @@ async function pageLoader({ request }: LoaderFunctionArgs) {
   const { service, level, q, rangeKey, mins, showHops, raw } = readFilters(url);
   const end = Date.now();
   const start = end - mins * 60 * 1000;
-  const ctx = await requireOrg(request);
-  const t = tenantOf(ctx.org.id);
+  const { ctx, tenant: t } = await requireScope(request);
   // The name map is cached; every part below waits only on it and on its own query.
   const namesP = serviceNames(t);
   const queryP = namesP.then((names) => buildQuery(service, level, q, showHops ? KindFilter.All : KindFilter.Ordinary, names));
-  const ck = (query: string): string => `logs:${t.orgId}:${rangeKey}:${query}`;
+  const ck = (query: string): string => `logs:${tenantKey(t)}:${rangeKey}:${query}`;
   // How many hop records the switch hides, for the same filters, search text and range.
   const hiddenQueryP = namesP.then((names) => `sum(count_over_time(${buildQuery(service, level, q, KindFilter.Hops, names)} [${mins}m]))`);
   return defer({
@@ -148,6 +148,9 @@ export default function Logs() {
         growRight
         right={
           <Form method="get" className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+            {/* BAC-90: the form owns q, service, level and range; the hop-record switch and the environment ride along. */}
+            <EnvField />
+            {f.hops ? <input type="hidden" name="hops" value="1" /> : null}
             <div className="relative min-w-[140px] flex-1 lg:min-w-[280px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
               <input name="q" defaultValue={f.q} placeholder={'Search text, or LogQL like {service="commerce-api"} |= "timeout"  ·  Enter to run'} className="h-8 w-full rounded-lg border border-border bg-surface pl-9 pr-3 font-mono text-[13px] outline-none placeholder:text-faint focus:border-brand/40" />
@@ -227,6 +230,7 @@ function LiveLines({ initial, until, filters, hidden, dimmed }: { initial: LogLi
   const atTopRef = useRef(true);
   /** The top row before new lines went in, and where it was, so the reader's place can be kept. */
   const anchorRef = useRef<{ node: HTMLElement; top: number } | null>(null);
+  const env = useCurrentEnv();
   const base = hopsHref(filters, filters.hops);
 
   useEffect(() => {
@@ -234,10 +238,10 @@ function LiveLines({ initial, until, filters, hidden, dimmed }: { initial: LogLi
     const id = setInterval(() => {
       const f = fetcherRef.current;
       if (document.visibilityState !== "visible" || f.state !== "idle") return;
-      f.load(`/logs${base}&since=${newestNs(linesRef.current, until)}`);
+      f.load(withEnv(`/logs${base}&since=${newestNs(linesRef.current, until)}`, env));
     }, TAIL_POLL_MS);
     return () => clearInterval(id);
-  }, [paused, base, until]);
+  }, [paused, base, until, env]);
 
   useEffect(() => {
     const data = fetcher.data;

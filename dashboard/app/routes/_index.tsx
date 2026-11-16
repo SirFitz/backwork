@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer, json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { lazy, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, Network } from "lucide-react";
 import { Badge, Card, CardHead, CardHeadText, ErrorNote, PageTitle, Skeleton } from "~/components/ui";
@@ -12,8 +13,9 @@ const AreaSeries = lazy(() => import("~/components/charts").then((m) => ({ defau
 import { safe } from "~/lib/config.server";
 import * as loki from "~/lib/loki.server";
 import { cached } from "~/lib/cache.server";
-import { requireOrg, getUser } from "~/lib/auth/context.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { getUser } from "~/lib/auth/context.server";
+import { tenantKey } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { inboundServices, servicesTable, type ServiceRow } from "~/lib/hops/metrics.server";
 import { PerfRange } from "~/lib/hops/figures";
 import { hopRequestPage, type RequestListRow } from "~/lib/hops/requests.server";
@@ -55,8 +57,7 @@ const emptyScan = <T,>(): RecordScan<T> => ({ rows: [], total: 0, truncated: fal
 export async function loader({ request }: LoaderFunctionArgs) {
   // Logged-out visitors see the marketing landing; signed-in users get the Overview.
   if (!(await getUser(request))) return json({ marketing: true as const });
-  const ctx = await requireOrg(request);
-  const t = tenantOf(ctx.org.id);
+  const { ctx, tenant: t } = await requireScope(request);
   const now = Date.now();
 
   // Every part is its own promise that always settles to { data, error }, so each section
@@ -79,7 +80,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const start = now - 3600_000;
   const logVolume: Promise<Panel<Array<{ t: number; v: number }>>> = safe(
     () =>
-      cached(`ov:logvol:${t.platform ? "platform" : t.orgId}`, 12_000, () =>
+      cached(`ov:logvol:${tenantKey(t)}`, 12_000, () =>
         loki.countOverTime('sum(count_over_time({service=~".+", kind!="hop"}[1m]))', { start, end: now, step: "120s" }, t)
       ).then((d) => d.map((p) => ({ t: p.t, v: p.v }))),
     []

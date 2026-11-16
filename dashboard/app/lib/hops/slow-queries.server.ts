@@ -5,7 +5,7 @@
 import * as loki from "~/lib/loki.server";
 import { cachedStale } from "~/lib/cache.server";
 import { Feature, getControls, resolveEffective } from "~/lib/controls.server";
-import type { Tenant } from "~/lib/tenant.server";
+import { tenantKey, type Tenant } from "~/lib/tenant.server";
 import { parseHopRecord } from "./parse";
 import {
   RECORD_FORMATS,
@@ -122,7 +122,7 @@ export function slowQueries(
 }
 
 export function slowQueriesKey(tenant: Tenant, window: SlowWindow): string {
-  return `slowq:${tenant.orgId}:${window}`;
+  return `slowq:${tenantKey(tenant)}:${window}`;
 }
 
 /** The parsed hop records of a log query, newest first. */
@@ -164,6 +164,6 @@ export function routesFor(
   window: SlowWindow,
   query: LogRunner = defaultLogRunner,
 ): Promise<StatementRoutes> {
-  const key = `slowq-routes:${tenant.orgId}:${window}:${row.service}:${row.shapeId}`;
+  const key = `slowq-routes:${tenantKey(tenant)}:${window}:${row.service}:${row.shapeId}`;
   return cachedStale(key, ROUTES_TTL_MS, ROUTES_TTL_MS * 3, () => computeRoutesFor(tenant, row, window, Date.now(), query));
 }

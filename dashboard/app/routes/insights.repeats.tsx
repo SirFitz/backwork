@@ -3,13 +3,13 @@
 // and error state, and is served from a stale-while-revalidate cache.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { defer } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { Repeat } from "lucide-react";
 import { Card, CardHead, Empty } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { NUM, TD, Th } from "~/components/services-table";
-import { requireOrg } from "~/lib/auth/context.server";
-import { tenantOf } from "~/lib/tenant.server";
+import { requireScope } from "~/lib/env.server";
 import { REPEATS_WINDOW_MS, scanRepeats } from "~/lib/hops/repeats.server";
 import type { RepeatRow, RepeatScan } from "~/lib/hops/repeats.server";
 import { shapeLabel } from "~/lib/hops/stmt-shape";
@@ -28,8 +28,8 @@ function settle<T>(p: Promise<T>): Promise<Settled<T>> {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const ctx = await requireOrg(request);
-  return defer({ windowMinutes: REPEATS_WINDOW_MS / 60_000, scan: settle(scanRepeats(tenantOf(ctx.org.id))) });
+  const { tenant } = await requireScope(request);
+  return defer({ windowMinutes: REPEATS_WINDOW_MS / 60_000, scan: settle(scanRepeats(tenant)) });
 }
 
 function windowWords(minutes: number): string {

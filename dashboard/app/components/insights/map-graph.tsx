@@ -1,7 +1,7 @@
 // Service map graph and its side panel (BAC-76). Plain SVG from the laid-out map in
 // `lib/hops/service-map.ts`: nodes are buttons (Tab, Enter), edges too; no animation.
 import { useId, type KeyboardEvent, type ReactNode } from "react";
-import { Link } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { errorTone, fmtLatency, fmtRate, fmtShare, serviceColor } from "~/components/services-table";
 import type { PerfRange } from "~/lib/hops/figures";
 import {

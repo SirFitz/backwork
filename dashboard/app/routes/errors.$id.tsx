@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useLoaderData, useNavigation } from "@remix-run/react";
+import { Link } from "~/components/env-link";
 import { ArrowLeft, Check, EyeOff, RotateCcw } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
@@ -71,6 +72,7 @@ export default function ErrorDetail() {
             <Badge tone={tone}>{g.level}</Badge>
             <ErrorSourceLabel source={g.source} />
             {g.status !== "open" ? <Badge tone="neutral">{g.status}</Badge> : null}
+            {g.project ? <span title="Environment (project)"><Badge tone="neutral">{g.project}</Badge></span> : null}
             <h1 className="truncate font-mono text-lg font-semibold text-fg">{g.type}</h1>
           </div>
           <p className="mt-1 break-words text-sm text-muted">{g.message || "—"}</p>
