@@ -19,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 const GROUPS: [string, [string, string][]][] = [
-  ["Get started", [["add-a-service", "Add backwork to a service"], ["agent", "Install the agent on a server"], ["first-request", "Find your first request"]]],
+  ["Get started", [["add-a-service", "Add backwork to a service"], ["agent", "Install the agent on a server"], ["no-agent", "Send without the agent"], ["first-request", "Find your first request"]]],
   ["Guides", [["linked-ids", "Find a request by order number"], ["databases", "Database and cache timing"], ["jobs", "Background jobs"], ["other-monitors", "Next to Sentry or OpenTelemetry"], ["switches", "Switches"], ["filter", "Sensitive-data filter"]]],
   ["Features", [["request-view", "Request view"], ["performance", "Performance"], ["logs", "Log search"], ["errors", "Errors"], ["alerts", "Needs attention and alerts"]]],
   ["Reference", [["options", "Correlator options"], ["agent-options", "Agent options"], ["api", "Read API and CLI"], ["organisations", "Organisations and roles"]]],
@@ -118,6 +118,27 @@ export default function Docs() {
             <P>The agent reads your services' log lines and sends them to backwork. It runs once per server, not once per service, and it removes sensitive data before anything leaves the server.</P>
             <CodeBlock className="mt-4" lines={AGENT.slice(1)} />
             <P>Your services keep logging to standard output, as they do today. Your service itself needs no backwork token, endpoint or package.</P>
+
+            <H2 id="no-agent">Send without the agent</H2>
+            <P>No access to the server, or nowhere to run the agent? Your service can post its lines to backwork itself. Nothing is installed and nothing on the server changes: you set one environment variable. The lines get the same switches, the same sensitive-data filter and the same request view and Performance figures as lines the agent sends.</P>
+            <H3>Correlator&apos;s own lines</H3>
+            <P>Set <M>CORRELATOR_RECORD_SINK</M> on the service, with your ingest token before the <M>@</M> and the service name at the end. Correlator then posts its hop records and linked IDs to backwork, and your service&apos;s own log output stays as it is.</P>
+            <CodeBlock className="mt-4" lines={[
+              $("CORRELATOR_RECORD_SINK=https://<TOKEN>@backwork.dev/ingest/records?service=my-api"),
+            ]} />
+            <H3>Any line, from anything</H3>
+            <P>The endpoint takes plain text, one line per log line, gzip optional. Post hop records, linked IDs and ordinary log lines together, up to 5 MB a post.</P>
+            <CodeBlock className="mt-4" lines={[
+              $("curl -X POST https://backwork.dev/ingest/records \\"),
+              p('  -H "Authorization: Bearer <TOKEN>" \\'),
+              p('  -H "x-backwork-service: my-api" -H "x-backwork-host: web-1" \\'),
+              p("  --data-binary @app.log"),
+            ]} />
+            <Table head={["Answer", "Meaning"]} rows={[
+              [<M key="a">200</M>, "Stored. The body says how many lines were kept and how many your switches left out."],
+              [<M key="b">401</M>, "The token is missing or wrong. Bearer, x-backwork-token or the token in the URL all work."],
+              [<M key="c">413</M>, "Over 5 MB (or 20,000 lines). Send smaller batches."],
+            ]} />
 
             <H2 id="first-request">Find your first request</H2>
             <P>Send any request to your service, then open backwork and paste an ID into the search box at the top of every page. Any of these finds the request:</P>

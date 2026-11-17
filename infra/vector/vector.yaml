@@ -22,6 +22,20 @@ sources:
   vector_metrics:
     type: internal_metrics
 
+  # Lines posted to /ingest/records and /ingest/otlp/v1/logs, after the dashboard's
+  # authentication, switches and filter (BAC-96). Reachable only on the compose network.
+  records:
+    type: http_server
+    address: 0.0.0.0:8687
+    path: /records
+    method: POST
+    framing:
+      method: newline_delimited
+    decoding:
+      codec: json
+    acknowledgements:
+      enabled: true
+
 transforms:
   bw_normalize:
     type: remap
@@ -111,7 +125,9 @@ transforms:
         # A host's log format may print trace_id (and more) in front of the message too: read the
         # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
         bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
-        bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
+        # get() of a missing key is null, not an error: a line without such a run (a link line) keeps its head.
+        bw_recs = to_string(get(bw_rec, ["rec"]) ?? "") ?? ""
+        if bw_recs != "" { bw_kvh = bw_recs }
         bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
         # A key repeated with equal values is read once; differing values stay a list (not a record).
         bw_src = map_values(bw_src) -> |v| {
@@ -182,7 +198,9 @@ transforms:
           # A host's log format may print trace_id (and more) in front of the message too: read the
           # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
           bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
-          bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
+          # get() of a missing key is null, not an error: a line without such a run (a link line) keeps its head.
+          bw_recs = to_string(get(bw_rec, ["rec"]) ?? "") ?? ""
+          if bw_recs != "" { bw_kvh = bw_recs }
           bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
           # A key repeated with equal values is read once; differing values stay a list (not a record).
           bw_src = map_values(bw_src) -> |v| {
@@ -533,6 +551,502 @@ transforms:
     value_limit: 2000
     limit_exceeded_action: drop_tag
 
+  bw_rec_normalize:
+    type: remap
+    inputs: [records]
+    source: |
+      # Records intake (BAC-96): authenticated, switched and filtered by the dashboard.
+      .service = to_string(.service) ?? ""
+      if !match(.service, r'^[\x21-\x7e]{1,200}$$') { .service = "unknown" }
+      .source = to_string(.source) ?? ""
+      if .source == "" { .source = .service }
+      .project = to_string(.project) ?? ""
+      .host = to_string(.host) ?? ""
+      %bw_org = to_string(.org_id) ?? ""
+      %bw_project = .project
+      %bw_rec_metrics = .bw_metrics != false
+      %bw_rec_stores = .bw_stores != false
+      bw_ns = to_int(.bw_ts) ?? 0
+      if bw_ns > 0 { .timestamp = from_unix_timestamp(bw_ns, unit: "nanoseconds") ?? .timestamp }
+      del(.bw_ts)
+      del(.bw_metrics)
+      del(.bw_stores)
+      del(.org_id)
+
+      # Structured JSON logs: lift level/msg.
+      .level = "info"
+      parsed = parse_json(.message) ?? {}
+      lvl = get(parsed, ["level"]) ?? get(parsed, ["lvl"]) ?? get(parsed, ["severity"]) ?? null
+      if lvl != null {
+        # pino/bunyan use numeric levels (10=trace..60=fatal); map them.
+        ln = to_int(lvl) ?? -1
+        if ln >= 60 { .level = "fatal" } else if ln >= 50 { .level = "error" } else if ln >= 40 { .level = "warn" } else if ln >= 30 { .level = "info" } else if ln >= 20 { .level = "debug" } else if ln >= 10 { .level = "trace" } else { .level = downcase(to_string(lvl) ?? "info") }
+      }
+      msg = get(parsed, ["msg"]) ?? get(parsed, ["message"]) ?? null
+      if msg != null { .display = to_string(msg) ?? .message }
+      if !exists(.display) { .display = .message }
+
+      # Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console).
+      if .level == "info" {
+        m = downcase(to_string(.message) ?? "")
+        if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "[error]") || contains(m, "panic") || contains(m, "fatal") || contains(m, "exception") {
+          .level = "error"
+        } else if contains(m, "level=warn") || contains(m, "[warn]") || contains(m, "[warning]") || contains(m, "warning") || contains(m, "deprecat") {
+          .level = "warn"
+        } else if contains(m, "level=debug") || contains(m, "[debug]") {
+          .level = "debug"
+        }
+      }
+      if .level == "warning" { .level = "warn" }
+      if .level == "err" || .level == "critical" || .level == "crit" { .level = "error" }
+
+  bw_rec_detect:
+    type: remap
+    inputs: [bw_rec_normalize]
+    source: |
+      # Hop record and link line detection (design 5.1). Never drops or alters the line.
+      .kind = "log"
+      bw_raw = to_string(.message) ?? ""
+      bw_src = {}
+      bw_fmt = ""
+      bw_box = ""
+      bw_json = parse_json(bw_raw) ?? null
+      if is_object(bw_json) {
+        bw_o = object(bw_json) ?? {}
+        bw_fmt = "json"
+        if (get(bw_o, ["trace_id"]) ?? null) != null {
+          bw_src = bw_o
+        } else {
+          for_each(["metadata","fields","data","context","attributes"]) -> |_i, k| {
+            if bw_box == "" {
+              c = object(get(bw_o, [k]) ?? null) ?? {}
+              if (get(c, ["trace_id"]) ?? null) != null {
+                bw_src = c
+                bw_box = k
+              }
+            }
+          }
+        }
+      } else if contains(bw_raw, "trace_id=") {
+        bw_fmt = "kv"
+        # stmt is the last pair and runs to the end of the line, spaces included (spec HOP-14, 13.2):
+        # split it off first, so text inside it never becomes a field.
+        bw_kvp = parse_regex(bw_raw, r'^(?P<head>.*?)(?: stmt=(?P<stmt>.*))?$$') ?? {}
+        bw_kvh = to_string(get(bw_kvp, ["head"]) ?? bw_raw) ?? bw_raw
+        # A host's log format may print trace_id (and more) in front of the message too: read the
+        # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
+        bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
+        # get() of a missing key is null, not an error: a line without such a run (a link line) keeps its head.
+        bw_recs = to_string(get(bw_rec, ["rec"]) ?? "") ?? ""
+        if bw_recs != "" { bw_kvh = bw_recs }
+        bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+        # A key repeated with equal values is read once; differing values stay a list (not a record).
+        bw_src = map_values(bw_src) -> |v| {
+          if is_array(v) {
+            bw_u = unique(array!(v))
+            if length(bw_u) == 1 { bw_u[0] } else { v }
+          } else { v }
+        }
+        bw_kvs = get(bw_kvp, ["stmt"]) ?? null
+        if bw_kvs != null { bw_src = set(bw_src, ["stmt"], bw_kvs) ?? bw_src }
+      }
+      bw_tid = to_string(get(bw_src, ["trace_id"]) ?? "") ?? ""
+      if match(bw_tid, r'^[0-9a-f]{32}$$') {
+        bw_hk = to_string(get(bw_src, ["hop"]) ?? "") ?? ""
+        bw_hid = to_string(get(bw_src, ["hop_id"]) ?? "") ?? ""
+        if includes(["in", "in_end", "out", "out_end"], bw_hk) && match(bw_hid, r'^[0-9a-f]{16}$$') {
+          .kind = "hop"
+          %bw_type = "hop"
+        } else if (get(bw_src, ["link_name"]) ?? null) != null && (get(bw_src, ["link_value"]) ?? null) != null {
+          .kind = "hop"
+          %bw_type = "link"
+        }
+      }
+      if .kind == "hop" {
+        %bw_hop = bw_src
+        %bw_fmt = bw_fmt
+        %bw_box = bw_box
+      }
+
+  bw_rec_controls:
+    type: remap
+    inputs: [bw_rec_detect]
+    drop_on_abort: true
+    source: |
+      # backwork switches and sensitive-data filter (design 19). Version records.
+      # Hop detection with the current rules (repeated keys, stmt read first), for every agent.
+      if contains(to_string(.message) ?? "", "trace_id=") {
+        %bw_type = ""
+        # Hop record and link line detection (design 5.1). Never drops or alters the line.
+        .kind = "log"
+        bw_raw = to_string(.message) ?? ""
+        bw_src = {}
+        bw_fmt = ""
+        bw_box = ""
+        bw_json = parse_json(bw_raw) ?? null
+        if is_object(bw_json) {
+          bw_o = object(bw_json) ?? {}
+          bw_fmt = "json"
+          if (get(bw_o, ["trace_id"]) ?? null) != null {
+            bw_src = bw_o
+          } else {
+            for_each(["metadata","fields","data","context","attributes"]) -> |_i, k| {
+              if bw_box == "" {
+                c = object(get(bw_o, [k]) ?? null) ?? {}
+                if (get(c, ["trace_id"]) ?? null) != null {
+                  bw_src = c
+                  bw_box = k
+                }
+              }
+            }
+          }
+        } else if contains(bw_raw, "trace_id=") {
+          bw_fmt = "kv"
+          # stmt is the last pair and runs to the end of the line, spaces included (spec HOP-14, 13.2):
+          # split it off first, so text inside it never becomes a field.
+          bw_kvp = parse_regex(bw_raw, r'^(?P<head>.*?)(?: stmt=(?P<stmt>.*))?$$') ?? {}
+          bw_kvh = to_string(get(bw_kvp, ["head"]) ?? bw_raw) ?? bw_raw
+          # A host's log format may print trace_id (and more) in front of the message too: read the
+          # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
+          bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$$') ?? {}
+          # get() of a missing key is null, not an error: a line without such a run (a link line) keeps its head.
+          bw_recs = to_string(get(bw_rec, ["rec"]) ?? "") ?? ""
+          if bw_recs != "" { bw_kvh = bw_recs }
+          bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
+          # A key repeated with equal values is read once; differing values stay a list (not a record).
+          bw_src = map_values(bw_src) -> |v| {
+            if is_array(v) {
+              bw_u = unique(array!(v))
+              if length(bw_u) == 1 { bw_u[0] } else { v }
+            } else { v }
+          }
+          bw_kvs = get(bw_kvp, ["stmt"]) ?? null
+          if bw_kvs != null { bw_src = set(bw_src, ["stmt"], bw_kvs) ?? bw_src }
+        }
+        bw_tid = to_string(get(bw_src, ["trace_id"]) ?? "") ?? ""
+        if match(bw_tid, r'^[0-9a-f]{32}$$') {
+          bw_hk = to_string(get(bw_src, ["hop"]) ?? "") ?? ""
+          bw_hid = to_string(get(bw_src, ["hop_id"]) ?? "") ?? ""
+          if includes(["in", "in_end", "out", "out_end"], bw_hk) && match(bw_hid, r'^[0-9a-f]{16}$$') {
+            .kind = "hop"
+            %bw_type = "hop"
+          } else if (get(bw_src, ["link_name"]) ?? null) != null && (get(bw_src, ["link_value"]) ?? null) != null {
+            .kind = "hop"
+            %bw_type = "link"
+          }
+        }
+        if .kind == "hop" {
+          %bw_hop = bw_src
+          %bw_fmt = bw_fmt
+          %bw_box = bw_box
+        }
+      }
+      # NestJS logger: the level word after the pid and timestamp.
+      if (to_string(.kind) ?? "log") == "log" && contains(to_string(.message) ?? "", "[Nest]") {
+        bw_nest = parse_regex(to_string(.message) ?? "", r'^(?:\x1b\[[0-9;]*m)*\[Nest\][^\n]*?\s(?:\x1b\[[0-9;]*m)?\s*(?P<lvl>LOG|ERROR|WARN|DEBUG|VERBOSE|FATAL)(?:\x1b\[[0-9;]*m)?\s') ?? {}
+        bw_nl = to_string(get(bw_nest, ["lvl"]) ?? "") ?? ""
+        if bw_nl == "ERROR" { .level = "error" } else if bw_nl == "WARN" { .level = "warn" } else if bw_nl == "FATAL" { .level = "fatal" } else if bw_nl == "DEBUG" || bw_nl == "VERBOSE" { .level = "debug" } else if bw_nl == "LOG" { .level = "info" }
+      }
+      # Hop records are named by their own service field; the container stays in .source (BAC-49).
+      if !exists(.source) { .source = .service }
+      if (to_string(.kind) ?? "") == "hop" {
+        bw_rs = to_string(get(object(%bw_hop) ?? {}, ["service"]) ?? "") ?? ""
+        if match(bw_rs, r'^[\x21-\x7e]{1,200}$$') { .service = bw_rs }
+      }
+      bw_on_logs = true
+      bw_on_hops = true
+      bw_on_stores = true
+      bw_on_named_fields = true
+      bw_on_statements = true
+      bw_on_paths = true
+      bw_on_linked_ids = true
+      bw_on_metrics = true
+      bw_on_filter = true
+      bw_kind = to_string(.kind) ?? "log"
+      bw_type = to_string(%bw_type) ?? ""
+      bw_h = object(%bw_hop) ?? {}
+      bw_via = to_string(get(bw_h, ["via"]) ?? "") ?? ""
+      if bw_kind == "log" && !bw_on_logs { abort }
+      if bw_kind == "hop" && !bw_on_hops { abort }
+      if bw_type == "link" && !bw_on_linked_ids { abort }
+      if bw_type == "hop" && (bw_via == "db" || bw_via == "cache") && !bw_on_stores { abort }
+      %bw_metrics = bw_on_metrics
+      %bw_stores = bw_on_stores
+      bw_drop_f = !bw_on_named_fields
+      bw_drop_s = !bw_on_stores
+      bw_drop_q = !bw_on_statements
+      bw_drop_p = !bw_on_paths
+      if bw_type == "hop" && (bw_drop_f || bw_drop_s || bw_drop_q || bw_drop_p) {
+        if (to_string(%bw_fmt) ?? "") == "json" {
+          bw_o = object(parse_json(to_string(.message) ?? "") ?? {}) ?? {}
+          bw_box = to_string(%bw_box) ?? ""
+          bw_c = bw_o
+          if bw_box != "" { bw_c = object(get(bw_o, [bw_box]) ?? {}) ?? {} }
+          bw_c = filter(bw_c) -> |k, _v| { !((bw_drop_f && starts_with(k, "f_")) || (bw_drop_s && includes(["db_n", "db_us", "db_wait_us", "cache_n", "cache_us", "cache_hit_n", "cache_miss_n"], k)) || (bw_drop_q && includes(["table", "stmt"], k)) || (bw_drop_p && k == "path")) }
+          if bw_box == "" { bw_o = bw_c } else { bw_o = set(bw_o, [bw_box], bw_c) ?? bw_o }
+          .message = encode_json(bw_o)
+        } else {
+          # Only the pairs before stmt are edited; stmt is removed whole (Query text off) or kept as is.
+          bw_line = to_string(.message) ?? ""
+          bw_lp = parse_regex(bw_line, r'^(?P<head>.*?)(?P<tail> stmt=.*)?$$') ?? {}
+          bw_head = to_string(get(bw_lp, ["head"]) ?? bw_line) ?? bw_line
+          bw_tail = to_string(get(bw_lp, ["tail"]) ?? "") ?? ""
+          if bw_drop_f { bw_head = replace(bw_head, r' f_[a-z0-9_]+=\S*', "") }
+          if bw_drop_s { bw_head = replace(bw_head, r' (?:db|cache)_(?:n|us|hit_n|miss_n|wait_us)=\S*', "") }
+          if bw_drop_p { bw_head = replace(bw_head, r' path=\S*', "") }
+          if bw_drop_q {
+            bw_head = replace(bw_head, r' table=\S*', "")
+            bw_tail = ""
+          }
+          .message = bw_head + bw_tail
+          .display = .message
+        }
+      }
+      # Store only what the pages read (BAC-49).
+      bw_keep = {"message": .message, "service": .service, "source": .source, "level": .level, "kind": .kind, "timestamp": .timestamp}
+      if is_string(.host) && .host != "" { bw_keep.host = .host }
+      if is_string(.project) && .project != "" { bw_keep.project = .project }
+      if is_string(.display) && .display != .message { bw_keep.display = .display }
+      . = bw_keep
+
+  bw_rec_tenant:
+    type: remap
+    inputs: [bw_rec_controls]
+    source: |
+      # Tenant label and the intake's metric switches (BAC-96).
+      .org_id = to_string(%bw_org) ?? ""
+      %bw_metrics = %bw_metrics != false && %bw_rec_metrics != false
+      %bw_stores = %bw_stores != false && %bw_rec_stores != false
+
+  bw_rec_metric_prep:
+    type: remap
+    inputs: [bw_rec_tenant]
+    drop_on_abort: true
+    source: |
+      # Hop metrics input (design 5.3). Only hop records reach the metrics.
+      if (to_string(%bw_type) ?? "") != "hop" || %bw_metrics == false { abort }
+      bw_h = object(%bw_hop) ?? {}
+      bw_hk = to_string(get(bw_h, ["hop"]) ?? "") ?? ""
+      bw_m = {}
+      # Tenant labels, as the metrics ingest proxy stamps them on an agent's series.
+      bw_m.org_id = to_string(%bw_org) ?? ""
+      bw_m.project = to_string(%bw_project) ?? ""
+      bw_l = to_string(.service) ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.service = bw_l
+      bw_m.dir = if starts_with(bw_hk, "in") { "in" } else { "out" }
+      bw_l = to_string(get(bw_h, ["via"]) ?? "") ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.via = bw_l
+      bw_l = to_string(get(bw_h, ["method"]) ?? "") ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.method = bw_l
+      bw_l = to_string(get(bw_h, ["op"]) ?? "") ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.op = bw_l
+      bw_l = to_string(get(bw_h, ["peer"]) ?? "") ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.peer = bw_l
+      bw_l = to_string(get(bw_h, ["outcome"]) ?? "") ?? ""
+      if !match(bw_l, r'^[\x21-\x7e]{1,200}$$') { bw_l = "" }
+      bw_m.outcome = bw_l
+      bw_st = to_int(get(bw_h, ["status"]) ?? 0) ?? 0
+      # HOP-28 (BAC-80): inbound hops of a monitor's request carry synthetic=1. "1" or "" (an empty
+      # label is no label, so series without it, and older collectors, stay one series as before).
+      bw_sy = get(bw_h, ["synthetic"]) ?? null
+      bw_m.synthetic = if bw_m.dir == "in" && (bw_sy == 1 || bw_sy == "1" || bw_sy == true || bw_sy == "true") { "1" } else { "" }
+      bw_m.status_class = if bw_st >= 200 && bw_st < 300 { "2xx" } else if bw_st >= 300 && bw_st < 400 { "3xx" } else if bw_st >= 400 && bw_st < 500 { "4xx" } else if bw_st >= 500 && bw_st < 600 { "5xx" } else { "" }
+      bw_d = to_float(get(bw_h, ["duration_us"]) ?? -1) ?? -1.0
+      if bw_d >= 0.0 { bw_m.duration_s = bw_d / 1000000.0 }
+      bw_m.stores = bw_hk == "in_end" && %bw_stores != false
+      if bw_m.stores == true {
+        bw_m.db_s = (to_float(get(bw_h, ["db_us"]) ?? 0) ?? 0.0) / 1000000.0
+        bw_m.db_n = to_float(get(bw_h, ["db_n"]) ?? 0) ?? 0.0
+        bw_m.cache_s = (to_float(get(bw_h, ["cache_us"]) ?? 0) ?? 0.0) / 1000000.0
+        bw_m.cache_n = to_float(get(bw_h, ["cache_n"]) ?? 0) ?? 0.0
+        bw_x = get(bw_h, ["cache_hit_n"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.cache_hit_n = bw_x }
+        }
+        bw_x = get(bw_h, ["cache_miss_n"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.cache_miss_n = bw_x }
+        }
+        bw_x = get(bw_h, ["db_wait_us"]) ?? null
+        if bw_x != null {
+          bw_x = to_float(bw_x) ?? -1.0
+          if bw_x >= 0.0 { bw_m.db_wait_s = bw_x / 1000000.0 }
+        }
+      }
+      . = { "service": .service, "bw_hk": bw_hk, "bw_m": bw_m, "timestamp": .timestamp }
+
+  bw_rec_hop_route:
+    type: route
+    inputs: [bw_rec_metric_prep]
+    route:
+      ends: '(.bw_hk == "in_end" || .bw_hk == "out_end") && exists(.bw_m.duration_s)'
+      starts: '.bw_hk == "in" || .bw_hk == "out"'
+      stores: '.bw_m.stores == true'
+      cache_hits: '.bw_m.stores == true && exists(.bw_m.cache_hit_n)'
+      cache_misses: '.bw_m.stores == true && exists(.bw_m.cache_miss_n)'
+      db_waits: '.bw_m.stores == true && exists(.bw_m.db_wait_s)'
+
+  bw_rec_hop_duration:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.ends]
+    metrics:
+      - type: histogram
+        field: bw_m.duration_s
+        name: backwork_hop_duration_seconds
+        tags:
+          service: "{{ bw_m.service }}"
+          dir: "{{ bw_m.dir }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          peer: "{{ bw_m.peer }}"
+          outcome: "{{ bw_m.outcome }}"
+          status_class: "{{ bw_m.status_class }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+
+  bw_rec_hop_started:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.starts]
+    metrics:
+      - type: counter
+        field: bw_hk
+        name: backwork_hop_started_total
+        tags:
+          service: "{{ bw_m.service }}"
+          dir: "{{ bw_m.dir }}"
+          via: "{{ bw_m.via }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+
+  bw_rec_hop_store:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.stores]
+    metrics:
+      - type: counter
+        field: bw_m.db_s
+        increment_by_value: true
+        name: backwork_hop_store_seconds_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: db
+      - type: counter
+        field: bw_m.cache_s
+        increment_by_value: true
+        name: backwork_hop_store_seconds_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: cache
+      - type: counter
+        field: bw_m.db_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: db
+      - type: counter
+        field: bw_m.cache_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: cache
+
+  bw_rec_hop_store_cache_hit:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.cache_hits]
+    metrics:
+      - type: counter
+        field: bw_m.cache_hit_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: cache_hit
+
+  bw_rec_hop_store_cache_miss:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.cache_misses]
+    metrics:
+      - type: counter
+        field: bw_m.cache_miss_n
+        increment_by_value: true
+        name: backwork_hop_store_calls_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: cache_miss
+
+  bw_rec_hop_store_db_wait:
+    type: log_to_metric
+    inputs: [bw_rec_hop_route.db_waits]
+    metrics:
+      - type: counter
+        field: bw_m.db_wait_s
+        increment_by_value: true
+        name: backwork_hop_store_seconds_total
+        tags:
+          service: "{{ bw_m.service }}"
+          via: "{{ bw_m.via }}"
+          method: "{{ bw_m.method }}"
+          op: "{{ bw_m.op }}"
+          synthetic: "{{ bw_m.synthetic }}"
+          org_id: "{{ bw_m.org_id }}"
+          project: "{{ bw_m.project }}"
+          store: db_wait
+
+  bw_rec_hop_cardinality:
+    type: tag_cardinality_limit
+    inputs: [bw_rec_hop_duration, bw_rec_hop_started, bw_rec_hop_store, bw_rec_hop_store_cache_hit, bw_rec_hop_store_cache_miss, bw_rec_hop_store_db_wait]
+    mode: exact
+    value_limit: 20000
+    limit_exceeded_action: drop_tag
+
 sinks:
   loki:
     type: loki
@@ -548,9 +1062,27 @@ sinks:
     out_of_order_action: accept
     remove_label_fields: false
 
+  # Posted lines, stamped with their organisation and project as the ingest proxy stamps an agent's.
+  loki_records:
+    type: loki
+    inputs: [bw_rec_tenant]
+    endpoint: http://loki:3100
+    encoding:
+      codec: json
+    labels:
+      service: "{{ service }}"
+      source: "{{ source }}"
+      host: "{{ host }}"
+      level: "{{ level }}"
+      kind: "{{ kind }}"
+      org_id: "{{ org_id }}"
+      project: "{{ project }}"
+    out_of_order_action: accept
+    remove_label_fields: false
+
   prometheus:
     type: prometheus_exporter
-    inputs: [vector_metrics, bw_hop_cardinality]
+    inputs: [vector_metrics, bw_hop_cardinality, bw_rec_hop_cardinality]
     address: 0.0.0.0:9598
     buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900]
     # Keep idle hop series for 15 minutes so rate() sees no false resets.
