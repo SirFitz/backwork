@@ -23,6 +23,15 @@ const Param = { Query: "q", Page: "page" } as const;
 /** Columns listed per table before "more". */
 const COLUMNS_SHOWN = 10;
 
+type ObservedColumn = ReturnType<typeof columnsByUse>[number];
+/** The four ways a column is used, in the order the table and the phone list show them. */
+const USE_COLUMNS: ReadonlyArray<{ label: string; count: (c: ObservedColumn) => number }> = [
+  { label: "Filtered", count: (c) => c.use.where },
+  { label: "Joined", count: (c) => c.use.join },
+  { label: "Ordered", count: (c) => c.use.orderBy },
+  { label: "Grouped", count: (c) => c.use.groupBy },
+];
+
 interface SchemaView {
   off: boolean;
   statementsOff: boolean;
@@ -155,29 +164,41 @@ function TableBlock({ t, relations }: { t: ObservedTable; relations: ObservedSch
         <span className="text-xs text-muted">{t.reads.toLocaleString("en-GB")} reads, {t.writes.toLocaleString("en-GB")} writes, {t.shapes} {t.shapes === 1 ? "query shape" : "query shapes"}</span>
       </div>
       {shown.length > 0 ? (
-        <div className="scroll-thin mt-2 overflow-x-auto">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="text-left">
-                <Th className="pl-0">Column</Th>
-                <Th num>Filtered</Th>
-                <Th num>Joined</Th>
-                <Th num>Ordered</Th>
-                <Th num className="pr-0">Grouped</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((c) => (
-                <tr key={c.name} className="h-8">
-                  <td className="whitespace-nowrap border-b border-border py-0 pr-3 font-mono text-[12.5px]">{c.name}</td>
-                  <Count n={c.use.where} />
-                  <Count n={c.use.join} />
-                  <Count n={c.use.orderBy} />
-                  <Count n={c.use.groupBy} last />
+        <div className="mt-2">
+          {/* Phones: the column name with its four counts under it, so nothing is cut or scrolls sideways. */}
+          <ul className="sm:hidden" data-schema-stack>
+            {shown.map((c) => (
+              <li key={c.name} className="border-b border-border py-1.5">
+                <div className="break-all font-mono text-[12.5px]">{c.name}</div>
+                <dl className="mt-0.5 grid grid-cols-4 gap-x-2 text-xs">
+                  {USE_COLUMNS.map((u) => (
+                    <div key={u.label}>
+                      <dt className="text-2xs uppercase tracking-wide text-faint">{u.label}</dt>
+                      <dd className={cn("mt-0.5 font-mono tabular-nums", u.count(c) === 0 && "text-faint")}>{u.count(c) === 0 ? "–" : u.count(c).toLocaleString("en-GB")}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </li>
+            ))}
+          </ul>
+          <div className="scroll-thin hidden overflow-x-auto sm:block" data-schema-scroll>
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-left">
+                  <Th className="pl-0">Column</Th>
+                  {USE_COLUMNS.map((u, i) => <Th key={u.label} num className={i === USE_COLUMNS.length - 1 ? "pr-0" : undefined}>{u.label}</Th>)}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {shown.map((c) => (
+                  <tr key={c.name} className="h-8">
+                    <td className="whitespace-nowrap border-b border-border py-0 pr-3 font-mono text-[12.5px]">{c.name}</td>
+                    {USE_COLUMNS.map((u, i) => <Count key={u.label} n={u.count(c)} last={i === USE_COLUMNS.length - 1} />)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {cols.length > shown.length ? <p className="pt-1 text-2xs text-faint">and {cols.length - shown.length} more columns.</p> : null}
         </div>
       ) : (
