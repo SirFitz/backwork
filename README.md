@@ -91,6 +91,10 @@ anything is saved. Hop records are kept 30 days, ordinary lines 7.
   format). The dashboard enforces the switches and filter, then hands the lines to the stack
   collector's internal `records` input, which runs the same generated transforms as the agent.
   Decision: `docs/adr/0001-no-install-intake.md`.
+- OpenTelemetry logs (BAC-97): `POST /ingest/otlp/v1/logs` takes OTLP/HTTP logs, protobuf or
+  JSON, token as Bearer or `x-backwork-token` (`OTEL_EXPORTER_OTLP_LOGS_HEADERS`). `service.name`
+  and `host.name` from the resource, severity to level, trace and span IDs kept in the stored line,
+  then the records intake above.
 - Agents on hosts that run services under PM2 read PM2's log files too
   (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
 - Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local

@@ -139,6 +139,13 @@ export default function Docs() {
               [<M key="b">401</M>, "The token is missing or wrong. Bearer, x-backwork-token or the token in the URL all work."],
               [<M key="c">413</M>, "Over 5 MB (or 20,000 lines). Send smaller batches."],
             ]} />
+            <H3>OpenTelemetry logs</H3>
+            <P>Already use an OpenTelemetry SDK or Collector? Point its log exporter at backwork with two environment variables, in any language. The service name comes from <M>service.name</M>, the level from the severity, and a line with a trace ID opens its request.</P>
+            <CodeBlock className="mt-4" lines={[
+              $("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://backwork.dev/ingest/otlp/v1/logs"),
+              $("OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-backwork-token=<TOKEN>"),
+            ]} />
+            <P>Protobuf and JSON both work (<M>http/protobuf</M> or <M>http/json</M>), gzip too. gRPC is not taken: set the protocol to one of the two.</P>
 
             <H2 id="first-request">Find your first request</H2>
             <P>Send any request to your service, then open backwork and paste an ID into the search box at the top of every page. Any of these finds the request:</P>
