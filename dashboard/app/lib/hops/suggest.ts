@@ -94,6 +94,8 @@ export interface Suggestion {
   sketch: string | null;
   /** Time the change could save on this request, microseconds, when it can be estimated. */
   savedUs: number | null;
+  /** Time of the calls it is about, microseconds: what orders suggestions, largest first. */
+  involvedUs: number;
 }
 
 /** What the rules may know beyond one request. */
@@ -236,6 +238,7 @@ function doubleLookups(parent: Hop, calls: readonly DbCall[]): Suggestion[] {
       advice,
       sketch,
       savedUs: Math.max(0, spent - longest),
+      involvedUs: spent,
     });
   }
   return out;
@@ -292,6 +295,7 @@ function nPlusOnes(parent: Hop, calls: readonly DbCall[], truncated: boolean): S
       advice,
       sketch,
       savedUs: saved,
+      involvedUs: total,
     });
   }
   return out;
@@ -399,6 +403,7 @@ function dominantShapes(parent: Hop, calls: readonly DbCall[], ctx: SuggestConte
         advice: indexAdvice(target.table, columns, companions, t?.columns[target.columns[0]]?.where ?? 0),
         sketch: indexSketch(target.table, columns),
         savedUs: null,
+        involvedUs: total,
       });
     }
     for (const j of joins.slice(0, 1)) {
@@ -416,6 +421,7 @@ function dominantShapes(parent: Hop, calls: readonly DbCall[], ctx: SuggestConte
         advice: `An index on ${j.table} (${j.column}) would likely help the join, if there is not one already.`,
         sketch: indexSketch(j.table, [j.column]),
         savedUs: null,
+        involvedUs: total,
       });
     }
   }
@@ -461,6 +467,7 @@ function afterResponses(tree: RequestTree): Suggestion[] {
         advice: "If the response does not use its result, consider doing it after the response is sent, or from a queue.",
         sketch: null,
         savedUs: us,
+        involvedUs: us,
       });
     }
   }
@@ -469,7 +476,7 @@ function afterResponses(tree: RequestTree): Suggestion[] {
 
 // ---------------------------------------------------------------- the request's suggestions
 
-/** The suggestions for one request, largest saving first. `repeats` is `detectRepeats(tree, truncated)`. */
+/** The suggestions for one request, the one about the most time first. `repeats` is `detectRepeats(tree, truncated)`. */
 export function requestSuggestions(
   tree: RequestTree,
   repeats: RepeatReport = detectRepeats(tree, false),
@@ -498,13 +505,14 @@ export function requestSuggestions(
       advice: `If they do not depend on each other, start them together: it could save about ${fmtUs(c.savedUs)}.`,
       sketch: null,
       savedUs: c.savedUs,
+      involvedUs: c.serialUs,
     });
   }
   out.push(...afterResponses(tree));
   const seen = new Set<string>();
   return out
     .filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)))
-    .sort((a, b) => (b.savedUs ?? -1) - (a.savedUs ?? -1) || SUGGESTION_KINDS.indexOf(a.kind) - SUGGESTION_KINDS.indexOf(b.kind) || a.id.localeCompare(b.id));
+    .sort((a, b) => b.involvedUs - a.involvedUs || SUGGESTION_KINDS.indexOf(a.kind) - SUGGESTION_KINDS.indexOf(b.kind) || a.id.localeCompare(b.id));
 }
 
 /** Each suggestion's hops, by hop id (first suggestion wins), for marking rows. */
@@ -562,6 +570,7 @@ export function boardSuggestion(row: QueryRow, rows: readonly QueryRow[], schema
       advice: indexAdvice(target.table, columns, companions, t?.columns[target.columns[0]]?.where ?? 0),
       sketch: indexSketch(target.table, columns),
       savedUs: null,
+      involvedUs: row.totalS * 1e6,
     };
   }
   const join = joinColumns(p)[0];
@@ -579,6 +588,7 @@ export function boardSuggestion(row: QueryRow, rows: readonly QueryRow[], schema
       advice: `An index on ${join.table} (${join.column}) would likely help the join, if there is not one already.`,
       sketch: indexSketch(join.table, [join.column]),
       savedUs: null,
+      involvedUs: row.totalS * 1e6,
     };
   }
   return null;

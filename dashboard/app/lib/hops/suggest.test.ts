@@ -205,6 +205,14 @@ describe("a request with a bit of everything", () => {
     expect(s.map((x) => x.kind)).toEqual([SuggestionKind.NPlusOne, SuggestionKind.DoubleLookup]);
     expect(suggestionsByHop(s).get(hid(11))?.kind).toBe(SuggestionKind.DoubleLookup);
   });
+  test("ordered by the time of the calls they are about: the slow join before a small audit write", () => {
+    const s = suggest([
+      ...request(330),
+      db(10, 4, 221, `select o.id from orders o inner join order_items i on i.order_id = o.id where o.merchant_id = 12 and o.status = 'paid'`),
+      db(11, 275, 44, `insert into audit_events (actor, kind) values ('a', 'view')`),
+    ]);
+    expect(s.map((x) => x.kind)).toEqual([SuggestionKind.DominantShape, SuggestionKind.JoinColumn, SuggestionKind.AfterResponse]);
+  });
   test("a request with nothing to say", () => {
     expect(suggest([...request(30), db(10, 2, 3, `select id from plans where id = 1`)])).toEqual([]);
   });

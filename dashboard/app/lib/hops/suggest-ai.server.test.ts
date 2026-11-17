@@ -15,7 +15,7 @@ const RAW = `SELECT "id" FROM "merchants" AS "m" INNER JOIN "orders" AS "o" ON "
 const schema = buildObservedSchema([{ shape: statementShape(RAW), calls: 4000 }]);
 const hit: Suggestion = {
   id: "x", kind: SuggestionKind.DominantShape, confidence: "likely", service: "commerce-api", table: "merchants", shapes: [statementShape(RAW)], hopIds: [],
-  summary: "Index merchants (email, phone), likely", evidence: ["70 percent of commerce-api's database time"], advice: "", sketch: "create index on merchants (email, phone)", savedUs: null,
+  summary: "Index merchants (email, phone), likely", evidence: ["70 percent of commerce-api's database time"], advice: "", sketch: "create index on merchants (email, phone)", savedUs: null, involvedUs: 900e6,
 };
 const input: AiInput = { statement: RAW, figures: FIG, schema, hits: [hit] };
 
