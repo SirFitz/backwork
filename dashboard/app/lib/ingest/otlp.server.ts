@@ -18,7 +18,7 @@
  */
 import protobuf from "protobufjs";
 import { LineKind, classifyLine } from "~/lib/ingest/enforce.server";
-import type { IntakeLine } from "~/lib/ingest/records.server";
+import { Level, timeWithin, type IntakeLine } from "~/lib/ingest/records.server";
 
 /** Content types an OTLP/HTTP exporter sends. */
 export const OtlpContentType = { Protobuf: "application/x-protobuf", Json: "application/json" } as const;
@@ -200,8 +200,7 @@ export function decodeRequest(bytes: Buffer, type: OtlpContentType): OtlpResourc
 // Records -> intake lines
 // ---------------------------------------------------------------------------
 
-export const Level = { Trace: "trace", Debug: "debug", Info: "info", Warn: "warn", Error: "error", Fatal: "fatal" } as const;
-export type Level = (typeof Level)[keyof typeof Level];
+export { Level } from "~/lib/ingest/records.server";
 
 /** OTel SeverityNumber ranges, then the severity text, then info. */
 export function levelOf(severityNumber: number, severityText: string): Level {
@@ -239,14 +238,7 @@ export function lineOf(r: OtlpLogRecord): string {
   return JSON.stringify(line);
 }
 
-/** Record times are kept within this window around the receive time; outside it (a wrong clock,
- *  a replayed batch older than the log store accepts) the receive time is used. */
-export const TIME_WINDOW_NS = { past: 6n * 24n * 3600n * 1_000_000_000n, future: 10n * 60n * 1_000_000_000n } as const;
-
-function timeWithin(t: bigint | null, nowNs: bigint): bigint | null {
-  if (t === null || t < nowNs - TIME_WINDOW_NS.past || t > nowNs + TIME_WINDOW_NS.future) return null;
-  return t;
-}
+export { TIME_WINDOW_NS } from "~/lib/ingest/records.server";
 
 /** Intake lines for a request: service and host from each resource. */
 export function toIntakeLines(resources: readonly OtlpResourceLogs[], nowNs: bigint): IntakeLine[] {

@@ -2,11 +2,11 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { describePanelError } from "~/lib/error-copy";
 import { defer, json, redirect } from "@remix-run/node";
 import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { randomBytes } from "node:crypto";
-import { Check, ChevronDown, ChevronUp, Copy, KeyRound, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, KeyRound, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { db } from "~/db/index.server";
 import { projects } from "~/db/schema";
@@ -22,6 +22,8 @@ import { config } from "~/lib/config.server";
 import { slugify, cn } from "~/lib/utils";
 import { Deferred, RowsSkeleton } from "~/components/defer";
 import { DataControlsPanel } from "~/components/data-controls";
+import { CodeBlock, CopyButton } from "~/components/copy-block";
+import { PlatformDrains } from "~/components/platform-drains";
 import {
   GRID_HEAD,
   applyControlChange,
@@ -160,36 +162,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
 const FIELD = "h-9 rounded-lg border border-border bg-surface px-3 text-[13px] outline-none focus:border-brand/40";
 
-function CopyButton({ text, label = "copy" }: { text: string; label?: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
-        } catch {
-          /* clipboard unavailable */
-        }
-      }}
-      className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-2xs text-muted hover:text-fg"
-    >
-      {done ? <><Check className="h-3 w-3" /> copied</> : <><Copy className="h-3 w-3" /> {label}</>}
-    </button>
-  );
-}
-
-function CodeBlock({ children }: { children: string }) {
-  return (
-    <div className="relative">
-      <pre className="overflow-x-auto scroll-thin rounded-lg border border-border bg-surface-2 px-3.5 py-3 pr-16 font-mono text-2xs leading-relaxed text-fg/90">{children}</pre>
-      <div className="absolute right-2 top-2"><CopyButton text={children} /></div>
-    </div>
-  );
-}
-
 export default function Projects() {
   const d = useLoaderData<typeof loader>();
   const data = useActionData<typeof action>();
@@ -219,6 +191,10 @@ export default function Projects() {
             <div>
               <div className="mb-1 text-2xs font-medium text-muted">Report deploys</div>
               <CodeBlock>{deployFor(tok)}</CodeBlock>
+            </div>
+            <div>
+              <div className="mb-1 text-2xs font-medium text-muted">Or drain logs from your platform, nothing installed</div>
+              <PlatformDrains baseUrl={d.publicUrl} token={tok} />
             </div>
           </div>
         </Card>
@@ -335,6 +311,10 @@ export default function Projects() {
             <div className="mb-1 text-2xs font-medium text-muted">Ship logs from a server</div>
             <CodeBlock>{cmdFor("<YOUR_INGEST_TOKEN>")}</CodeBlock>
             <p className="mt-1 text-2xs text-faint">The Cache hits and Conn. wait figures on Performance come from agents installed from this version on: run the command again on hosts set up earlier.</p>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-medium text-muted">Drain logs from Vercel, Heroku, Fly.io or Cloudflare, nothing installed</div>
+            <PlatformDrains baseUrl={d.publicUrl} />
           </div>
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Report deploys, marked on <a href="/performance" className="text-brand hover:underline">Performance</a></div>
