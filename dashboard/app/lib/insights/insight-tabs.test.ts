@@ -5,8 +5,8 @@ import { describe, expect, test } from "bun:test";
 import { INSIGHT_TABS, InsightTab, visibleInsightTabs, type InsightTabDef } from "~/routes/insights";
 
 describe("Insights tabs", () => {
-  test("in plan order: Fix first, Slow queries, Repeated calls, Service map", () => {
-    expect(INSIGHT_TABS.map((t) => t.label)).toEqual(["Fix first", "Slow queries", "Repeated calls", "Service map"]);
+  test("in plan order: Fix first, Slow queries, Repeated calls, Service map, Schema", () => {
+    expect(INSIGHT_TABS.map((t) => t.label)).toEqual(["Fix first", "Slow queries", "Repeated calls", "Service map", "Schema"]);
   });
 
   test("only tabs whose route exists are shown, and Fix first is always one of them", () => {

@@ -295,6 +295,23 @@ CREATE TABLE IF NOT EXISTS pin_settings (
   auto_failed boolean NOT NULL DEFAULT false,
   updated_by text REFERENCES users(id) ON DELETE SET NULL,
   updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS suggestion_settings (
+  org_id text PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  ai_enabled boolean NOT NULL DEFAULT false,
+  ai_monthly_cap integer NOT NULL DEFAULT 0,
+  ai_used_month text NOT NULL DEFAULT '',
+  ai_used integer NOT NULL DEFAULT 0,
+  updated_by text REFERENCES users(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS suggestion_answers (
+  org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  key text NOT NULL,
+  answer text NOT NULL,
+  model text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id, key));
 `;
 
 declare global {

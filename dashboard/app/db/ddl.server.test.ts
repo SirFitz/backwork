@@ -20,6 +20,8 @@ const REQUIRED = [
   "org_billing",
   "billing_events",
   "excluded_paths",
+  "suggestion_settings",
+  "suggestion_answers",
 ] as const;
 
 describe("schema bootstrap", () => {

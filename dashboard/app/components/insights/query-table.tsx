@@ -9,6 +9,8 @@ import { Skeleton } from "~/components/ui";
 import { MAX_STMT_BYTES } from "~/lib/hops/stmt";
 import { shapeLabel } from "~/lib/hops/stmt-shape";
 import type { QueryRow, StatementRoutes } from "~/lib/hops/slow-queries";
+import type { Suggestion } from "~/lib/hops/suggest";
+import { SuggestionCard } from "./suggest-line";
 import { cn } from "~/lib/utils";
 
 const CELL = "whitespace-nowrap border-b border-border px-3 first:pl-4 last:pr-4";
@@ -31,11 +33,21 @@ function ShareBar({ share }: { share: number }) {
   );
 }
 
+/** Where the Suggestion column stands: its figures load after the table (own skeleton, own error). */
+export const HintsPhase = { Loading: "loading", Off: "off", Error: "error", Ready: "ready" } as const;
+export type HintsPhase = (typeof HintsPhase)[keyof typeof HintsPhase];
+export type HintsState =
+  | { phase: typeof HintsPhase.Loading }
+  | { phase: typeof HintsPhase.Off }
+  | { phase: typeof HintsPhase.Error; message: string }
+  | { phase: typeof HintsPhase.Ready; hints: Readonly<Record<string, Suggestion>> };
+
 export function QueryTable({
   rows,
   openKey,
   hrefFor,
   detail,
+  hints = { phase: HintsPhase.Off },
 }: {
   rows: readonly QueryRow[];
   /** `rowKey` of the expanded row, if any. */
@@ -44,7 +56,9 @@ export function QueryTable({
   hrefFor: (row: QueryRow, open: boolean) => string;
   /** The expanded row's routes panel (deferred by the route). */
   detail: (row: QueryRow) => ReactNode;
+  hints?: HintsState;
 }) {
+  const showHints = hints.phase !== HintsPhase.Off;
   return (
     <div className="scroll-thin overflow-x-auto">
       <table className="w-full text-[13px]">
@@ -55,6 +69,7 @@ export function QueryTable({
             <Th num>Calls</Th>
             <Th num>Total</Th>
             <Th num className="hidden sm:table-cell">p95</Th>
+            {showHints ? <Th className="hidden md:table-cell">Suggestion</Th> : null}
             <Th num className="hidden lg:table-cell pr-4">Share of database time</Th>
           </tr>
         </thead>
@@ -62,7 +77,7 @@ export function QueryTable({
           {rows.map((r) => {
             const open = rowKey(r) === openKey;
             return (
-              <QueryRowView key={rowKey(r)} row={r} open={open} href={hrefFor(r, !open)} detail={open ? detail(r) : null} />
+              <QueryRowView key={rowKey(r)} row={r} open={open} href={hrefFor(r, !open)} detail={open ? detail(r) : null} hints={hints} />
             );
           })}
         </tbody>
@@ -76,8 +91,22 @@ export function rowKey(row: Pick<QueryRow, "service" | "shapeId">): string {
   return `${row.service}:${row.shapeId}`;
 }
 
-function QueryRowView({ row, open, href, detail }: { row: QueryRow; open: boolean; href: string; detail: ReactNode }) {
+function hintOf(hints: HintsState, row: QueryRow): Suggestion | null {
+  return hints.phase === HintsPhase.Ready ? hints.hints[rowKey(row)] ?? null : null;
+}
+
+/** The Suggestion cell: a skeleton while loading, a note on failure, the hint's one line, or nothing. */
+function HintCell({ hints, row }: { hints: HintsState; row: QueryRow }) {
+  if (hints.phase === HintsPhase.Loading) return <Skeleton className="h-3.5 w-32" />;
+  if (hints.phase === HintsPhase.Error) return <span className="text-faint" title={hints.message}>not loaded</span>;
+  const hint = hintOf(hints, row);
+  return hint ? <span title={hint.advice} className="text-muted">{hint.summary}</span> : null;
+}
+
+function QueryRowView({ row, open, href, detail, hints }: { row: QueryRow; open: boolean; href: string; detail: ReactNode; hints: HintsState }) {
   const Chevron = open ? ChevronDown : ChevronRight;
+  const hint = hintOf(hints, row);
+  const cols = hints.phase === HintsPhase.Off ? 6 : 7;
   return (
     <>
       <tr className={cn("h-[38px] hover:bg-surface-2/50", open && "bg-surface-2/40")}>
@@ -98,12 +127,13 @@ function QueryRowView({ row, open, href, detail }: { row: QueryRow; open: boolea
         <td className={cn(CELL, NUM)}>{row.calls.toLocaleString("en-GB")}</td>
         <td className={cn(CELL, NUM)}>{fmtLatency(row.totalS)}</td>
         <td className={cn(CELL, NUM, "hidden sm:table-cell")}>{p95Text(row)}</td>
+        {hints.phase !== HintsPhase.Off ? <td className={cn(CELL, "hidden max-w-[16rem] truncate md:table-cell")}><HintCell hints={hints} row={row} /></td> : null}
         <td className={cn(CELL, "hidden lg:table-cell")}><ShareBar share={row.shareOfDb} /></td>
       </tr>
       {open ? (
         <tr>
-          <td colSpan={6} className="border-b border-border bg-surface-2/20 px-4 py-3">
-            <QueryDetail row={row}>{detail}</QueryDetail>
+          <td colSpan={cols} className="border-b border-border bg-surface-2/20 px-4 py-3">
+            <QueryDetail row={row} hint={hint}>{detail}</QueryDetail>
           </td>
         </tr>
       ) : null}
@@ -111,7 +141,7 @@ function QueryRowView({ row, open, href, detail }: { row: QueryRow; open: boolea
   );
 }
 
-function QueryDetail({ row, children }: { row: QueryRow; children: ReactNode }) {
+function QueryDetail({ row, hint, children }: { row: QueryRow; hint: Suggestion | null; children: ReactNode }) {
   const cut = new TextEncoder().encode(row.sample).length >= MAX_STMT_BYTES;
   return (
     <div className="min-w-0 space-y-3 whitespace-normal">
@@ -125,6 +155,12 @@ function QueryDetail({ row, children }: { row: QueryRow; children: ReactNode }) 
       </dl>
       {row.p95Approx ? <p className="text-xs text-faint">The p95 is about: it averages the p95 of statements that differ only by their values.</p> : null}
       {cut ? <p className="text-xs text-faint">The statement was cut at {MAX_STMT_BYTES} bytes when it was recorded, so longer queries that start the same way share this row.</p> : null}
+      {hint ? (
+        <div className="space-y-1.5">
+          <h3 className="text-[13px] font-semibold">Suggestion</h3>
+          <ul className="rounded-md border border-border bg-surface"><SuggestionCard s={hint} /></ul>
+        </div>
+      ) : null}
       {children}
     </div>
   );

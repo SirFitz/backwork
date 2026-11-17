@@ -21,6 +21,7 @@ export const InsightTab = {
   SlowQueries: "slow_queries",
   RepeatedCalls: "repeated_calls",
   ServiceMap: "service_map",
+  Schema: "schema",
 } as const;
 export type InsightTab = (typeof InsightTab)[keyof typeof InsightTab];
 
@@ -37,6 +38,7 @@ export const INSIGHT_TABS: readonly InsightTabDef[] = [
   { key: InsightTab.SlowQueries, label: "Slow queries", to: "/insights/queries", ready: true },
   { key: InsightTab.RepeatedCalls, label: "Repeated calls", to: "/insights/repeats", ready: true },
   { key: InsightTab.ServiceMap, label: "Service map", to: "/insights/map", ready: true },
+  { key: InsightTab.Schema, label: "Schema", to: "/insights/schema", ready: true },
 ];
 
 /** The tabs to show: only those whose route exists. */

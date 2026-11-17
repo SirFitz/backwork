@@ -1,4 +1,7 @@
 export const config = {
+  // Query suggestions (BAC-93): the model an AI write-up would use. No key is configured and the
+  // feature is off by default; see lib/hops/suggest-ai.server.ts.
+  suggestAiModel: process.env.SUGGEST_AI_MODEL || "claude-sonnet-5-5",
   lokiUrl: process.env.LOKI_URL || "http://loki:3100",
   vmUrl: process.env.VM_URL || "http://victoriametrics:8428",
   dataDir: process.env.DATA_DIR || "/data",

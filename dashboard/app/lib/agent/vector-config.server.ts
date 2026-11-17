@@ -24,9 +24,9 @@
  */
 import {
   BUILT_IN_PATTERNS,
-  FEATURES,
+  COLLECTOR_FEATURES,
   type ControlsSnapshot,
-  type Feature,
+  type CollectorFeature,
 } from "~/lib/controls.server";
 import { lineMatchSource, pathMatchSource } from "~/lib/excluded-paths";
 import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN, StoreSeries } from "~/lib/hops/store-fields";
@@ -266,7 +266,7 @@ ${rules}
 
 /** Snapshot used when the agent has never reached backwork, and by the stack collector. */
 export function defaultSnapshot(): ControlsSnapshot {
-  const all = Object.fromEntries(FEATURES.map((f) => [f, true])) as Record<Feature, boolean>;
+  const all = Object.fromEntries(COLLECTOR_FEATURES.map((f) => [f, true])) as Record<CollectorFeature, boolean>;
   return {
     version: "default",
     project: all,
@@ -298,7 +298,7 @@ if bw_kind == "log" && match(to_string(.message) ?? "", ${vrlRegex(line)}) { abo
 }
 
 /** VRL variable for a feature switch. */
-const sw = (f: Feature): string => `bw_on_${f}`;
+const sw = (f: CollectorFeature): string => `bw_on_${f}`;
 
 /** Design 19: switches and filter, as one remap program for one project. */
 export function controlsVrl(snap: ControlsSnapshot): string {
@@ -309,11 +309,11 @@ export function controlsVrl(snap: ControlsSnapshot): string {
     NAMING_VRL.trimEnd(),
     ...relabelVrl(snap.serviceNames),
   ];
-  for (const f of FEATURES) lines.push(`${sw(f)} = ${snap.project[f] ? "true" : "false"}`);
-  const overrides = Object.entries(snap.services).filter(([, eff]) => FEATURES.some((f) => eff[f] !== snap.project[f]));
+  for (const f of COLLECTOR_FEATURES) lines.push(`${sw(f)} = ${snap.project[f] ? "true" : "false"}`);
+  const overrides = Object.entries(snap.services).filter(([, eff]) => COLLECTOR_FEATURES.some((f) => eff[f] !== snap.project[f]));
   if (overrides.length > 0) lines.push(`bw_svc = to_string(.service) ?? ""`);
   for (const [svc, eff] of overrides) {
-    const diffs = FEATURES.filter((f) => eff[f] !== snap.project[f]);
+    const diffs = COLLECTOR_FEATURES.filter((f) => eff[f] !== snap.project[f]);
     lines.push(`if bw_svc == ${vrlString(svc)} {`);
     for (const f of diffs) lines.push(`  ${sw(f)} = ${eff[f] ? "true" : "false"}`);
     lines.push(`}`);

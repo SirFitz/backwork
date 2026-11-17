@@ -27,6 +27,8 @@ import { candidatesByHop, parallelCandidates, parallelSentence, PARALLEL_CHIP, t
 import { CHATTY_BADGE, chattyRequest, chattySentence } from "~/lib/hops/chatty";
 import { ParallelChip } from "~/components/insights/parallel-chip";
 import { WhyLine } from "~/components/insights/why-line";
+import { SuggestLine } from "~/components/insights/suggest-line";
+import { useRequestSuggestions } from "~/components/insights/use-suggestions";
 import { CompareButton } from "~/components/insights/diff-table";
 import { whyItWasSlow } from "~/lib/hops/verdict";
 import { calledPeers, peerPairs } from "~/lib/hops/peers";
@@ -466,6 +468,8 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
   const [focus, setFocus] = useState<RepeatFocus | null>(null);
   // Why it was slow (BAC-70): from hop records only, so the build with logs gives the same line.
   const verdict = useMemo(() => whyItWasSlow(tree, repeats, d.now), [tree, repeats, d.now]);
+  // Query suggestions (BAC-93): the rules run here on the tree; the switches and figures load after render.
+  const suggestions = useRequestSuggestions(tree, repeats, found.projects);
   const head = headHop(tree);
   if (!head) return <LogsOnly d={d} />;
   const lastLog = logs.length ? logs[logs.length - 1].timeMs : null;
@@ -478,6 +482,7 @@ function OneRequest({ found, part, d, logsState, logsTotal }: { found: Found; pa
       <Header tree={tree} head={head} d={d} pin={found.pin} projects={found.projects} repeats={repeats} onShowRepeat={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <Alert tree={tree} lastLog={lastLog} logsState={logsState} />
       <WhyLine verdict={verdict} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
+      <SuggestLine state={suggestions} onShow={(hopId) => setFocus((f) => ({ hopId, seq: (f?.seq ?? 0) + 1 }))} />
       <div className="hidden md:block"><TimeSplitBar tree={tree} head={head} colour={colours.get(head.service) ?? HOP_PALETTE[0]} /></div>
       <PathCard ctx={ctx} />
       <div className="mt-4 space-y-4 md:hidden">

@@ -6,7 +6,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentConfigYaml, controlsTransformYaml, defaultSnapshot } from "../../../dashboard/app/lib/agent/vector-config.server";
-import { FEATURES, type Feature } from "../../../dashboard/app/lib/controls.server";
+import { COLLECTOR_FEATURES as FEATURES, type CollectorFeature as Feature } from "../../../dashboard/app/lib/controls.server";
 
 const out = join(import.meta.dir, "build");
 mkdirSync(out, { recursive: true });
