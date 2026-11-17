@@ -1,0 +1,4 @@
+282 <158>1 2012-11-30T06:45:30.123456+00:00 host heroku router - at=error code=H12 desc="Request timeout" method=GET path="/orders" host=my-app.herokuapp.com request_id=8601b555-6a83-4c12-8269-97c8e32cdb22 fwd="204.204.204.204" dyno=web.1 connect=0ms service=30000ms status=503 bytes=0
+236 <158>1 2012-11-30T06:45:31+00:00 host heroku router - at=info method=GET path="/" host=my-app.herokuapp.com request_id=9701b555-6a83-4c12-8269-97c8e32cdb23 fwd="204.204.204.204" dyno=web.1 connect=1ms service=18ms status=200 bytes=1548
+86 <45>1 2012-11-30T06:45:32+00:00 host heroku web.1 - Error R14 (Memory quota exceeded)
+88 <190>1 2012-11-30T06:45:33.5+00:00 host app web.1 - order 7731 placed — total £12.50

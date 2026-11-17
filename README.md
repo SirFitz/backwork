@@ -95,6 +95,14 @@ anything is saved. Hop records are kept 30 days, ordinary lines 7.
   JSON, token as Bearer or `x-backwork-token` (`OTEL_EXPORTER_OTLP_LOGS_HEADERS`). `service.name`
   and `host.name` from the resource, severity to level, trace and span IDs kept in the stored line,
   then the records intake above.
+- Line times: a `/ingest/records` line may start with its own time and a tab
+  (`<RFC 3339 or 19-digit epoch ns>\t<line>`); every intake keeps a line's time when it is within
+  6 days back and 10 minutes ahead of arrival, else uses the arrival time (`TIME_WINDOW_NS`).
+- Platform log drains (BAC-98): `POST /ingest/drains/{vercel,heroku,fly,cloudflare}` take each
+  platform's own drain payload (Vercel JSON/NDJSON, Heroku logplex, Fly's log shipper, Cloudflare
+  Logpush gzip NDJSON) with the token as a header (Basic from the URL for Heroku). One parser per
+  platform in `dashboard/app/lib/ingest/drains/`, service/host/level/time from the platform, then
+  the records intake. Setup steps on the Projects page. Render and Railway have no HTTP push.
 - Agents on hosts that run services under PM2 read PM2's log files too
   (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
 - Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local

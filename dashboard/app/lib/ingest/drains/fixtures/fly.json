@@ -1,0 +1,6 @@
+[
+  {"event":{"provider":"app"},"fly":{"app":{"instance":"148e272a0e7d89","name":"shop-api"},"region":"iad"},"host":"5cc8","log":{"level":"info"},"message":"GET /orders 200 in 12ms","timestamp":"2026-11-17T18:40:01.123456789Z"},
+  {"event":{"provider":"app"},"fly":{"app":{"instance":"148e272a0e7d89","name":"shop-api"},"region":"iad"},"host":"5cc8","log":{"level":"error"},"message":"database connection refused","timestamp":"2026-11-17T18:40:02.5Z"},
+  {"event":{"provider":"app"},"fly":{"app":{"instance":"148e272a0e7d89","name":"shop-api"},"region":"iad"},"host":"5cc8","log":{"level":"info"},"message":"{\"level\":\"warn\",\"msg\":\"slow query\",\"ms\":812}","timestamp":"2026-11-17T18:40:03Z"},
+  {"event":{"provider":"app"},"fly":{"app":{"instance":"148e272a0e7d89","name":"shop-api"},"region":"iad"},"host":"5cc8","log":{"level":"info"},"message":"trace_id=6503f5f183b828139d5b143365ad72fc hop=in_end hop_id=5d9e0b3347c1a2fa parent_id=b7ad6b7169203333 service=shop-api adapter=node-http via=http method=GET op=/orders outcome=ok status=200 duration_us=12000","timestamp":"2026-11-17T18:40:01.124Z"}
+]

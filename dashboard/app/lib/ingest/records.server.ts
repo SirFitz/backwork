@@ -120,13 +120,79 @@ export function splitLines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== "");
 }
 
+/** Log levels a platform or protocol states for a line, as the collectors name them. */
+export const Level = { Trace: "trace", Debug: "debug", Info: "info", Warn: "warn", Error: "error", Fatal: "fatal" } as const;
+export type Level = (typeof Level)[keyof typeof Level];
+
+const NS_PER_MS = 1_000_000n;
+const NS_PER_S = 1_000_000_000n;
+
+/**
+ * Line times are kept within this window around the receive time; outside it (a wrong clock, a
+ * replayed batch older than the log store keeps) the receive time is used. Loki keeps 168 h and
+ * accepts old samples up to that age (infra/loki), so 6 days leaves a margin; 10 minutes ahead
+ * allows for clock skew without letting a wrong clock write into the future.
+ */
+export const TIME_WINDOW_NS = { past: 6n * 24n * 3600n * NS_PER_S, future: 10n * 60n * NS_PER_S } as const;
+
+/** T when it is inside the window around NOW_NS, else null (the receive time is used). */
+export function timeWithin(t: bigint | null | undefined, nowNs: bigint): bigint | null {
+  if (t === null || t === undefined || t < nowNs - TIME_WINDOW_NS.past || t > nowNs + TIME_WINDOW_NS.future) return null;
+  return t;
+}
+
+const RFC3339_RE = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9})\d*)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))$/;
+/** Epoch nanoseconds: exactly 19 digits (2001-09-09 to 2286), so a pid or a count never reads as one. */
+const EPOCH_NS_RE = /^\d{19}$/;
+
+/** Unix nanoseconds of an RFC 3339 time (any fraction, Z or an offset), else null. */
+export function rfc3339Ns(text: string): bigint | null {
+  const m = RFC3339_RE.exec(text.trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s, frac, z, sign, oh, om] = m;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+  if (!Number.isFinite(ms)) return null;
+  let ns = BigInt(ms) * NS_PER_MS + BigInt((frac ?? "").padEnd(9, "0") || "0");
+  if (!z && sign) {
+    const off = (BigInt(Number(oh)) * 60n + BigInt(Number(om))) * 60n * NS_PER_S;
+    ns = sign === "+" ? ns - off : ns + off;
+  }
+  return ns;
+}
+
+/** Unix nanoseconds of a line-time prefix: RFC 3339, or epoch nanoseconds (19 digits). */
+export function lineTimeNs(text: string): bigint | null {
+  return EPOCH_NS_RE.test(text) ? BigInt(text) : rfc3339Ns(text);
+}
+
+/** A posted line and the time it carried, if any. */
+export interface StampedLine {
+  line: string;
+  timeNs: bigint | null;
+}
+
+/**
+ * The records intake's per-line time (BAC-98): a line may start with its own time and a tab,
+ * `<time>\t<line>`, where the time is RFC 3339 (`2026-11-17T18:40:01.123456Z`, any fraction,
+ * `Z` or an offset) or Unix epoch nanoseconds (19 digits). The prefix and the tab are removed;
+ * anything else, including a line that starts with a time followed by a space, is stored as
+ * posted at the receive time.
+ */
+export function stampedLine(raw: string): StampedLine {
+  const tab = raw.indexOf("\t");
+  if (tab < 10 || tab > 40) return { line: raw, timeNs: null };
+  const t = lineTimeNs(raw.slice(0, tab));
+  return t === null ? { line: raw, timeNs: null } : { line: raw.slice(tab + 1), timeNs: t };
+}
+
 /** One line with where it came from, as an input to linesToStreams. */
 export interface IntakeLine {
   line: string;
   /** The service it belongs to, when the post or record says (else the origin's service). */
   service?: string | null;
   host?: string | null;
-  /** Unix nanoseconds, when the client sent a time (else the receive time). */
+  /** Unix nanoseconds, when the client sent a time (else the receive time). Times outside
+   *  TIME_WINDOW_NS are replaced by the receive time in linesToStreams. */
   timeNs?: bigint | null;
 }
 
@@ -153,7 +219,8 @@ export function lineOf(value: unknown): string | null {
  * Group lines into streams as an agent's push would carry them: a hop record or link line under
  * its own `service` field (the collectors' naming rule, BAC-49), every other line under the
  * service the post names; `source` is the posted service, so ordinary lines join their hop
- * records. Lines without a time get the receive time plus their position, so their order holds.
+ * records. A line's own time is kept when inside TIME_WINDOW_NS; lines without one (or outside
+ * it) get the receive time plus their position, so their order holds.
  */
 export function linesToStreams(lines: readonly IntakeLine[], origin: LineOrigin, nowNs: bigint): LokiStream[] {
   const groups = new Map<string, LokiStream>();
@@ -171,7 +238,7 @@ export function linesToStreams(lines: readonly IntakeLine[], origin: LineOrigin,
       g = { stream: labels, values: [] };
       groups.set(key, g);
     }
-    g.values.push([String(l.timeNs ?? nowNs + BigInt(i)), envelope(l.line)]);
+    g.values.push([String(timeWithin(l.timeNs, nowNs) ?? nowNs + BigInt(i)), envelope(l.line)]);
   });
   return [...groups.values()];
 }

@@ -139,6 +139,20 @@ export default function Docs() {
               [<M key="b">401</M>, "The token is missing or wrong. Bearer, x-backwork-token or the token in the URL all work."],
               [<M key="c">413</M>, "Over 5 MB (or 20,000 lines). Send smaller batches."],
             ]} />
+            <P>A line can carry its own time: put it first, then a tab. RFC 3339 or Unix nanoseconds both work. Without one, the line is stored at the time it arrives. Times more than 6 days old or 10 minutes ahead are replaced by the arrival time.</P>
+            <CodeBlock className="mt-4" lines={[
+              p("2026-11-17T18:40:01.123456Z<TAB>order 7731 placed"),
+              p("1794940801123456000<TAB>trace_id=6503f5f1... hop=in_end ..."),
+            ]} />
+            <H3>Platform log drains</H3>
+            <P>On Vercel, Heroku, Fly.io or Cloudflare, the platform can send your logs itself. You add a drain in the platform&apos;s settings and change nothing in the service. The service and host come from the platform (the Vercel project, the Fly app, the Worker), and so do the level and the time. The Projects page has each platform&apos;s steps, ready to copy.</P>
+            <Table head={["Platform", "Drain URL", "Token"]} rows={[
+              ["Vercel", <M key="v">/ingest/drains/vercel</M>, "Custom header Authorization: Bearer <TOKEN>"],
+              ["Heroku", <M key="h">/ingest/drains/heroku?service=my-api</M>, "In the drain URL: https://bw:<TOKEN>@backwork.dev/..."],
+              ["Fly.io", <M key="f">/ingest/drains/fly</M>, "Fly's log shipper: HTTP_URL and HTTP_TOKEN"],
+              ["Cloudflare Logpush", <M key="c">/ingest/drains/cloudflare</M>, "?header_Authorization=Bearer%20<TOKEN>, which Cloudflare sends as a header"],
+            ]} />
+            <P>Render and Railway have no drain backwork can take: Render sends logs to your own endpoint only as syslog over TCP, and Railway has no drain at all. Use the record sink above or OpenTelemetry instead.</P>
             <H3>OpenTelemetry logs</H3>
             <P>Already use an OpenTelemetry SDK or Collector? Point its log exporter at backwork with two environment variables, in any language. The service name comes from <M>service.name</M>, the level from the severity, and a line with a trace ID opens its request.</P>
             <CodeBlock className="mt-4" lines={[

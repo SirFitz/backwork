@@ -78,3 +78,37 @@ none), so they are stored at receive time, up to the sink's flush interval (1 s)
 written. OTLP lines keep their real time. A line logged in the first moments of a short request can
 then fall just before the hop's window in the request view (it still links to the request from
 Logs). A per-line time from the record sink would close this; tracked as a follow-up.
+
+## Addendum: line times and platform drains (BAC-98)
+
+Line times. Every intake line may carry its own time (`IntakeLine.timeNs`); `linesToStreams`
+keeps it when it is within `TIME_WINDOW_NS` of the receive time (6 days back, under Loki's 168 h
+`reject_old_samples_max_age`; 10 minutes ahead, for clock skew) and otherwise uses the receive
+time plus the line's position. One guard, in one place, for every route. The time becomes the
+Loki timestamp (`bw_ts`) and the time of the hop metric events derived from the line, as an
+agent's file timestamps do. On `POST /ingest/records` a plain text line carries its time as a
+prefix and a tab:
+
+    <time>\t<line>      time = RFC 3339 (any fraction, Z or an offset) or Unix epoch nanoseconds (exactly 19 digits)
+
+`stampedLine` removes the prefix and the tab; a line without a valid prefix (a time followed by a
+space, a short number, any other text before a tab) is stored as posted at the receive time. 19
+digits only, so a pid or a count is never read as a time. Correlator's record sink stamps its
+lines this way; older sinks keep working unchanged.
+
+Platform drains. `POST /ingest/drains/<platform>` takes a platform's own drain format, one typed
+parser per platform (`DrainPlatform`: vercel, heroku, fly, cloudflare) producing `DrainEntry`
+(message, level, service, host, time, context fields), then the same records intake. Platform
+metadata maps to the labels and the line time; a platform level, request and trace IDs go into
+the stored line as `{"level","msg",...}`, the shape OTLP records use, so the collectors read the
+level and display text and a trace ID links the line. A Correlator hop record or a structured
+line with its own level is kept as written, so it is detected and counted, or keeps the app's
+level. Authentication is the project token in a header wherever the platform allows one: a
+custom header (Vercel), the log shipper's bearer token (Fly), Basic from the drain URL (Heroku,
+the only way Logplex authenticates), and Cloudflare's `header_Authorization` destination
+parameter, which Logpush sends as a request header (it has no other way to set a header); no
+route reads a token from the query. Vercel's `x-vercel-signature` is not checked: it needs a
+secret Vercel generates per drain, which backwork would have to store; the bearer token is the
+check. Render (syslog over TLS to custom endpoints, HTTPS only for Datadog and Loggly) and Railway
+(no drain) have no HTTP push; a TLS syslog listener for Render would need a public TCP port on
+the stack and is not built.

@@ -1,0 +1,2 @@
+{"ClientIP":"192.0.2.10","ClientRequestHost":"shop.example.com","ClientRequestMethod":"GET","ClientRequestURI":"/products/42","EdgeEndTimestamp":1794940803120000000,"EdgeResponseBytes":5120,"EdgeResponseStatus":200,"EdgeStartTimestamp":1794940803100000000,"RayID":"8e1f1f1f1f1f1f21"}
+{"ClientIP":"192.0.2.11","ClientRequestHost":"shop.example.com","ClientRequestMethod":"POST","ClientRequestURI":"/cart","EdgeEndTimestamp":"2026-11-17T18:40:04Z","EdgeResponseBytes":120,"EdgeResponseStatus":502,"EdgeStartTimestamp":"2026-11-17T18:40:03.9Z","RayID":"8e1f1f1f1f1f1f22"}
