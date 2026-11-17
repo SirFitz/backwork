@@ -10,6 +10,7 @@ import { listErrorGroups, errorStatusCounts, errorServices } from "~/lib/errors.
 import { cn } from "~/lib/utils";
 import { Ago } from "~/components/time";
 import { ErrorSourceLabel } from "~/components/error-source";
+import { readOccurrence, typeAndMessage } from "~/lib/error-occurrence";
 
 export const meta: MetaFunction = () => [{ title: "Errors · backwork" }];
 
@@ -105,7 +106,10 @@ export default function Errors() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {d.groups.map((g) => (
+                {d.groups.map((g) => {
+                  // The exception read from the latest occurrence (BAC-94), as `Type: message`.
+                  const parsed = typeAndMessage(g.type, readOccurrence(g.sample, false));
+                  return (
                   <tr key={g.id} onClick={() => navigate(`/errors/${g.id}`)} className="cursor-pointer hover:bg-surface-2/50">
                     <td className="max-w-[520px] px-4 py-2.5">
                       <div className="flex items-center gap-2">
@@ -114,13 +118,15 @@ export default function Errors() {
                         <ErrorSourceLabel source={g.source} />
                         {g.status !== "open" ? <Badge tone="neutral">{g.status}</Badge> : null}
                       </div>
+                      {parsed ? <div data-error-message className="mt-0.5 truncate font-mono text-2xs text-fg" title={parsed}>{parsed}</div> : null}
                       <div className="mt-0.5 truncate text-2xs text-muted" title={g.message}>{g.message || "—"}</div>
                     </td>
                     <td className="px-4 py-2.5 text-2xs text-accent">{g.service || "—"}</td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted">{g.count}</td>
                     <td className="px-4 py-2.5 text-right text-2xs text-faint"><Ago ts={new Date(g.lastSeen).getTime()} /></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

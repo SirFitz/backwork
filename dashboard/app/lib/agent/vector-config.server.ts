@@ -6,12 +6,14 @@
  * checked-in file equals `stackConfigYaml()`).
  *
  * Pipeline (design 4, 5, 19):
- *   source(s) -> bw_normalize -> bw_detect -> bw_controls -> loki
+ *   source(s) -> bw_join_route -> bw_join_lines -> bw_join_blocks -> bw_join_tidy (BAC-94) -> bw_normalize -> bw_detect -> bw_controls -> loki
  *                                                 \-> bw_metric_prep -> bw_hop_route
  *                                                       -> bw_hop_duration / bw_hop_started / bw_hop_store
  *                                                          (+ bw_hop_store_cache_hit / _cache_miss / _db_wait, BAC-79)
  *                                                       -> bw_hop_cardinality -> prometheus (stack) | remote write (agent)
  *
+ * bw_join_*     BAC-94: a multi-line entry (error header, stack, template excerpt, dump) is one
+ *               event again, by the rules in lib/log-join.ts. JSON lines and hop records skip it.
  * bw_detect     design 5.1/5.2: `kind` label, parsed hop fields kept in event
  *               metadata (%bw_hop), the line itself untouched.
  * bw_controls   design 19: switches (drop a kind, strip named fields / store
@@ -30,6 +32,14 @@ import {
 } from "~/lib/controls.server";
 import { lineMatchSource, pathMatchSource } from "~/lib/excluded-paths";
 import { STORE_TOTAL_FIELDS, STORE_TOTALS_KV_PATTERN, StoreSeries } from "~/lib/hops/store-fields";
+import {
+  CONTINUATION_PATTERN,
+  ERROR_HEADER_PATTERN,
+  JOIN_MAX_CHARS,
+  JOIN_MAX_LINES,
+  JOIN_TIMEOUT_MS,
+  SOLO_PATTERN,
+} from "~/lib/log-join";
 
 /** Histogram buckets in seconds, design 5.3. */
 export const HOP_BUCKETS: readonly number[] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900];
@@ -101,9 +111,11 @@ msg = get(parsed, ["msg"]) ?? get(parsed, ["message"]) ?? null
 if msg != null { .display = to_string(msg) ?? .message }
 if !exists(.display) { .display = .message }
 
-# Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console).
+# Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console). A joined
+# multi-line entry (bw_join) is read by its first line, so words in its stack or dump do not count.
 if .level == "info" {
-  m = downcase(to_string(.message) ?? "")
+  bw_lines = split(to_string(.message) ?? "", "\\n", limit: 2)
+  m = downcase(to_string(bw_lines[0]))
   if contains(m, "level=error") || contains(m, "\\"error\\"") || contains(m, "[error]") || contains(m, "panic") || contains(m, "fatal") || contains(m, "exception") {
     .level = "error"
   } else if contains(m, "level=warn") || contains(m, "[warn]") || contains(m, "[warning]") || contains(m, "warning") || contains(m, "deprecat") {
@@ -694,6 +706,65 @@ ${storeMetric(m.metric, m.field, m.store)}
 `;
 }
 
+/**
+ * BAC-94: join the lines of one multi-line entry, per container stream (or PM2 file), before
+ * anything else reads them. Two reduce stages, because a reduce sees one line at a time:
+ *   bw_join_lines   a continuation line (lib/log-join CONTINUATION_PATTERN) joins the line before;
+ *   bw_join_blocks  an entry right after a bare error header, or after a template excerpt that
+ *                   ends in a blank line, joins it (the `Name: message` line, the ejs message).
+ * JSON lines and hop records go around both (bw_join_route.solo). bw_join_tidy drops the trailing
+ * blank line and caps the size.
+ */
+export function joinTransformsYaml(inputs: readonly string[]): string {
+  const group = "[container_id, stream, file]";
+  return `  bw_join_route:
+    type: route
+    inputs: [${inputs.join(", ")}]
+    route:
+      solo: 'match(to_string(.message) ?? "", ${vrlRegex(SOLO_PATTERN).replace(/\$/g, "$$$$").replace(/'/g, "''")})'
+
+  bw_join_lines:
+    type: reduce
+    inputs: [bw_join_route._unmatched]
+    group_by: ${group}
+    expire_after_ms: ${JOIN_TIMEOUT_MS}
+    flush_period_ms: 250
+    max_events: ${JOIN_MAX_LINES}
+    merge_strategies:
+      message: concat_newline
+    starts_when: |
+${inlineVrl(`!match(to_string(.message) ?? "", ${vrlRegex(CONTINUATION_PATTERN)})`, 6)}
+
+  bw_join_blocks:
+    type: reduce
+    inputs: [bw_join_lines]
+    group_by: ${group}
+    expire_after_ms: ${JOIN_TIMEOUT_MS}
+    flush_period_ms: 250
+    max_events: 20
+    merge_strategies:
+      message: concat_newline
+    ends_when: |
+${inlineVrl(`m = to_string(.message) ?? ""
+# Keep the entry open after a bare error header, or a template excerpt ending in a blank line.
+header = !contains(m, "\\n") && match(m, ${vrlRegex(ERROR_HEADER_PATTERN)})
+excerpt = match(m, r'\\n\\s*$') && match(m, r'(?m)^\\s*>>\\s*\\d+\\|')
+!(header || excerpt)`, 6)}
+
+  bw_join_tidy:
+    type: remap
+    inputs: [bw_join_blocks]
+    source: |
+${inlineVrl(`m = to_string(.message) ?? ""
+if contains(m, "\\n") {
+  m = replace(m, r'\\s+$', "")
+  if strlen(m) > ${JOIN_MAX_CHARS} { m = truncate(m, limit: ${JOIN_MAX_CHARS}) }
+  .message = m
+}
+del(.timestamp_end)`, 6)}
+`;
+}
+
 /** The bw_controls transform, standalone (the agent's reloadable file). */
 export function controlsTransformYaml(snap: ControlsSnapshot): string {
   return `# Generated by backwork from this project's switches and filter patterns.
@@ -752,9 +823,10 @@ sources:
       enabled: true
 
 transforms:
+${joinTransformsYaml(["docker"])}
   bw_normalize:
     type: remap
-    inputs: [docker]
+    inputs: [bw_join_tidy, bw_join_route.solo]
     source: |
 ${inlineVrl(normalizeVrl(CollectorKind.Stack), 6)}
 
@@ -867,9 +939,10 @@ sources:
     ignore_older_secs: 86400
 
 transforms:
+${joinTransformsYaml(["docker", "pm2"])}
   bw_normalize:
     type: remap
-    inputs: [docker, pm2]
+    inputs: [bw_join_tidy, bw_join_route.solo]
     source: |
 ${inlineVrl(normalizeVrl(CollectorKind.Agent), 6)}
 

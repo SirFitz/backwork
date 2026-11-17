@@ -5,6 +5,7 @@
  */
 import { createHash } from "node:crypto";
 
+import { parseErrorBlock, stackOfJson } from "~/lib/error-block";
 import { ErrorLevel, ErrorSource, LogLevel } from "~/lib/error-kinds";
 
 export { ERROR_SOURCES, ErrorLevel, ErrorSource, LogLevel, isErrorSource } from "~/lib/error-kinds";
@@ -37,8 +38,13 @@ export interface DerivedError {
   type: string;
   service: string;
   level: ErrorLevel;
-  /** The occurrence's own text (after the sensitive-data filter), shown under recent occurrences. */
+  /** The occurrence's own text (after the sensitive-data filter); for a multi-line entry its first
+   *  line (the header with the occurrence's ids). */
   message: string;
+  /** The exception's own message read from the entry (BAC-94), or null when there is none. */
+  errorMessage: string | null;
+  /** Its stack: template excerpt and `at …` frames (BAC-94), or null. */
+  stack: string | null;
   traceId: string | null;
   /** Request-derived only. */
   method: string | null;
@@ -125,20 +131,36 @@ function isObject(v: unknown): v is Fields {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+interface Readable {
+  text: string;
+  level: unknown;
+  errorName: string | null;
+  errorMessage: string | null;
+  stack: string | null;
+}
+
 /** The readable message of a JSON log line (pino, winston, bunyan, Vector's envelope), else the line. */
-function readableOf(line: string): { text: string; level: unknown; errorName: string | null } {
-  if (!line.startsWith("{")) return { text: line, level: null, errorName: null };
+function readableOf(line: string): Readable {
+  const plain: Readable = { text: line, level: null, errorName: null, errorMessage: null, stack: null };
+  if (!line.startsWith("{")) return plain;
   let obj: unknown;
   try {
     obj = JSON.parse(line);
   } catch {
-    return { text: line, level: null, errorName: null };
+    return plain;
   }
-  if (!isObject(obj)) return { text: line, level: null, errorName: null };
+  if (!isObject(obj)) return plain;
   const err = isObject(obj.err) ? obj.err : isObject(obj.error) ? obj.error : null;
   const msg = obj.msg ?? obj.message ?? (err ? err.message : undefined);
   const name = err && typeof err.type === "string" ? err.type : err && typeof err.name === "string" ? err.name : null;
-  return { text: typeof msg === "string" && msg !== "" ? msg : line, level: obj.level ?? obj.severity ?? null, errorName: name };
+  const errMsg = err && typeof err.message === "string" && err.message !== "" ? err.message : null;
+  return {
+    text: typeof msg === "string" && msg !== "" ? msg : line,
+    level: obj.level ?? obj.severity ?? null,
+    errorName: name,
+    errorMessage: errMsg,
+    stack: stackOfJson(obj),
+  };
 }
 
 const TRACE_RE = /^[0-9a-f]{32}$/;
@@ -159,16 +181,22 @@ export function fromLogLine(input: LogLineInput): DerivedError | null {
   const r = readableOf(input.line);
   const level = toLogLevel(input.level) ?? toLogLevel(r.level);
   if (!isErrorLevel(level)) return null;
-  const title = normaliseMessage(r.text) || "(empty message)";
+  // A joined multi-line entry (BAC-94): the title stays its first line, so groups keep their fingerprint.
+  const multi = !input.line.startsWith("{") && input.line.includes("\n");
+  const first = multi ? input.line.slice(0, input.line.indexOf("\n")) : r.text;
+  const parsed = multi ? parseErrorBlock(input.line) : null;
+  const title = normaliseMessage(first) || "(empty message)";
   const service = input.service || "unknown";
   return {
     source: ErrorSource.Log,
     fingerprint: logFingerprint(service, title),
     title,
-    type: (r.errorName ?? (level === LogLevel.Fatal ? "Fatal" : "Error")).slice(0, 200),
+    type: (parsed?.type ?? r.errorName ?? (level === LogLevel.Fatal ? "Fatal" : "Error")).slice(0, 200),
     service,
     level: level === LogLevel.Fatal ? ErrorLevel.Fatal : ErrorLevel.Error,
-    message: r.text.replace(ANSI_ESCAPE, "").slice(0, MAX_MESSAGE),
+    message: first.replace(ANSI_ESCAPE, "").slice(0, MAX_MESSAGE),
+    errorMessage: (parsed?.message ?? r.errorMessage)?.replace(ANSI_ESCAPE, "").slice(0, MAX_MESSAGE) ?? null,
+    stack: parsed?.stack ?? r.stack,
     traceId: typeof input.traceId === "string" && TRACE_RE.test(input.traceId) ? input.traceId : null,
     method: null,
     route: null,
@@ -210,6 +238,8 @@ export function fromHopEnd(input: HopEndInput): DerivedError | null {
     service,
     level: ErrorLevel.Error,
     message: errName ? `${title} (${errName})` : title,
+    errorMessage: null,
+    stack: null,
     traceId,
     method,
     route,
