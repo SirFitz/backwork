@@ -58,6 +58,12 @@ export type CollectorKind = (typeof CollectorKind)[keyof typeof CollectorKind];
 /** Service name, level and display text. The stack and agent differ only in `host`. */
 export function normalizeVrl(kind: CollectorKind): string {
   const host = kind === CollectorKind.Agent ? `.host = "__NAME__"\n` : "";
+  return `${serviceVrl(host)}
+${LEVEL_VRL}`;
+}
+
+/** Service, source, project and role from the container labels or the PM2 file name. */
+function serviceVrl(host: string): string {
   return `labels = object(.label) ?? {}
 
 # Service name (design 5.2): Coolify resource name > compose service >
@@ -78,8 +84,11 @@ if .service == "" { .service = "unknown" }
 .source = .service
 .project = to_string(get(labels, ["coolify.projectName"]) ?? "") ?? ""
 .role = to_string(get(labels, ["com.docker.compose.service"]) ?? "") ?? ""
-${host}
-# Structured JSON logs: lift level/msg.
+${host}`;
+}
+
+/** Level and display text from the line itself; shared by every collector input. */
+export const LEVEL_VRL = `# Structured JSON logs: lift level/msg.
 .level = "info"
 parsed = parse_json(.message) ?? {}
 lvl = get(parsed, ["level"]) ?? get(parsed, ["lvl"]) ?? get(parsed, ["severity"]) ?? null
@@ -106,7 +115,6 @@ if .level == "info" {
 if .level == "warning" { .level = "warn" }
 if .level == "err" || .level == "critical" || .level == "crit" { .level = "error" }
 `;
-}
 
 /** Design 5.1 / 5.2. Adds `.kind`; keeps parsed fields in metadata; never alters the line. */
 export const DETECT_VRL = `# Hop record and link line detection (design 5.1). Never drops or alters the line.
@@ -141,7 +149,9 @@ if is_object(bw_json) {
   # A host's log format may print trace_id (and more) in front of the message too: read the
   # record's own pairs, from the first "trace_id=<32 hex> hop=" on, when the line has them.
   bw_rec = parse_regex(bw_kvh, r'(?P<rec>trace_id=[0-9a-f]{32} hop=.*)$') ?? {}
-  bw_kvh = to_string(get(bw_rec, ["rec"]) ?? bw_kvh) ?? bw_kvh
+  # get() of a missing key is null, not an error: a line without such a run (a link line) keeps its head.
+  bw_recs = to_string(get(bw_rec, ["rec"]) ?? "") ?? ""
+  if bw_recs != "" { bw_kvh = bw_recs }
   bw_src = parse_key_value(bw_kvh, key_value_delimiter: "=", field_delimiter: " ") ?? {}
   # A key repeated with equal values is read once; differing values stay a list (not a record).
   bw_src = map_values(bw_src) -> |v| {
@@ -193,13 +203,22 @@ function optionalTotalVrl(target: string, field: string, divisor: number): strin
 `;
 }
 
-/** Design 5.3: the labels and values the metric transforms read, under `.bw_m`. */
-export const METRIC_PREP_VRL = `# Hop metrics input (design 5.3). Only hop records reach the metrics.
+/** Design 5.3: the labels and values the metric transforms read, under `.bw_m`. TENANT (the
+ *  records intake, BAC-96) adds the org_id and project the intake left in metadata, so the
+ *  series are scoped as an agent's remote write is by the ingest proxy. */
+export function metricPrepVrl(tenant: boolean): string {
+  const scope = tenant
+    ? `# Tenant labels, as the metrics ingest proxy stamps them on an agent's series.
+bw_m.org_id = to_string(%bw_org) ?? ""
+bw_m.project = to_string(%bw_project) ?? ""
+`
+    : "";
+  return `# Hop metrics input (design 5.3). Only hop records reach the metrics.
 if (to_string(%bw_type) ?? "") != "hop" || %bw_metrics == false { abort }
 bw_h = object(%bw_hop) ?? {}
 bw_hk = to_string(get(bw_h, ["hop"]) ?? "") ?? ""
 bw_m = {}
-bw_l = to_string(.service) ?? ""
+${scope}bw_l = to_string(.service) ?? ""
 if !match(bw_l, r'^[\\x21-\\x7e]{1,200}$') { bw_l = "" }
 bw_m.service = bw_l
 bw_m.dir = if starts_with(bw_hk, "in") { "in" } else { "out" }
@@ -220,6 +239,10 @@ if bw_m.stores == true {
 ${optionalTotalVrl("cache_hit_n", "cache_hit_n", 1)}${optionalTotalVrl("cache_miss_n", "cache_miss_n", 1)}${optionalTotalVrl("db_wait_s", "db_wait_us", 1000000)}}
 . = { "service": .service, "bw_hk": bw_hk, "bw_m": bw_m, "timestamp": .timestamp }
 `;
+}
+
+/** The stack and agent metric input (no tenant labels: the agent's are stamped by the proxy). */
+export const METRIC_PREP_VRL = metricPrepVrl(false);
 
 /** Placeholder written over protected ID fields while the filter runs. */
 const PROTECT = "BWPROTECT";
@@ -444,6 +467,91 @@ if is_string(.display) && .display != .message { bw_keep.display = .display }
 . = bw_keep
 `;
 
+// ---------------------------------------------------------------------------
+// Records intake (BAC-96)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /ingest/records (and the OTLP logs endpoint) hands lines to the stack collector's
+ * `records` input after the dashboard has authenticated the post, enforced the project's
+ * switches and excluded paths, relabelled ordinary lines and applied the organisation's filter
+ * (the same enforceStreams pass an agent's push gets). The collector then runs the collectors'
+ * own normalize / detect / controls / metric transforms on them, so a line posted here is stored
+ * and counted exactly as an agent's would be. Decision: docs/adr/0001-no-install-intake.md.
+ */
+export const RECORDS_INTAKE = { port: 8687, path: "/records" } as const;
+
+/** Fields of one event the intake posts to the `records` input (one JSON object per line). */
+export const RecordField = {
+  Message: "message",
+  Service: "service",
+  Source: "source",
+  Host: "host",
+  Project: "project",
+  OrgId: "org_id",
+  /** Receive time, Unix nanoseconds as a decimal string. */
+  Time: "bw_ts",
+  /** The Performance figures switch for this line's service (false: no hop metrics). */
+  Metrics: "bw_metrics",
+  /** The Database and cache switch for this line's service (false: no store totals). */
+  Stores: "bw_stores",
+} as const;
+export type RecordField = (typeof RecordField)[keyof typeof RecordField];
+
+/** One event for the `records` input. */
+export interface RecordEvent {
+  [RecordField.Message]: string;
+  [RecordField.Service]: string;
+  [RecordField.Source]: string;
+  [RecordField.Host]?: string;
+  [RecordField.Project]: string;
+  [RecordField.OrgId]: string;
+  [RecordField.Time]: string;
+  [RecordField.Metrics]: boolean;
+  [RecordField.Stores]: boolean;
+}
+
+/** In place of bw_normalize for posted lines: the labels come from the intake, level and display
+ *  text from the line as for every other input. */
+export const RECORDS_NORMALIZE_VRL = `# Records intake (BAC-96): authenticated, switched and filtered by the dashboard.
+.service = to_string(.${RecordField.Service}) ?? ""
+if !match(.service, r'^[\\x21-\\x7e]{1,200}$') { .service = "unknown" }
+.source = to_string(.${RecordField.Source}) ?? ""
+if .source == "" { .source = .service }
+.project = to_string(.${RecordField.Project}) ?? ""
+.host = to_string(.${RecordField.Host}) ?? ""
+%bw_org = to_string(.${RecordField.OrgId}) ?? ""
+%bw_project = .project
+%bw_rec_metrics = .${RecordField.Metrics} != false
+%bw_rec_stores = .${RecordField.Stores} != false
+bw_ns = to_int(.${RecordField.Time}) ?? 0
+if bw_ns > 0 { .timestamp = from_unix_timestamp(bw_ns, unit: "nanoseconds") ?? .timestamp }
+del(.${RecordField.Time})
+del(.${RecordField.Metrics})
+del(.${RecordField.Stores})
+del(.${RecordField.OrgId})
+
+${LEVEL_VRL}`;
+
+/** The intake already enforced the project's switches, excluded paths and service names and ran
+ *  the organisation's filter (whose built-ins it may have switched off), so the collector's
+ *  controls program here runs with everything on and no patterns: it only re-detects, reads the
+ *  NestJS level, names hop records and slims the event. */
+export function recordsSnapshot(): ControlsSnapshot {
+  return { ...defaultSnapshot(), version: "records", patterns: [] };
+}
+
+/** After bw_rec_controls: the tenant label back on the event and the per-service metric switches
+ *  the intake resolved. */
+export const RECORDS_TENANT_VRL = `# Tenant label and the intake's metric switches (BAC-96).
+.org_id = to_string(%bw_org) ?? ""
+%bw_metrics = %bw_metrics != false && %bw_rec_metrics != false
+%bw_stores = %bw_stores != false && %bw_rec_stores != false
+`;
+
+/** The records intake's metric pipeline: tenant-labelled, its own names, one limit across tenants. */
+export const RECORDS_METRICS: MetricPipeline = { prefix: "bw_rec_", input: "bw_rec_tenant", tenant: true, valueLimit: LABEL_VALUE_LIMIT * 10 };
+
 /** Docker label that marks backwork's own containers; the stack collector reads only those. */
 export const COLLECT_LABEL = "dev.backwork.collect=true";
 
@@ -482,6 +590,7 @@ function tagsYaml(keys: readonly string[], indent: number, extra: Record<string,
  *  metrics' fields is missing, which would take the existing db and cache counters with it. */
 interface OptionalStoreMetric {
   route: string;
+  /** Transform name after the pipeline prefix. */
   transform: string;
   metric: MetricName;
   /** Field under `.bw_m`, set by METRIC_PREP_VRL only when the record carries the total. */
@@ -490,74 +599,97 @@ interface OptionalStoreMetric {
 }
 
 const OPTIONAL_STORE_METRICS: readonly OptionalStoreMetric[] = [
-  { route: "cache_hits", transform: "bw_hop_store_cache_hit", metric: MetricName.StoreCalls, field: "cache_hit_n", store: StoreSeries.CacheHit },
-  { route: "cache_misses", transform: "bw_hop_store_cache_miss", metric: MetricName.StoreCalls, field: "cache_miss_n", store: StoreSeries.CacheMiss },
-  { route: "db_waits", transform: "bw_hop_store_db_wait", metric: MetricName.StoreSeconds, field: "db_wait_s", store: StoreSeries.DbWait },
+  { route: "cache_hits", transform: "hop_store_cache_hit", metric: MetricName.StoreCalls, field: "cache_hit_n", store: StoreSeries.CacheHit },
+  { route: "cache_misses", transform: "hop_store_cache_miss", metric: MetricName.StoreCalls, field: "cache_miss_n", store: StoreSeries.CacheMiss },
+  { route: "db_waits", transform: "hop_store_db_wait", metric: MetricName.StoreSeconds, field: "db_wait_s", store: StoreSeries.DbWait },
 ];
 
-/** The metric transforms shared by both collectors (design 5.3). */
-export function metricTransformsYaml(): string {
+/** Where a copy of the metric transforms reads from and what it is called. */
+export interface MetricPipeline {
+  /** Prefix of every transform name ("bw_" for the collectors' own pipeline). */
+  prefix: string;
+  /** The transform whose output feeds the metrics. */
+  input: string;
+  /** Add org_id and project labels (the records intake). */
+  tenant: boolean;
+  /** Distinct values per label (tag_cardinality_limit). */
+  valueLimit: number;
+}
+
+/** The collectors' own metric pipeline: what the stack and the agent have always generated. */
+export const COLLECTOR_METRICS: MetricPipeline = { prefix: "bw_", input: "bw_controls", tenant: false, valueLimit: LABEL_VALUE_LIMIT };
+
+/** The metric transforms shared by both collectors (design 5.3), and by the records intake
+ *  (BAC-96) under its own names with tenant labels. */
+export function metricTransformsYaml(p: MetricPipeline = COLLECTOR_METRICS): string {
+  const n = (name: string): string => p.prefix + name;
+  const scope = p.tenant ? ["org_id", "project"] : [];
+  const tags = {
+    duration: [...TAGS.duration, ...scope],
+    started: [...TAGS.started, ...scope],
+    store: [...TAGS.store, ...scope],
+  };
   const storeMetric = (name: MetricName, field: string, store: string): string => `      - type: counter
         field: bw_m.${field}
         increment_by_value: true
         name: ${name}
         tags:
-${tagsYaml(TAGS.store, 10, { store })}`;
-  return `  bw_metric_prep:
+${tagsYaml(tags.store, 10, { store })}`;
+  return `  ${n("metric_prep")}:
     type: remap
-    inputs: [bw_controls]
+    inputs: [${p.input}]
     drop_on_abort: true
     source: |
-${inlineVrl(METRIC_PREP_VRL, 6)}
+${inlineVrl(metricPrepVrl(p.tenant), 6)}
 
-  bw_hop_route:
+  ${n("hop_route")}:
     type: route
-    inputs: [bw_metric_prep]
+    inputs: [${n("metric_prep")}]
     route:
       ends: '(.bw_hk == "in_end" || .bw_hk == "out_end") && exists(.bw_m.duration_s)'
       starts: '.bw_hk == "in" || .bw_hk == "out"'
       stores: '.bw_m.stores == true'
 ${OPTIONAL_STORE_METRICS.map((m) => `      ${m.route}: '.bw_m.stores == true && exists(.bw_m.${m.field})'\n`).join("")}
-  bw_hop_duration:
+  ${n("hop_duration")}:
     type: log_to_metric
-    inputs: [bw_hop_route.ends]
+    inputs: [${n("hop_route")}.ends]
     metrics:
       - type: histogram
         field: bw_m.duration_s
         name: ${MetricName.Duration}
         tags:
-${tagsYaml(TAGS.duration, 10)}
+${tagsYaml(tags.duration, 10)}
 
-  bw_hop_started:
+  ${n("hop_started")}:
     type: log_to_metric
-    inputs: [bw_hop_route.starts]
+    inputs: [${n("hop_route")}.starts]
     metrics:
       - type: counter
         field: bw_hk
         name: ${MetricName.Started}
         tags:
-${tagsYaml(TAGS.started, 10)}
+${tagsYaml(tags.started, 10)}
 
-  bw_hop_store:
+  ${n("hop_store")}:
     type: log_to_metric
-    inputs: [bw_hop_route.stores]
+    inputs: [${n("hop_route")}.stores]
     metrics:
 ${storeMetric(MetricName.StoreSeconds, "db_s", "db")}
 ${storeMetric(MetricName.StoreSeconds, "cache_s", "cache")}
 ${storeMetric(MetricName.StoreCalls, "db_n", "db")}
 ${storeMetric(MetricName.StoreCalls, "cache_n", "cache")}
 ${OPTIONAL_STORE_METRICS.map((m) => `
-  ${m.transform}:
+  ${n(m.transform)}:
     type: log_to_metric
-    inputs: [bw_hop_route.${m.route}]
+    inputs: [${n("hop_route")}.${m.route}]
     metrics:
 ${storeMetric(m.metric, m.field, m.store)}
 `).join("")}
-  bw_hop_cardinality:
+  ${n("hop_cardinality")}:
     type: tag_cardinality_limit
-    inputs: [bw_hop_duration, bw_hop_started, bw_hop_store, ${OPTIONAL_STORE_METRICS.map((m) => m.transform).join(", ")}]
+    inputs: [${n("hop_duration")}, ${n("hop_started")}, ${n("hop_store")}, ${OPTIONAL_STORE_METRICS.map((m) => n(m.transform)).join(", ")}]
     mode: exact
-    value_limit: ${LABEL_VALUE_LIMIT}
+    value_limit: ${p.valueLimit}
     limit_exceeded_action: drop_tag
 `;
 }
@@ -605,6 +737,20 @@ sources:
   vector_metrics:
     type: internal_metrics
 
+  # Lines posted to /ingest/records and /ingest/otlp/v1/logs, after the dashboard's
+  # authentication, switches and filter (BAC-96). Reachable only on the compose network.
+  records:
+    type: http_server
+    address: 0.0.0.0:${RECORDS_INTAKE.port}
+    path: ${RECORDS_INTAKE.path}
+    method: POST
+    framing:
+      method: newline_delimited
+    decoding:
+      codec: json
+    acknowledgements:
+      enabled: true
+
 transforms:
   bw_normalize:
     type: remap
@@ -626,6 +772,32 @@ ${inlineVrl(DETECT_VRL, 6)}
 ${inlineVrl(controlsVrl(defaultSnapshot()), 6)}
 
 ${metricTransformsYaml()}
+  bw_rec_normalize:
+    type: remap
+    inputs: [records]
+    source: |
+${inlineVrl(RECORDS_NORMALIZE_VRL, 6)}
+
+  bw_rec_detect:
+    type: remap
+    inputs: [bw_rec_normalize]
+    source: |
+${inlineVrl(DETECT_VRL, 6)}
+
+  bw_rec_controls:
+    type: remap
+    inputs: [bw_rec_detect]
+    drop_on_abort: true
+    source: |
+${inlineVrl(controlsVrl(recordsSnapshot()), 6)}
+
+  bw_rec_tenant:
+    type: remap
+    inputs: [bw_rec_controls]
+    source: |
+${inlineVrl(RECORDS_TENANT_VRL, 6)}
+
+${metricTransformsYaml(RECORDS_METRICS)}
 sinks:
   loki:
     type: loki
@@ -641,9 +813,27 @@ sinks:
     out_of_order_action: accept
     remove_label_fields: false
 
+  # Posted lines, stamped with their organisation and project as the ingest proxy stamps an agent's.
+  loki_records:
+    type: loki
+    inputs: [bw_rec_tenant]
+    endpoint: http://loki:3100
+    encoding:
+      codec: json
+    labels:
+      service: "{{ service }}"
+      source: "{{ source }}"
+      host: "{{ host }}"
+      level: "{{ level }}"
+      kind: "{{ kind }}"
+      org_id: "{{ org_id }}"
+      project: "{{ project }}"
+    out_of_order_action: accept
+    remove_label_fields: false
+
   prometheus:
     type: prometheus_exporter
-    inputs: [vector_metrics, bw_hop_cardinality]
+    inputs: [vector_metrics, bw_hop_cardinality, bw_rec_hop_cardinality]
     address: 0.0.0.0:9598
     buckets: ${bucketsYaml}
     # Keep idle hop series for 15 minutes so rate() sees no false resets.

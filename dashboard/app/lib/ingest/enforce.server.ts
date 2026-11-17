@@ -14,6 +14,7 @@ import {
   applyFilter,
   canonicalRows,
   resolveAll,
+  type CollectorFeature,
   type CompiledFilter,
   type ControlRow,
 } from "~/lib/controls.server";
@@ -188,6 +189,26 @@ export interface EnforceResult {
   errors: DerivedError[];
 }
 
+/** The switches that apply to one stream, and the service name its ordinary lines are stored
+ *  under when the source's hop records name one (BAC-51). */
+export interface StreamSwitches {
+  /** The service the source's hop records name, or null (labels kept as sent). */
+  own: string | null;
+  /** The service switches resolve on. */
+  service: string | null;
+  on: Record<CollectorFeature, boolean>;
+}
+
+/** Resolve the switches for a stream's labels, as enforceStreams does for every stream. */
+export function streamSwitches(labels: Readonly<Record<string, string>>, ctx: EnforceContext): StreamSwitches {
+  const sent = typeof labels.service === "string" ? labels.service : null;
+  const source = typeof labels.source === "string" ? labels.source : null;
+  const own = source !== null ? ctx.serviceOf?.get(source) ?? null : null;
+  const service = own ?? sent;
+  const on = resolveAll(ctx.serviceOf ? canonicalRows(ctx.rows, ctx.serviceOf) : ctx.rows, ctx.projectId, service);
+  return { own, service, on };
+}
+
 function isDataStore(c: Classified): boolean {
   return c.kind === LineKind.Hop && (c.fields.via === "db" || c.fields.via === "cache");
 }
@@ -205,11 +226,7 @@ export function enforceStreams(streams: readonly LokiStream[], ctx: EnforceConte
   const errors: DerivedError[] = [];
   for (const s of streams) {
     if (!isObject(s) || !isObject(s.stream) || !Array.isArray(s.values)) continue;
-    const sent = typeof s.stream.service === "string" ? s.stream.service : null;
-    const source = typeof s.stream.source === "string" ? s.stream.source : null;
-    const own = source !== null ? ctx.serviceOf?.get(source) ?? null : null;
-    const service = own ?? sent;
-    const on = resolveAll(ctx.serviceOf ? canonicalRows(ctx.rows, ctx.serviceOf) : ctx.rows, ctx.projectId, service);
+    const { own, service, on } = streamSwitches(s.stream, ctx);
     for (const v of s.values) {
       if (!Array.isArray(v) || typeof v[0] !== "string" || typeof v[1] !== "string") continue;
       const line = v[1];

@@ -85,6 +85,12 @@ anything is saved. Hop records are kept 30 days, ordinary lines 7.
   counted either. The ingest proxy applies the same rule again to log pushes. The query string is
   ignored. Hop metrics written straight to the metrics endpoint are not path-filtered there (they
   carry no path), which is why the agent drops first.
+- No agent, no server change (BAC-96): services can post hop records, link lines and their own
+  log lines to `POST /ingest/records` (newline-delimited text, gzip optional, project ingest token
+  as Bearer, `x-backwork-token` or in the URL; Correlator's `CORRELATOR_RECORD_SINK` posts this
+  format). The dashboard enforces the switches and filter, then hands the lines to the stack
+  collector's internal `records` input, which runs the same generated transforms as the agent.
+  Decision: `docs/adr/0001-no-install-intake.md`.
 - Agents on hosts that run services under PM2 read PM2's log files too
   (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
 - Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local

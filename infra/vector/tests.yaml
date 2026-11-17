@@ -71,6 +71,19 @@ tests:
           - type: vrl
             source: assert_eq!(.kind, "hop")
 
+  - name: a kv link line on its own is kind hop (every output checked, not one of two)
+    inputs:
+      - insert_at: bw_normalize
+        type: log
+        log_fields:
+          container_name: commerce-api
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa link_name=order_id link_value=7731 hop_id=1f0a6c2e9b7d4405"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "hop")
+
   - name: ordinary and malformed lines are kind log and untouched
     inputs:
       - insert_at: bw_normalize
@@ -591,3 +604,130 @@ tests:
         conditions:
           - type: vrl
             source: assert_eq!(.level, "error")
+
+  # Records intake (BAC-96): lines the dashboard authenticated, switched and filtered, posted to
+  # the `records` input. Same detection, controls and metric transforms, tenant labels kept.
+  - name: records intake - a posted hop end record is a hop under its own service, with tenant labels
+    inputs:
+      - insert_at: bw_rec_normalize
+        type: log
+        log_fields:
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=POST op=/orders outcome=ok status=201 duration_us=61200 db_n=2 db_us=6400"
+          service: shop-api
+          source: shop-web
+          host: web-1
+          project: production
+          org_id: org-test
+          bw_ts: "1763400000123456789"
+          bw_metrics: true
+          bw_stores: true
+    outputs:
+      - extract_from: bw_rec_tenant
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert_eq!(.service, "shop-api")
+              assert_eq!(.source, "shop-web")
+              assert_eq!(.host, "web-1")
+              assert_eq!(.project, "production")
+              assert_eq!(.org_id, "org-test")
+              assert_eq!(.level, "info")
+              assert_eq!(.timestamp, t'2025-11-17T17:20:00.123456789Z')
+              assert!(!exists(.bw_ts))
+              assert!(!exists(.bw_metrics))
+              assert_eq!(.message, "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=POST op=/orders outcome=ok status=201 duration_us=61200 db_n=2 db_us=6400")
+      - extract_from: bw_rec_metric_prep
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bw_m.org_id, "org-test")
+              assert_eq!(.bw_m.project, "production")
+              assert_eq!(.bw_m.service, "shop-api")
+              assert_eq!(.bw_m.duration_s, 0.0612)
+              assert_eq!(.bw_m.stores, true)
+              assert_eq!(.bw_m.db_n, 2.0)
+
+  - name: records intake - an ordinary JSON line is a log with its level and display text
+    inputs:
+      - insert_at: bw_rec_normalize
+        type: log
+        log_fields:
+          message: '{"level":"error","msg":"charge failed","trace_id":"6503f5f183b828139d5b143365ad72fa"}'
+          service: shop-api
+          source: shop-api
+          project: production
+          org_id: org-test
+          bw_ts: "1763400000000000000"
+          bw_metrics: true
+          bw_stores: true
+    outputs:
+      - extract_from: bw_rec_tenant
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "log")
+              assert_eq!(.level, "error")
+              assert_eq!(.display, "charge failed")
+              assert_eq!(.service, "shop-api")
+              assert!(!exists(.host))
+
+  - name: records intake - no second filter pass (the dashboard ran the organisation's own patterns)
+    inputs:
+      - insert_at: bw_rec_normalize
+        type: log
+        log_fields:
+          message: "login ok password=hunter2 email=a@b.example"
+          service: shop-api
+          source: shop-api
+          project: production
+          org_id: org-test
+          bw_ts: "1763400000000000000"
+          bw_metrics: true
+          bw_stores: true
+    outputs:
+      - extract_from: bw_rec_tenant
+        conditions:
+          - type: vrl
+            source: assert_eq!(.message, "login ok password=hunter2 email=a@b.example")
+
+  - name: records intake - Performance figures off for the service makes no metrics
+    no_outputs_from: [bw_rec_metric_prep, bw_rec_hop_duration, bw_rec_hop_started, bw_rec_hop_store]
+    inputs:
+      - insert_at: bw_rec_normalize
+        type: log
+        log_fields:
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=POST op=/orders outcome=ok status=201 duration_us=61200"
+          service: shop-api
+          source: shop-api
+          project: production
+          org_id: org-test
+          bw_ts: "1763400000000000000"
+          bw_metrics: false
+          bw_stores: true
+    outputs:
+      - extract_from: bw_rec_tenant
+        conditions:
+          - type: vrl
+            source: assert_eq!(.kind, "hop")
+
+  - name: records intake - Database and cache off for the service leaves store totals out of the metrics
+    inputs:
+      - insert_at: bw_rec_normalize
+        type: log
+        log_fields:
+          message: "trace_id=6503f5f183b828139d5b143365ad72fa hop=in_end hop_id=5d9e0b3347c1a2f8 parent_id=b7ad6b7169203331 service=shop-api adapter=hono via=http method=POST op=/orders outcome=ok status=201 duration_us=61200"
+          service: shop-api
+          source: shop-api
+          project: production
+          org_id: org-test
+          bw_ts: "1763400000000000000"
+          bw_metrics: true
+          bw_stores: false
+    outputs:
+      - extract_from: bw_rec_metric_prep
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bw_m.stores, false)
+              assert_eq!(.bw_m.org_id, "org-test")

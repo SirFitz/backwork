@@ -6,10 +6,8 @@ import { getExcludedPathMatcher } from "~/lib/excluded-paths.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
 import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
-import { isCapped } from "~/lib/plans/limits";
-import { addToBucket, addToDaily, orgLimits } from "~/lib/plans/usage.server";
 import { startBackgroundJobs } from "~/lib/jobs.server";
-import { derivedErrorSink } from "~/lib/errors-store.server";
+import { afterStored } from "~/lib/ingest/stored.server";
 
 // Authenticated proxy for external agents: Vector's loki sink posts here as
 // <endpoint>/loki/api/v1/push. The bearer token resolves to an org + project;
@@ -64,19 +62,10 @@ export async function action({ request }: ActionFunctionArgs) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ streams: result.streams }),
     });
-    // A metered organisation's intake is counted per day (the Usage page). A limited one also keeps a
-    // rolling window: count what was stored per 5 minutes, and the trim job drops the oldest.
-    if (res.ok) {
-      // Error groups from error-level lines and 5xx requests (BAC-85): off the request path, never awaited,
-      // failures counted and swallowed inside the sink. Only after Loki took the push, so a retried push is not counted twice.
-      derivedErrorSink().submit(tenant.orgId, tenant.project, result.errors);
-      const limits = await orgLimits(tenant.orgId);
-      if (limits) {
-        const add = { requests: result.requests, bytes: result.bytes };
-        await addToDaily(tenant.orgId, add).catch(() => undefined);
-        if (isCapped(limits)) await addToBucket(tenant.orgId, add).catch(() => undefined);
-      }
-    }
+    // A metered organisation's intake is counted per day (the Usage page); a limited one also keeps a
+    // rolling window per 5 minutes, which the trim job drops oldest first (afterStored).
+    // Error groups (BAC-85) and metered intake, only after Loki took the push.
+    if (res.ok) await afterStored(tenant, result);
     // Loki answers a push with 204 and no body; a 204 response may not carry one, so build it empty.
     const upstream = await res.text();
     return new Response(upstream === "" || res.status === 204 ? null : upstream, { status: res.status });

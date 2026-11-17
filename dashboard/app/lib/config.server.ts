@@ -4,6 +4,8 @@ export const config = {
   suggestAiModel: process.env.SUGGEST_AI_MODEL || "claude-sonnet-5-5",
   lokiUrl: process.env.LOKI_URL || "http://loki:3100",
   vmUrl: process.env.VM_URL || "http://victoriametrics:8428",
+  // The stack collector's records input (BAC-96, RECORDS_INTAKE in lib/agent/vector-config.server.ts).
+  recordsCollectorUrl: process.env.RECORDS_COLLECTOR_URL || "http://vector:8687/records",
   dataDir: process.env.DATA_DIR || "/data",
   // bearer token external agents present to the ingest proxy
   ingestToken: process.env.INGEST_TOKEN || "",

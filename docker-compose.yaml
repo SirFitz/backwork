@@ -5,7 +5,8 @@
 #   postgres        users, orgs, projects, switches, filter patterns
 #   vector          collector: tails backwork's OWN containers (the ones labelled
 #                   dev.backwork.collect=true) -> Loki, detects hop records,
-#                   filters sensitive data, hop metrics. It mounts the Docker
+#                   filters sensitive data, hop metrics. Also stores the lines
+#                   the dashboard takes at /ingest/records and /ingest/otlp/v1/logs. It mounts the Docker
 #                   socket read-only because that is how Vector reads container logs.
 #   backwork        the dashboard: queries Loki and VictoriaMetrics
 # Every other service, on this host or another, ships with the agent
@@ -64,6 +65,9 @@ services:
     command: --config /etc/vector/vector.yaml
     expose:
       - "9598"
+      # records input: lines from /ingest/records and /ingest/otlp/v1/logs, posted by the
+      # dashboard after authentication, switches and filter (BAC-96). Compose network only.
+      - "8687"
     depends_on:
       - loki
 
@@ -92,6 +96,7 @@ services:
       - loki
       - victoriametrics
       - postgres
+      - vector
 
 volumes:
   loki-data:

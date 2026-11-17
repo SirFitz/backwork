@@ -2,7 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FEATURES, type Feature } from "~/lib/controls.server";
-import { HOP_BUCKETS, agentConfigYaml, controlsVrl, defaultSnapshot, inlineVrl, stackConfigYaml, vrlRegex } from "./vector-config.server";
+import {
+  COLLECTOR_METRICS,
+  HOP_BUCKETS,
+  RECORDS_INTAKE,
+  RECORDS_METRICS,
+  agentConfigYaml,
+  controlsVrl,
+  defaultSnapshot,
+  inlineVrl,
+  metricTransformsYaml,
+  recordsSnapshot,
+  stackConfigYaml,
+  vrlRegex,
+} from "./vector-config.server";
 
 describe("vector config", () => {
   test("infra/vector/vector.yaml is generated from this module (run bun infra/vector/generate.ts)", () => {
@@ -59,5 +72,30 @@ describe("vector config", () => {
     // The existing store transform keeps exactly its four counters.
     const store = stackConfigYaml().split("  bw_hop_store:\n")[1].split("\n\n")[0];
     expect(store.match(/- type: counter/g)?.length).toBe(4);
+  });
+});
+
+describe("records intake (BAC-96)", () => {
+  test("the stack collector has the records input and pipeline; the agent does not", () => {
+    const y = stackConfigYaml();
+    expect(y).toContain(`type: http_server\n    address: 0.0.0.0:${RECORDS_INTAKE.port}\n    path: ${RECORDS_INTAKE.path}`);
+    for (const t of ["bw_rec_normalize", "bw_rec_detect", "bw_rec_controls", "bw_rec_tenant", "bw_rec_metric_prep", "bw_rec_hop_cardinality", "loki_records"]) expect(y).toContain(`  ${t}:\n`);
+    expect(y).toContain("inputs: [vector_metrics, bw_hop_cardinality, bw_rec_hop_cardinality]");
+    expect(y).toContain('org_id: "{{ org_id }}"');
+    expect(agentConfigYaml()).not.toContain("bw_rec_");
+  });
+  test("the records copy of the metrics adds tenant labels and nothing else", () => {
+    const own = metricTransformsYaml(COLLECTOR_METRICS);
+    const rec = metricTransformsYaml(RECORDS_METRICS);
+    expect(own).not.toContain("org_id");
+    const normalise = (s: string): string =>
+      s.replaceAll("bw_rec_", "bw_").replace(/\n {10}org_id: "\{\{ bw_m\.org_id \}\}"\n {10}project: "\{\{ bw_m\.project \}\}"/g, "").replace(/ *# Tenant labels[^\n]*\n[^\n]*\n[^\n]*\n/, "").replace(/value_limit: \d+/, "");
+    expect(normalise(rec).replace("inputs: [bw_tenant]", "inputs: [bw_controls]")).toBe(normalise(own));
+  });
+  test("the records controls program enforces nothing the intake already did and runs no filter", () => {
+    const v = controlsVrl(recordsSnapshot());
+    expect(v).not.toContain("BWPROTECT");
+    expect(v).not.toContain("Excluded paths");
+    expect(v).not.toMatch(/= false\n/);
   });
 });
