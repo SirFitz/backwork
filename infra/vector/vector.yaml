@@ -59,7 +59,9 @@ transforms:
     type: reduce
     inputs: [bw_join_lines]
     group_by: [container_id, stream, file]
-    expire_after_ms: 1000
+    # Longer than bw_join_lines waits, so a header is still open when the entry after it, held by
+    # bw_join_lines until its own timeout, arrives.
+    expire_after_ms: 2500
     flush_period_ms: 250
     max_events: 20
     merge_strategies:

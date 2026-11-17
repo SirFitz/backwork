@@ -72,4 +72,11 @@ describe("joinSplitEntries (BAC-94)", () => {
     expect(e.traceId).toBe("e2b146c09e2c8027f37cb280ed949389");
     expect(r.kept).toBe(1);
   });
+  test("a header followed by an entry the collector already joined from the Name: line is joined", () => {
+    const streams: LokiStream[] = [
+      { stream: labels("error"), values: [[String(T0), env("[error] GET /login | GET /login")]] },
+      { stream: labels("info"), values: [[String(T0 + 900_000_000n), env("ApiError: GET /a failed: ECONNREFUSED\n    at /a.js:1:2")]] },
+    ];
+    expect(messages(joinSplitEntries(streams))).toEqual(["[error] GET /login | GET /login\nApiError: GET /a failed: ECONNREFUSED\n    at /a.js:1:2"]);
+  });
 });

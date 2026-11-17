@@ -739,7 +739,9 @@ ${inlineVrl(`!match(to_string(.message) ?? "", ${vrlRegex(CONTINUATION_PATTERN)}
     type: reduce
     inputs: [bw_join_lines]
     group_by: ${group}
-    expire_after_ms: ${JOIN_TIMEOUT_MS}
+    # Longer than bw_join_lines waits, so a header is still open when the entry after it, held by
+    # bw_join_lines until its own timeout, arrives.
+    expire_after_ms: ${JOIN_TIMEOUT_MS * 2 + 500}
     flush_period_ms: 250
     max_events: 20
     merge_strategies:

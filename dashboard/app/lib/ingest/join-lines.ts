@@ -77,11 +77,13 @@ function entryOf(s: LokiStream, si: number, vi: number): Entry | null {
 function joins(b: Block, e: Entry): boolean {
   if (e.ns < b.lastNs || e.ns - b.lastNs > BigInt(JOIN_TIMEOUT_MS) * NS_PER_MS) return false;
   if (b.lines.length >= JOIN_MAX_LINES || b.chars + e.text.length > JOIN_MAX_CHARS) return false;
-  if (e.text.includes("\n")) return false;
-  const role = lineRole(e.text);
-  if (role === LineRole.Continuation) return true;
-  // `Name: message` directly after the header line(s).
+  const multi = e.text.includes("\n");
+  const role = lineRole(multi ? e.text.slice(0, e.text.indexOf("\n")) : e.text);
+  // `Name: message` directly after a bare header line; also an entry a collector already joined
+  // from that line on (its timer closed the header before the rest arrived).
   if (role === LineRole.Detail) return !b.sawName && b.lines.length === 1 && ERROR_HEADER_RE.test(b.lines[0]);
+  if (multi) return false;
+  if (role === LineRole.Continuation) return true;
   // The template's message after its excerpt and a blank line.
   return b.sawExcerpt && b.lastBlank;
 }
@@ -90,7 +92,7 @@ function add(b: Block, e: Entry): void {
   b.lines.push(e.text);
   b.lastNs = e.ns;
   b.chars += e.text.length + 1;
-  if (lineRole(e.text) === LineRole.Detail) b.sawName = true;
+  if (lineRole(e.text.split("\n", 1)[0]) === LineRole.Detail) b.sawName = true;
   if (EXCERPT_LINE_RE.test(e.text)) b.sawExcerpt = true;
   b.lastBlank = e.text.trim() === "";
 }
