@@ -30,6 +30,10 @@ export interface OccurrencePayload {
   source: ErrorSource;
   type: string;
   message: string;
+  /** The exception's own message, read from a multi-line entry or a JSON logger's err (BAC-94). */
+  errorMessage: string | null;
+  /** Its stack (BAC-94). */
+  stack: string | null;
   service: string;
   level: ErrorLevel;
   traceId: string | null;
@@ -108,7 +112,7 @@ const MINUTE = 60_000;
 
 function payloadOf(e: DerivedError): OccurrencePayload {
   return {
-    source: e.source, type: e.type, message: e.message, service: e.service, level: e.level,
+    source: e.source, type: e.type, message: e.message, errorMessage: e.errorMessage, stack: e.stack, service: e.service, level: e.level,
     traceId: e.traceId, method: e.method, route: e.route, status: e.status, at: new Date(e.at).toISOString(),
   };
 }

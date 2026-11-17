@@ -731,3 +731,310 @@ tests:
             source: |
               assert_eq!(.bw_m.stores, false)
               assert_eq!(.bw_m.org_id, "org-test")
+
+  # BAC-94: multi-line entries are joined per container stream before anything reads them.
+  - name: the Courier Portal error block (header, ReferenceError, ejs excerpt, blank, message, stack, extra) is one error event (BAC-94)
+    inputs:
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "trace_id=9f1525b762a0cf80ecd25c085077dc63 hop=in hop_id=cdec18e36b928ffa parent_id=fe576d9479dd7370 service=courier-portal-client adapter=express via=http method=GET op=/login path=/login"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "[error] Uncaught in GET /help | GET /help | company 12 | user 34"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "ReferenceError: /app/views/pages/help.ejs:1"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: " >> 1| <%- include(partialhead); %>"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "    2| <script src=\"https://www.google.com/recaptcha/api.js\"></script>"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "    3| <script>"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: ""
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "partialhead is not defined"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "    at eval (/app/views/pages/help.ejs:10:25)"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "    at help (/app/node_modules/ejs/lib/ejs.js:691:17)"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "    at tryHandleCache (/app/node_modules/ejs/lib/ejs.js:272:36)"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "extra: {\"route\":\"/help\"} trace_id=e2b146c09e2c8027f37cb280ed949389"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp1
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "GET /healthz 200 0.4ms"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "[error] Uncaught in GET /help | GET /help | company 12 | user 34\nReferenceError: /app/views/pages/help.ejs:1\n >> 1| <%- include(partialhead); %>\n    2| <script src=\"https://www.google.com/recaptcha/api.js\"></script>\n    3| <script>\n\npartialhead is not defined\n    at eval (/app/views/pages/help.ejs:10:25)\n    at help (/app/node_modules/ejs/lib/ejs.js:691:17)\n    at tryHandleCache (/app/node_modules/ejs/lib/ejs.js:272:36)\nextra: {\"route\":\"/help\"} trace_id=e2b146c09e2c8027f37cb280ed949389")
+              assert_eq!(.level, "error")
+              assert_eq!(.kind, "log")
+          - type: vrl
+            source: |
+              assert_eq!(.kind, "hop")
+              assert!(!contains(to_string(.message) ?? "", "\n"))
+          - type: vrl
+            source: |
+              assert_eq!(.message, "GET /healthz 200 0.4ms")
+  - name: an ApiError / ECONNREFUSED block is one event, its header keeps the error level (BAC-94)
+    inputs:
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp2
+          container_name: prod-courier-portal-api
+          stream: stderr
+          message: "[error] GET /login | GET /login | API GET http://api:3000/api/company/get/byclientdomain/x -> ECONNREFUSED"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp2
+          container_name: prod-courier-portal-api
+          stream: stderr
+          message: "ApiError: GET /company/get/byclientdomain/:id failed: ECONNREFUSED"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp2
+          container_name: prod-courier-portal-api
+          stream: stderr
+          message: "    at /app/routes/routes.web.js:118:9"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp2
+          container_name: prod-courier-portal-api
+          stream: stderr
+          message: "    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "[error] GET /login | GET /login | API GET http://api:3000/api/company/get/byclientdomain/x -> ECONNREFUSED\nApiError: GET /company/get/byclientdomain/:id failed: ECONNREFUSED\n    at /app/routes/routes.web.js:118:9\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)")
+              assert_eq!(.level, "error")
+  - name: a run of ordinary one-line logs stays one event per line, and a dump joins its opening line (BAC-94)
+    inputs:
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "GET /healthz 200 0.4ms"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "Successfully uploaded object: courierportal/file-1.jpeg"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "LOGIN POST - Session company got lost for  34.127.55.151"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "Redirecting to login page  due to captcha"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "V5 Package FOR HOST and endpoint api.example ["
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "  {"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "    Coloaded: false,"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "    Pieces: 1"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "  }"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "] trace_id=5e27b0d3924a5c19c168825047ddfc4e"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp3
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "GET /healthz 200 0.4ms"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "GET /healthz 200 0.4ms")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Successfully uploaded object: courierportal/file-1.jpeg")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "LOGIN POST - Session company got lost for  34.127.55.151")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Redirecting to login page  due to captcha")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "V5 Package FOR HOST and endpoint api.example [\n  {\n    Coloaded: false,\n    Pieces: 1\n  }\n] trace_id=5e27b0d3924a5c19c168825047ddfc4e")
+              assert_eq!(.level, "info")
+  - name: an error name line after an ordinary line, or on another stream, is not joined to it (BAC-94)
+    inputs:
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp4
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "Successfully uploaded object: a.jpeg"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp4
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "Error: boom"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp4
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "    at main (/app/x.js:1:1)"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp4
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "[error] Sending email | company 26"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp4
+          container_name: prod-courier-portal-client
+          stream: stdout
+          message: "Redirecting to login page"
+      - insert_at: bw_join_route
+        type: log
+        log_fields:
+          container_id: cp5
+          container_name: prod-courier-portal-client
+          stream: stderr
+          message: "Error: from another container"
+    outputs:
+      - extract_from: bw_controls
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Successfully uploaded object: a.jpeg")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Error: boom\n    at main (/app/x.js:1:1)")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "[error] Sending email | company 26")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Redirecting to login page")
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Error: from another container")

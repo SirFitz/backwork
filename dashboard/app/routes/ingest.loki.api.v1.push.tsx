@@ -4,6 +4,7 @@ import { config } from "~/lib/config.server";
 import { getCompiledFilter, getControls } from "~/lib/controls.server";
 import { getExcludedPathMatcher } from "~/lib/excluded-paths.server";
 import { enforceStreams, type LokiStream } from "~/lib/ingest/enforce.server";
+import { joinSplitEntries } from "~/lib/ingest/join-lines";
 import { resolveIngestToken, tenantOf } from "~/lib/tenant.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
 import { startBackgroundJobs } from "~/lib/jobs.server";
@@ -52,7 +53,8 @@ export async function action({ request }: ActionFunctionArgs) {
     serviceNamesWithin(tenantOf(tenant.orgId), 1500),
     getExcludedPathMatcher(tenant.orgId, tenant.projectId),
   ]);
-  const result = enforceStreams(streams, { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource, excluded, deriveErrors: true });
+  // Older agents send a multi-line error one line per newline: put it back together first (BAC-94).
+  const result = enforceStreams(joinSplitEntries(streams), { projectId: tenant.projectId, rows, filter, serviceOf: names.bySource, excluded, deriveErrors: true });
   for (const s of result.streams) s.stream = { ...s.stream, org_id: tenant.orgId, project: tenant.project };
   if (result.streams.length === 0) return new Response(null, { status: 204 });
 

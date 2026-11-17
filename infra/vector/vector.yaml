@@ -37,9 +37,57 @@ sources:
       enabled: true
 
 transforms:
+  bw_join_route:
+    type: route
+    inputs: [docker]
+    route:
+      solo: 'match(to_string(.message) ?? "", r''^\{|trace_id=[0-9a-f]{32} (?:hop=|link_name=)'')'
+
+  bw_join_lines:
+    type: reduce
+    inputs: [bw_join_route._unmatched]
+    group_by: [container_id, stream, file]
+    expire_after_ms: 1000
+    flush_period_ms: 250
+    max_events: 200
+    merge_strategies:
+      message: concat_newline
+    starts_when: |
+      !match(to_string(.message) ?? "", r'^(?:\s*$$|[ \t]|extra: |[\]})]+[,;]?(?:\s+trace_id=[0-9a-f]{32})?\s*$$)')
+
+  bw_join_blocks:
+    type: reduce
+    inputs: [bw_join_lines]
+    group_by: [container_id, stream, file]
+    # Longer than bw_join_lines waits, so a header is still open when the entry after it, held by
+    # bw_join_lines until its own timeout, arrives.
+    expire_after_ms: 2500
+    flush_period_ms: 250
+    max_events: 20
+    merge_strategies:
+      message: concat_newline
+    ends_when: |
+      m = to_string(.message) ?? ""
+      # Keep the entry open after a bare error header, or a template excerpt ending in a blank line.
+      header = !contains(m, "\n") && match(m, r'^(?:\[(?:error|fatal|warn|warning|critical)\]|(?:\x1b\[[0-9;]*m)*\[Nest\][^\n]*\s(?:\x1b\[[0-9;]*m)?(?:ERROR|FATAL)(?:\x1b\[[0-9;]*m)?\s)')
+      excerpt = match(m, r'\n\s*$$') && match(m, r'(?m)^\s*>>\s*\d+\|')
+      !(header || excerpt)
+
+  bw_join_tidy:
+    type: remap
+    inputs: [bw_join_blocks]
+    source: |
+      m = to_string(.message) ?? ""
+      if contains(m, "\n") {
+        m = replace(m, r'\s+$$', "")
+        if strlen(m) > 32768 { m = truncate(m, limit: 32768) }
+        .message = m
+      }
+      del(.timestamp_end)
+
   bw_normalize:
     type: remap
-    inputs: [docker]
+    inputs: [bw_join_tidy, bw_join_route.solo]
     source: |
       labels = object(.label) ?? {}
 
@@ -75,9 +123,11 @@ transforms:
       if msg != null { .display = to_string(msg) ?? .message }
       if !exists(.display) { .display = .message }
 
-      # Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console).
+      # Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console). A joined
+      # multi-line entry (bw_join) is read by its first line, so words in its stack or dump do not count.
       if .level == "info" {
-        m = downcase(to_string(.message) ?? "")
+        bw_lines = split(to_string(.message) ?? "", "\n", limit: 2)
+        m = downcase(to_string(bw_lines[0]))
         if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "[error]") || contains(m, "panic") || contains(m, "fatal") || contains(m, "exception") {
           .level = "error"
         } else if contains(m, "level=warn") || contains(m, "[warn]") || contains(m, "[warning]") || contains(m, "warning") || contains(m, "deprecat") {
@@ -586,9 +636,11 @@ transforms:
       if msg != null { .display = to_string(msg) ?? .message }
       if !exists(.display) { .display = .message }
 
-      # Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console).
+      # Heuristic level for unstructured lines (proxies, runtimes, DBs, Elixir console). A joined
+      # multi-line entry (bw_join) is read by its first line, so words in its stack or dump do not count.
       if .level == "info" {
-        m = downcase(to_string(.message) ?? "")
+        bw_lines = split(to_string(.message) ?? "", "\n", limit: 2)
+        m = downcase(to_string(bw_lines[0]))
         if contains(m, "level=error") || contains(m, "\"error\"") || contains(m, "[error]") || contains(m, "panic") || contains(m, "fatal") || contains(m, "exception") {
           .level = "error"
         } else if contains(m, "level=warn") || contains(m, "[warn]") || contains(m, "[warning]") || contains(m, "warning") || contains(m, "deprecat") {

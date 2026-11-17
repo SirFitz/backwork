@@ -73,6 +73,15 @@ describe("vector config", () => {
     const store = stackConfigYaml().split("  bw_hop_store:\n")[1].split("\n\n")[0];
     expect(store.match(/- type: counter/g)?.length).toBe(4);
   });
+  test("BAC-94: both collectors join multi-line entries before bw_normalize; JSON and hop lines go around", () => {
+    for (const y of [stackConfigYaml(), agentConfigYaml()]) {
+      expect(y).toContain("bw_join_lines:\n    type: reduce");
+      expect(y).toContain("bw_join_blocks:\n    type: reduce");
+      expect(y).toContain("group_by: [container_id, stream, file]");
+      expect(y).toContain("inputs: [bw_join_tidy, bw_join_route.solo]");
+    }
+    expect(agentConfigYaml()).toContain("inputs: [docker, pm2]");
+  });
 });
 
 describe("records intake (BAC-96)", () => {

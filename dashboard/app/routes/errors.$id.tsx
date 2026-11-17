@@ -2,7 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remi
 import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import { Link } from "~/components/env-link";
-import { ArrowLeft, Check, EyeOff, RotateCcw } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, EyeOff, RotateCcw } from "lucide-react";
 import { Badge, Card, CardHead, Empty, PageTitle } from "~/components/ui";
 import { requireOrg, requireRole } from "~/lib/auth/context.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
@@ -11,6 +11,7 @@ import { logAudit } from "~/lib/audit.server";
 import { cn } from "~/lib/utils";
 import { ErrorSourceLabel } from "~/components/error-source";
 import { ErrorSource } from "~/lib/error-kinds";
+import { readOccurrence } from "~/lib/error-occurrence";
 
 export const meta: MetaFunction = () => [{ title: "Error · backwork" }];
 
@@ -47,10 +48,14 @@ export default function ErrorDetail() {
   const busy = nav.state !== "idle";
   const sample = (g.sample || {}) as Record<string, any>;
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const stack = typeof sample.stack === "string" ? sample.stack : "";
+  const reported = g.source === ErrorSource.Reported;
+  const view = readOccurrence(g.sample, reported);
+  const stack = view.stack ?? "";
   const context = sample.context && Object.keys(sample.context).length ? sample.context : null;
-  const traceId = typeof sample.traceId === "string" ? sample.traceId : null;
-  const derived = g.source !== ErrorSource.Reported;
+  const traceId = view.traceId;
+  // A request-derived group has no stack by nature (BAC-85); log-derived ones carry it since BAC-94.
+  const hasStackCard = g.source !== ErrorSource.Request;
+  const parsedMessage = view.errorMessage && view.errorMessage !== g.message ? view.errorMessage : null;
   const tone = g.level === "fatal" || g.level === "error" ? "err" : g.level === "warning" ? "warn" : "neutral";
 
   const Btn = ({ intent, label, icon: Icon }: { intent: string; label: string; icon: any }) => (
@@ -76,6 +81,9 @@ export default function ErrorDetail() {
             <h1 className="truncate font-mono text-lg font-semibold text-fg">{g.type}</h1>
           </div>
           <p className="mt-1 break-words text-sm text-muted">{g.message || "—"}</p>
+          {parsedMessage ? (
+            <p data-error-message className="mt-1 break-words font-mono text-xs text-fg">{parsedMessage}</p>
+          ) : null}
           {traceId ? (
             <Link to={`/requests/${traceId}`} className="mt-1 inline-flex items-center gap-1 text-2xs text-brand hover:underline">
               Latest request <span className="font-mono">{traceId}</span>
@@ -98,7 +106,7 @@ export default function ErrorDetail() {
           ["Project", g.project || "—"],
           ["First seen", stamp(g.firstSeen)],
           ["Last seen", stamp(g.lastSeen)],
-          ["Environment", String(sample.environment || "—")],
+          ["Environment", view.environment ?? "—"],
         ].map(([k, v]) => (
           <div key={k} className="rounded-lg border border-border bg-surface px-3 py-2">
             <div className="text-2xs uppercase tracking-wide text-faint">{k}</div>
@@ -107,16 +115,16 @@ export default function ErrorDetail() {
         ))}
       </div>
 
-      {derived ? null : (
+      {hasStackCard ? (
       <Card>
-        <CardHead title="Stack trace" sub={`fingerprint ${g.fingerprint}`} />
+        <CardHead title="Stack trace" sub={reported ? `fingerprint ${g.fingerprint}` : "latest occurrence"} />
         {stack ? (
-          <pre className="scroll-thin max-h-[460px] overflow-auto px-4 py-3 font-mono text-2xs leading-relaxed text-muted">{stack}</pre>
+          <pre data-stack className="scroll-thin max-h-[460px] overflow-auto px-4 py-3 font-mono text-2xs leading-relaxed text-muted">{stack}</pre>
         ) : (
-          <Empty title="No stack trace">This error was reported without a stack trace.</Empty>
+          <Empty title="No stack trace">{reported ? "This error was reported without a stack trace." : "The latest log line of this error carried no stack trace."}</Empty>
         )}
       </Card>
-      )}
+      ) : null}
 
       {context ? (
         <Card>
@@ -132,14 +140,38 @@ export default function ErrorDetail() {
         ) : (
           <ul className="divide-y divide-border">
             {events.map((e) => {
-              const p = (e.payload || {}) as Record<string, any>;
+              const o = readOccurrence(e.payload, reported);
+              const text = o.errorMessage ?? o.message ?? "—";
+              const link = o.traceId ? (
+                <Link to={`/requests/${o.traceId}`} className="shrink-0 font-mono text-brand hover:underline">request</Link>
+              ) : null;
+              const row = (
+                <>
+                  <span className="shrink-0 font-mono text-faint">{stamp(e.createdAt)}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted" title={text}>{text}</span>
+                </>
+              );
+              if (!o.stack) {
+                return (
+                  <li key={e.id} className="flex items-center justify-between gap-4 px-4 py-2 text-2xs">
+                    {row}
+                    {link}
+                  </li>
+                );
+              }
               return (
-                <li key={e.id} className={cn("flex items-center justify-between gap-4 px-4 py-2 text-2xs")}>
-                  <span className="font-mono text-faint">{stamp(e.createdAt)}</span>
-                  <span className="min-w-0 flex-1 truncate text-muted" title={p.message}>{p.message || "—"}</span>
-                  {typeof p.traceId === "string" ? (
-                    <Link to={`/requests/${p.traceId}`} className="shrink-0 font-mono text-brand hover:underline">request</Link>
-                  ) : null}
+                <li key={e.id} className="text-2xs">
+                  <details data-occurrence className="group">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-2 hover:bg-surface-2/50 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight className="-ml-1 h-3.5 w-3.5 shrink-0 text-faint transition-transform group-open:rotate-90" aria-hidden />
+                      {row}
+                      {link}
+                    </summary>
+                    <div className="border-t border-border bg-surface-2/40 px-4 py-2">
+                      {o.message && o.message !== text ? <p className="mb-1 break-words font-mono text-faint">{o.message}</p> : null}
+                      <pre className="scroll-thin max-h-[320px] overflow-auto font-mono leading-relaxed text-muted">{o.stack}</pre>
+                    </div>
+                  </details>
                 </li>
               );
             })}
