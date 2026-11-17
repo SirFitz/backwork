@@ -62,3 +62,19 @@ The stack stays at five containers.
   detected as `kind="log"` by Vector's `bw_detect` (a missing regex group read as an empty line).
   The ingest proxy relabelled agents' link lines, so it showed only on the stack collector. Fixed
   in the shared module, with a Vector unit test.
+
+## Addendum: OTLP logs (BAC-97)
+
+`POST /ingest/otlp/v1/logs` decodes ExportLogsServiceRequest (protobuf with `protobufjs` 7.6.6,
+pinned, from a schema of the opentelemetry-proto fields read; JSON by the OTLP/JSON rules), turns
+each record into one line and hands the lines to the same intake. A body that is itself a
+Correlator hop record or link line is kept as written, so it is detected and counted; any other
+record becomes `{"level","msg","trace_id","span_id","attributes"}`, which the collectors read for
+level and display text and whose `trace_id` links the line to its request. Record times are kept
+when within 6 days back and 10 minutes ahead of the receive time, else the receive time is used.
+
+Known limit: hop records posted to `/ingest/records` carry no time of their own (Correlator writes
+none), so they are stored at receive time, up to the sink's flush interval (1 s) after they were
+written. OTLP lines keep their real time. A line logged in the first moments of a short request can
+then fall just before the hop's window in the request view (it still links to the request from
+Logs). A per-line time from the record sink would close this; tracked as a follow-up.

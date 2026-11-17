@@ -557,6 +557,8 @@ export function recordsSnapshot(): ControlsSnapshot {
  *  the intake resolved. */
 export const RECORDS_TENANT_VRL = `# Tenant label and the intake's metric switches (BAC-96).
 .org_id = to_string(%bw_org) ?? ""
+# Loki drops a label with an empty value; an empty host avoids a template error per line without one.
+if !is_string(.host) { .host = "" }
 %bw_metrics = %bw_metrics != false && %bw_rec_metrics != false
 %bw_stores = %bw_stores != false && %bw_rec_stores != false
 `;
@@ -821,8 +823,6 @@ sources:
       method: newline_delimited
     decoding:
       codec: json
-    acknowledgements:
-      enabled: true
 
 transforms:
 ${joinTransformsYaml(["docker"])}
@@ -892,6 +892,13 @@ sinks:
     type: loki
     inputs: [bw_rec_tenant]
     endpoint: http://loki:3100
+    # The intake waits for this sink's acknowledgement: flush small batches quickly so a post
+    # answers in a fraction of a second (Correlator's sink posts one batch at a time).
+    batch:
+      timeout_secs: 0.2
+    # End-to-end acknowledgement: the records input answers a post only once Loki has the lines.
+    acknowledgements:
+      enabled: true
     encoding:
       codec: json
     labels:

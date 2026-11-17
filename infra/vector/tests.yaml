@@ -670,7 +670,7 @@ tests:
               assert_eq!(.level, "error")
               assert_eq!(.display, "charge failed")
               assert_eq!(.service, "shop-api")
-              assert!(!exists(.host))
+              assert_eq!(.host, "")
 
   - name: records intake - no second filter pass (the dashboard ran the organisation's own patterns)
     inputs:
