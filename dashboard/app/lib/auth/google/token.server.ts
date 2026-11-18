@@ -30,6 +30,7 @@ interface IdTokenClaims {
   email_verified?: unknown;
   name?: unknown;
   given_name?: unknown;
+  hd?: unknown;
 }
 
 function decodeSegment<T>(segment: string): T {
@@ -90,5 +91,5 @@ export function verifyIdToken(idToken: string, opts: VerifyOptions): GoogleIdent
 
   const email = c.email.trim().toLowerCase();
   const name = typeof c.name === "string" && c.name.trim() ? c.name.trim() : typeof c.given_name === "string" ? c.given_name.trim() : "";
-  return { sub: c.sub, email, name };
+  return { sub: c.sub, email, name, hostedDomain: typeof c.hd === "string" && c.hd ? c.hd : null };
 }

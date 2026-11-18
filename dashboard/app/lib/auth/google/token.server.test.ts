@@ -22,11 +22,15 @@ describe("verifyIdToken", () => {
 
   test("accepts a good token and lowercases the email", () => {
     const id = verifyIdToken(sign(goodClaims(NONCE, NOW)), opts);
-    expect(id).toEqual({ sub: "1100223344", email: "ada.lovelace@example.com", name: "Ada Lovelace" });
+    expect(id).toEqual({ sub: "1100223344", email: "ada.lovelace@example.com", name: "Ada Lovelace", hostedDomain: null });
   });
 
   test("accepts the bare accounts.google.com issuer and an audience list", () => {
     expect(verifyIdToken(sign(goodClaims(NONCE, NOW, { iss: "accounts.google.com", aud: ["other", CLIENT_ID] })), opts).sub).toBe("1100223344");
+  });
+
+  test("carries the Workspace domain (hd) when present", () => {
+    expect(verifyIdToken(sign(goodClaims(NONCE, NOW, { hd: "example.com" })), opts).hostedDomain).toBe("example.com");
   });
 
   test("refuses a wrong issuer", () => {

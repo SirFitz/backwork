@@ -37,10 +37,51 @@ const GOOGLE_DEFAULTS = {
   jwksUrl: "https://www.googleapis.com/oauth2/v3/certs",
 } as const;
 
-/** The auth, token and key URLs can be pointed at a local fake provider, but only outside production
- *  (or when GOOGLE_SIGNIN_TEST_ENDPOINTS=1 is set on purpose, for the local compose stack). */
-function googleEndpointOverridesAllowed(): boolean {
-  return process.env.NODE_ENV !== "production" || process.env.GOOGLE_SIGNIN_TEST_ENDPOINTS === "1";
+const OVERRIDE_ENV = { authUrl: "GOOGLE_SIGNIN_AUTH_URL", tokenUrl: "GOOGLE_SIGNIN_TOKEN_URL", jwksUrl: "GOOGLE_SIGNIN_JWKS_URL" } as const;
+
+/** Hosts a local fake provider may live on: loopback, Docker Desktop's host alias, or a bare compose service name. */
+export function isLocalTestHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "host.docker.internal" || (h.length > 0 && !h.includes(".") && !h.includes(":"));
+}
+
+const warned = new Set<string>();
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(`[google-signin] ${message}`);
+}
+export function resetGoogleWarningsForTest(): void {
+  warned.clear();
+}
+
+/**
+ * The auth, token and key URLs can point at a local fake provider, but only outside production (or with
+ * GOOGLE_SIGNIN_TEST_ENDPOINTS=1, for the local compose stack) and only when every URL set is a local host.
+ * A single non-local override discards all of them.
+ */
+function googleEndpointOverrides(): Partial<Record<keyof typeof OVERRIDE_ENV, string>> {
+  const allowed = process.env.NODE_ENV !== "production" || process.env.GOOGLE_SIGNIN_TEST_ENDPOINTS === "1";
+  const set: Partial<Record<keyof typeof OVERRIDE_ENV, string>> = {};
+  for (const [key, env] of Object.entries(OVERRIDE_ENV) as Array<[keyof typeof OVERRIDE_ENV, string]>) {
+    const value = process.env[env];
+    if (value) set[key] = value;
+  }
+  if (Object.keys(set).length === 0 || !allowed) return {};
+  for (const value of Object.values(set)) {
+    let host = "";
+    try {
+      host = new URL(value).hostname;
+    } catch {
+      /* unparseable */
+    }
+    if (!isLocalTestHost(host)) {
+      warnOnce("ignoring GOOGLE_SIGNIN_*_URL overrides: every override must point at a local host");
+      return {};
+    }
+  }
+  warnOnce("test endpoints are active: Google sign-in is talking to a local fake provider, not Google");
+  return set;
 }
 
 export interface GoogleAuthSettings {
@@ -54,23 +95,31 @@ export interface GoogleAuthSettings {
 
 /** Sign in with Google (BAC-101). Read on each call so tests and a restart-free env change both work. */
 export function googleAuthSettings(): GoogleAuthSettings {
-  const override = googleEndpointOverridesAllowed();
-  const pick = (name: string, fallback: string): string => (override && process.env[name]) || fallback;
+  const o = googleEndpointOverrides();
   const base = (process.env.PUBLIC_URL || "https://backwork.dev").replace(/\/+$/, "");
   return {
     clientId: process.env.GOOGLE_SIGNIN_CLIENT_ID || "",
     clientSecret: process.env.GOOGLE_SIGNIN_CLIENT_SECRET || "",
     redirectUri: process.env.GOOGLE_SIGNIN_REDIRECT_URI || `${base}/auth/google/callback`,
-    authUrl: pick("GOOGLE_SIGNIN_AUTH_URL", GOOGLE_DEFAULTS.authUrl),
-    tokenUrl: pick("GOOGLE_SIGNIN_TOKEN_URL", GOOGLE_DEFAULTS.tokenUrl),
-    jwksUrl: pick("GOOGLE_SIGNIN_JWKS_URL", GOOGLE_DEFAULTS.jwksUrl),
+    authUrl: o.authUrl ?? GOOGLE_DEFAULTS.authUrl,
+    tokenUrl: o.tokenUrl ?? GOOGLE_DEFAULTS.tokenUrl,
+    jwksUrl: o.jwksUrl ?? GOOGLE_DEFAULTS.jwksUrl,
   };
 }
 
-/** The button and the routes exist only when the OAuth client id and secret are set. */
+/**
+ * The button and routes exist only when the client id and secret are set AND the callback address is
+ * deliberate: GOOGLE_SIGNIN_REDIRECT_URI, or an explicitly set PUBLIC_URL. Otherwise a staging deploy
+ * would send Google back to production.
+ */
 export function googleAuthConfigured(): boolean {
   const s = googleAuthSettings();
-  return !!s.clientId && !!s.clientSecret;
+  if (!s.clientId || !s.clientSecret) return false;
+  if (!process.env.GOOGLE_SIGNIN_REDIRECT_URI && !process.env.PUBLIC_URL) {
+    warnOnce("Google sign-in is disabled: set GOOGLE_SIGNIN_REDIRECT_URI or PUBLIC_URL so the callback address is explicit");
+    return false;
+  }
+  return true;
 }
 
 const DEFAULT_TIMEOUT = 15000;

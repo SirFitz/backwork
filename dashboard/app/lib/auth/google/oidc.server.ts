@@ -36,7 +36,7 @@ export function pkceChallenge(verifier: string): string {
 }
 
 /** The Google consent URL. Scopes openid email profile; always asks which account. */
-export function buildAuthorizationUrl(settings: GoogleOidcSettings, secrets: AuthRequestSecrets): string {
+export function buildAuthorizationUrl(settings: GoogleOidcSettings, secrets: AuthRequestSecrets, loginHint: string | null = null): string {
   const u = new URL(settings.authUrl);
   u.searchParams.set("client_id", settings.clientId);
   u.searchParams.set("redirect_uri", settings.redirectUri);
@@ -47,6 +47,7 @@ export function buildAuthorizationUrl(settings: GoogleOidcSettings, secrets: Aut
   u.searchParams.set("code_challenge", pkceChallenge(secrets.verifier));
   u.searchParams.set("code_challenge_method", "S256");
   u.searchParams.set("prompt", "select_account");
+  if (loginHint) u.searchParams.set("login_hint", loginHint);
   return u.toString();
 }
 

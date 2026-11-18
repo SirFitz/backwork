@@ -61,4 +61,46 @@ describe("account with no password", () => {
       await db.delete(users).where(eq(users.id, id));
     }
   });
+
+  test.skipIf(!ready)("linking Google to a password account drops the password and sessions; the link is a single conditional write", async () => {
+    const { db, ensureSchema } = await import("~/db/index.server");
+    const { users } = await import("~/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const { drizzleGoogleStore, resolveGoogleUser } = await import("./accounts.server");
+    await ensureSchema();
+    const id = `claim-${Date.now()}`;
+    const email = `${id}@gmail.com`;
+    await db.insert(users).values({ id, email, passwordHash: "attacker-chosen-hash", tokenVersion: 2 });
+    try {
+      const r = await resolveGoogleUser(drizzleGoogleStore, { sub: `${id}-sub`, email, name: "Victim", hostedDomain: null });
+      expect(r).toMatchObject({ linked: true, created: false, user: { id, tokenVersion: 3 } });
+      const row = (await db.select().from(users).where(eq(users.id, id)))[0];
+      expect(row.passwordHash).toBeNull();
+      expect(row.googleSub).toBe(`${id}-sub`);
+      // a second Google id cannot overwrite the first, and the unconditional write is gone
+      expect(await drizzleGoogleStore.linkSub(id, "someone-else")).toBeNull();
+      expect((await db.select().from(users).where(eq(users.id, id)))[0].googleSub).toBe(`${id}-sub`);
+    } finally {
+      await db.delete(users).where(eq(users.id, id));
+    }
+  });
+
+  test.skipIf(!ready)("two sign-ups at once on an empty table make exactly one platform admin", async () => {
+    const { db, ensureSchema } = await import("~/db/index.server");
+    const { users } = await import("~/db/schema");
+    const { sql } = await import("drizzle-orm");
+    const { insertUserFirstAdmin } = await import("~/lib/auth/users.server");
+    await ensureSchema();
+    const tag = `race-${Date.now()}`;
+    // Only meaningful on an empty users table (a fresh database).
+    const existing = await db.select({ n: sql<number>`count(*)::int` }).from(users);
+    if (existing[0].n > 0) return; // not an empty database; the lock is exercised on fresh ones (CI/local stack)
+    try {
+      await Promise.all([1, 2, 3, 4].map((i) => insertUserFirstAdmin({ id: `${tag}-${i}`, email: `${tag}-${i}@example.com` }, { id: users.id })));
+      const admins = await db.execute(sql`select count(*)::int as n from users where id like ${`${tag}-%`} and is_platform_admin`);
+      expect(admins.rows[0]).toEqual({ n: 1 });
+    } finally {
+      await db.execute(sql`delete from users where id like ${`${tag}-%`}`);
+    }
+  });
 });

@@ -23,7 +23,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const next = safeRedirect(url.searchParams.get("next"));
   const planParam = url.searchParams.get("plan");
   const plan = isPaidPlanId(planParam) ? planParam : null;
+  const hintParam = url.searchParams.get("hint") ?? "";
+  const hint = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(hintParam) && hintParam.length <= 254 ? hintParam : null;
   const secrets = newAuthRequestSecrets();
   const cookie = await commitStateCookie({ ...secrets, intent, next, plan });
-  return redirect(buildAuthorizationUrl(googleAuthSettings(), secrets), { headers: { "Set-Cookie": cookie } });
+  return redirect(buildAuthorizationUrl(googleAuthSettings(), secrets, hint), { headers: { "Set-Cookie": cookie } });
 }

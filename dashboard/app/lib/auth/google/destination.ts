@@ -5,3 +5,9 @@ export function googleDestination(opts: { hasMembership: boolean; next: string; 
   if (opts.hasMembership) return opts.next;
   return opts.plan ? `/onboarding?plan=${encodeURIComponent(opts.plan)}` : "/onboarding";
 }
+
+/** The token of an invite link path (`/invite/<token>`), or null for any other path. */
+export function inviteTokenFromPath(path: string): string | null {
+  const m = /^\/invite\/([^/?#]+)/.exec(path);
+  return m ? m[1] : null;
+}

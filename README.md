@@ -126,7 +126,7 @@ The dashboard reads backend URLs from env (defaults target the compose network):
 | `PUBLIC_URL` | `https://backwork.dev` (used by the agent installer) |
 | `GOOGLE_SIGNIN_CLIENT_ID` | OAuth client id for "Continue with Google"; the button and `/auth/google/*` routes are off (404) while unset |
 | `GOOGLE_SIGNIN_CLIENT_SECRET` | the OAuth client secret |
-| `GOOGLE_SIGNIN_REDIRECT_URI` | optional; defaults to `PUBLIC_URL` + `/auth/google/callback` (register `https://backwork.dev/auth/google/callback`) |
+| `GOOGLE_SIGNIN_REDIRECT_URI` | callback address; defaults to `PUBLIC_URL` + `/auth/google/callback`. Google stays off unless this or an explicit `PUBLIC_URL` is set. Every deploy registers its own callback on the OAuth client (production: `https://backwork.dev/auth/google/callback`) |
 | `INKRESS_BILLING_MERCHANT` | `backwork` (username of the Inkress merchant that sells the plans) |
 | `INKRESS_BILLING_API_MODE` | `test` (Inkress dev API); `live` = api.inkress.com |
 | `INKRESS_BILLING_PLATFORM_KEY` | key for plan reads and checkout links; billing is off while unset |
@@ -137,8 +137,11 @@ The dashboard reads backend URLs from env (defaults target the compose network):
 
 Server-side OpenID Connect with PKCE: `/auth/google/start` sends the person to Google, `/auth/google/callback`
 checks `state`, swaps the code for an ID token and checks `iss`, `aud`, `exp`, `nonce` and `email_verified`.
-A verified Google email signs in to the account with that email (the Google id is then stored on the user);
-on the register page it creates the account. Someone who signed up with Google has no password until they
+A verified Google email signs in to the account with that email (the Google id is then stored on the user),
+or creates the account when there is none. An existing account is linked by email only when the address is
+@gmail.com or @googlemail.com or the token carries an `hd` (Workspace) claim, and never when it already has a
+different Google id; linking removes that account's password and signs out its other sessions (set a new
+password on the Account page). Someone who signed up with Google has no password until they
 set one on the Account page. To try it without Google credentials, run `node qa/google-fake-oidc.mjs` and
 start the local compose stack with `GOOGLE_SIGNIN_CLIENT_ID=fake-client GOOGLE_SIGNIN_CLIENT_SECRET=fake-secret`.
 
