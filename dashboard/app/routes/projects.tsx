@@ -24,6 +24,7 @@ import { Deferred, RowsSkeleton } from "~/components/defer";
 import { DataControlsPanel } from "~/components/data-controls";
 import { CodeBlock, CopyButton } from "~/components/copy-block";
 import { PlatformDrains } from "~/components/platform-drains";
+import { CloudPush } from "~/components/cloud-push";
 import {
   GRID_HEAD,
   applyControlChange,
@@ -196,6 +197,10 @@ export default function Projects() {
               <div className="mb-1 text-2xs font-medium text-muted">Or drain logs from your platform, nothing installed</div>
               <PlatformDrains baseUrl={d.publicUrl} token={tok} />
             </div>
+            <div>
+              <div className="mb-1 text-2xs font-medium text-muted">Or push from AWS CloudWatch or Google Cloud Logging</div>
+              <CloudPush baseUrl={d.publicUrl} token={tok} />
+            </div>
           </div>
         </Card>
       ) : null}
@@ -315,6 +320,10 @@ export default function Projects() {
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Drain logs from Vercel, Heroku, Fly.io or Cloudflare, nothing installed</div>
             <PlatformDrains baseUrl={d.publicUrl} />
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-medium text-muted">Push from AWS CloudWatch or Google Cloud Logging, nothing installed</div>
+            <CloudPush baseUrl={d.publicUrl} />
           </div>
           <div>
             <div className="mb-1 text-2xs font-medium text-muted">Report deploys, marked on <a href="/performance" className="text-brand hover:underline">Performance</a></div>

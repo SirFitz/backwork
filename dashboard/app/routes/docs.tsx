@@ -153,6 +153,13 @@ export default function Docs() {
               ["Cloudflare Logpush", <M key="c">/ingest/drains/cloudflare</M>, "?header_Authorization=Bearer%20<TOKEN>, which Cloudflare sends as a header"],
             ]} />
             <P>Render and Railway have no drain backwork can take: Render sends logs to your own endpoint only as syslog over TCP, and Railway has no drain at all. Use the record sink above or OpenTelemetry instead.</P>
+            <H3>AWS CloudWatch and Google Cloud Logging</H3>
+            <P>Logs already in a cloud logging service can be pushed from there, with no agent and no change to the service. backwork keeps no cloud credentials: the cloud sends with your project token. The Projects page has console and CLI steps for both, ready to copy.</P>
+            <Table head={["Cloud", "Route", "Token"]} rows={[
+              ["AWS", "CloudWatch Logs subscription filter → Amazon Data Firehose → HTTP endpoint " + "/ingest/cloud/aws/firehose", "The Firehose access key"],
+              ["Google Cloud", "Log Router sink → Pub/Sub topic → push subscription to /ingest/cloud/gcp/<TOKEN>", "In the push endpoint path (a push subscription cannot set headers)"],
+            ]} />
+            <P>On AWS the service is the log group (the function name for Lambda) and the level comes from Lambda&apos;s log format; set the Firehose buffer to 1 MiB. On Google Cloud the service is the Cloud Run service, function or container, the level is the entry&apos;s severity, and a trace ID links the line to its request.</P>
             <H3>OpenTelemetry logs</H3>
             <P>Already use an OpenTelemetry SDK or Collector? Point its log exporter at backwork with two environment variables, in any language. The service name comes from <M>service.name</M>, the level from the severity, and a line with a trace ID opens its request.</P>
             <CodeBlock className="mt-4" lines={[
