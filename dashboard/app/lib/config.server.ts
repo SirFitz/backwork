@@ -31,6 +31,48 @@ export function billingConfigured(): boolean {
   return !!config.billing.platformKey && !!config.billing.webhookSecret;
 }
 
+const GOOGLE_DEFAULTS = {
+  authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  jwksUrl: "https://www.googleapis.com/oauth2/v3/certs",
+} as const;
+
+/** The auth, token and key URLs can be pointed at a local fake provider, but only outside production
+ *  (or when GOOGLE_SIGNIN_TEST_ENDPOINTS=1 is set on purpose, for the local compose stack). */
+function googleEndpointOverridesAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" || process.env.GOOGLE_SIGNIN_TEST_ENDPOINTS === "1";
+}
+
+export interface GoogleAuthSettings {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  authUrl: string;
+  tokenUrl: string;
+  jwksUrl: string;
+}
+
+/** Sign in with Google (BAC-101). Read on each call so tests and a restart-free env change both work. */
+export function googleAuthSettings(): GoogleAuthSettings {
+  const override = googleEndpointOverridesAllowed();
+  const pick = (name: string, fallback: string): string => (override && process.env[name]) || fallback;
+  const base = (process.env.PUBLIC_URL || "https://backwork.dev").replace(/\/+$/, "");
+  return {
+    clientId: process.env.GOOGLE_SIGNIN_CLIENT_ID || "",
+    clientSecret: process.env.GOOGLE_SIGNIN_CLIENT_SECRET || "",
+    redirectUri: process.env.GOOGLE_SIGNIN_REDIRECT_URI || `${base}/auth/google/callback`,
+    authUrl: pick("GOOGLE_SIGNIN_AUTH_URL", GOOGLE_DEFAULTS.authUrl),
+    tokenUrl: pick("GOOGLE_SIGNIN_TOKEN_URL", GOOGLE_DEFAULTS.tokenUrl),
+    jwksUrl: pick("GOOGLE_SIGNIN_JWKS_URL", GOOGLE_DEFAULTS.jwksUrl),
+  };
+}
+
+/** The button and the routes exist only when the OAuth client id and secret are set. */
+export function googleAuthConfigured(): boolean {
+  const s = googleAuthSettings();
+  return !!s.clientId && !!s.clientSecret;
+}
+
 const DEFAULT_TIMEOUT = 15000;
 
 async function once<T>(url: string, init: (RequestInit & { timeoutMs?: number }) | undefined): Promise<T> {

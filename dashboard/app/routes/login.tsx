@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, Link, useActionData, useNavigation, useSearchParams } from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData, useNavigation, useSearchParams } from "@remix-run/react";
 import { eq, sql } from "drizzle-orm";
 import { db, ensureSchema } from "~/db/index.server";
 import { users, memberships } from "~/db/schema";
@@ -10,10 +10,13 @@ import { getUser } from "~/lib/auth/context.server";
 import { logAudit } from "~/lib/audit.server";
 import { assertSameOrigin, clientIp, rateLimit, safeRedirect } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
+import { GoogleButton } from "~/components/google-button";
+import { googleAuthConfigured } from "~/lib/config.server";
+import { GoogleIntent, googleErrorMessage } from "~/lib/auth/google/types";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   if (await getUser(request)) throw redirect("/");
-  return json({});
+  return json({ googleEnabled: googleAuthConfigured() });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -31,7 +34,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const rows = await db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
   const user = rows[0];
-  const ok = user ? await verifyPassword(user.passwordHash, password) : false;
+  // A Google-only account has no password, so it fails like any wrong password.
+  const ok = user?.passwordHash ? await verifyPassword(user.passwordHash, password) : false;
   if (!user || !ok) return json({ error: "Invalid email or password." }, { status: 400 });
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
@@ -42,12 +46,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function Login() {
   const data = useActionData<typeof action>();
+  const { googleEnabled } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const [params] = useSearchParams();
   const next = params.get("next") || "/";
   const justReset = params.get("reset") === "1";
+  const googleError = googleErrorMessage(params.get("google"));
   return (
     <AuthCard title="Sign in" sub="Welcome back to backwork." footer={<>No account? <Link to="/register" className="font-medium text-brand hover:underline">Create one</Link></>}>
+      {googleEnabled ? <GoogleButton intent={GoogleIntent.SignIn} next={next} /> : null}
+      {googleEnabled && googleError ? <p className="-mt-2 mb-4 text-[13px] text-err">{googleError}</p> : null}
       <Form method="post" className="space-y-3">
         <input type="hidden" name="next" value={next} />
         <input name="email" type="email" autoComplete="email" required placeholder="you@example.com" aria-label="Email address" className={AUTH_FIELD} />

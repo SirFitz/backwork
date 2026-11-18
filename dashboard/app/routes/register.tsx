@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, Link, useActionData, useNavigation } from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData, useNavigation, useSearchParams } from "@remix-run/react";
 import { sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db, ensureSchema } from "~/db/index.server";
@@ -10,6 +10,9 @@ import { createUserSession } from "~/lib/auth/session.server";
 import { getUser } from "~/lib/auth/context.server";
 import { assertSameOrigin, clientIp, rateLimit } from "~/lib/auth/security.server";
 import { AuthCard, AUTH_FIELD } from "~/components/authcard";
+import { GoogleButton } from "~/components/google-button";
+import { googleAuthConfigured } from "~/lib/config.server";
+import { GoogleIntent, googleErrorMessage } from "~/lib/auth/google/types";
 import { isPaidPlanId } from "~/lib/billing/rules";
 import type { PaidPlanId } from "~/lib/billing/types";
 
@@ -21,7 +24,7 @@ function wantedPlan(request: Request): PaidPlanId | null {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   if (await getUser(request)) throw redirect("/");
-  return json({ plan: wantedPlan(request) });
+  return json({ plan: wantedPlan(request), googleEnabled: googleAuthConfigured() });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -57,9 +60,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function Register() {
   const data = useActionData<typeof action>();
+  const { plan, googleEnabled } = useLoaderData<typeof loader>();
   const nav = useNavigation();
+  const [params] = useSearchParams();
+  const googleError = googleErrorMessage(params.get("google"));
   return (
     <AuthCard title="Create your account" sub="Start monitoring in minutes." footer={<>Already have an account? <Link to="/login" className="font-medium text-brand hover:underline">Sign in</Link></>}>
+      {googleEnabled ? <GoogleButton intent={GoogleIntent.SignUp} plan={plan} /> : null}
+      {googleEnabled && googleError ? <p className="-mt-2 mb-4 text-[13px] text-err">{googleError}</p> : null}
       <Form method="post" className="space-y-3">
         <input name="name" type="text" autoComplete="name" placeholder="Your name" aria-label="Your name" className={AUTH_FIELD} />
         <input name="email" type="email" autoComplete="email" required placeholder="you@example.com" aria-label="Email address" className={AUTH_FIELD} />

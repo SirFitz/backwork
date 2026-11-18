@@ -12,6 +12,12 @@ services:
     ports: ["${BW_LOCAL_PORT:-3000}:3000"]
     environment:
       PUBLIC_URL: http://localhost:${BW_LOCAL_PORT:-3000}
+      # Try "Continue with Google" against qa/google-fake-oidc.mjs (run it on the Mac). Off unless
+      # GOOGLE_SIGNIN_CLIENT_ID is set, e.g. GOOGLE_SIGNIN_CLIENT_ID=fake-client GOOGLE_SIGNIN_CLIENT_SECRET=fake-secret.
+      GOOGLE_SIGNIN_TEST_ENDPOINTS: "1"
+      GOOGLE_SIGNIN_AUTH_URL: http://localhost:${FAKE_OIDC_PORT:-4010}/authorize
+      GOOGLE_SIGNIN_TOKEN_URL: http://host.docker.internal:${FAKE_OIDC_PORT:-4010}/token
+      GOOGLE_SIGNIN_JWKS_URL: http://host.docker.internal:${FAKE_OIDC_PORT:-4010}/certs
   vector:
     ports: ["9598:9598"]
 

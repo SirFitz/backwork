@@ -60,6 +60,30 @@ describe("schema bootstrap", () => {
     expect(missing).toEqual([]);
   });
 
+  test.skipIf(!ready)("users can hold a Google id and no password (BAC-101)", async () => {
+    const { db, ensureSchema } = await import("~/db/index.server");
+    const { sql } = await import("drizzle-orm");
+    await ensureSchema();
+    const col = await db.execute(sql`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'password_hash'`);
+    expect(col.rows[0]).toEqual({ is_nullable: "YES" });
+    const tag = `ddl-g-${Date.now()}`;
+    try {
+      await db.execute(sql`INSERT INTO users (id, email, google_sub) VALUES (${`${tag}-1`}, ${`${tag}-1@example.com`}, ${tag})`);
+      // a second row with no Google id is fine (partial index), the same Google id twice is not
+      await db.execute(sql`INSERT INTO users (id, email) VALUES (${`${tag}-2`}, ${`${tag}-2@example.com`})`);
+      await db.execute(sql`INSERT INTO users (id, email) VALUES (${`${tag}-3`}, ${`${tag}-3@example.com`})`);
+      let dup = false;
+      try {
+        await db.execute(sql`INSERT INTO users (id, email, google_sub) VALUES (${`${tag}-4`}, ${`${tag}-4@example.com`}, ${tag})`);
+      } catch {
+        dup = true;
+      }
+      expect(dup).toBe(true);
+    } finally {
+      await db.execute(sql`DELETE FROM users WHERE id LIKE ${`${tag}-%`}`);
+    }
+  });
+
   test.skipIf(!ready)("insights rows are removed with their organisation", async () => {
     const { db, ensureSchema } = await import("~/db/index.server");
     const { sql } = await import("drizzle-orm");

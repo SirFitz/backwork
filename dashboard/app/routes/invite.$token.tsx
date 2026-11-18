@@ -9,6 +9,8 @@ import { getUser, requireUser } from "~/lib/auth/context.server";
 import { setActiveOrg } from "~/lib/auth/session.server";
 import { assertSameOrigin } from "~/lib/auth/security.server";
 import { AuthCard } from "~/components/authcard";
+import { googleAuthConfigured } from "~/lib/config.server";
+import { GoogleIntent, googleStartHref } from "~/lib/auth/google/types";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   await ensureSchema();
@@ -28,6 +30,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     orgName,
     email: invite?.email ?? null,
     role: invite?.role ?? null,
+    googleEnabled: googleAuthConfigured(),
     loggedIn: !!user,
     myEmail: user?.email ?? null,
     emailMatches: !!user && user.email === invite?.email,
@@ -63,6 +66,9 @@ export default function AcceptInvite() {
           <p className="text-muted">Sign in or create an account with <span className="font-mono text-fg">{d.email}</span> to accept.</p>
           <Link to={`/login?next=${encodeURIComponent(`/invite/${d.token}`)}`} className="block h-10 rounded-lg bg-brand text-center text-[14px] font-medium leading-10 text-brand-fg hover:opacity-90">Sign in</Link>
           <Link to="/register" className="block h-10 rounded-lg border border-border text-center text-[14px] font-medium leading-10 hover:bg-surface-2">Create account</Link>
+          {d.googleEnabled ? (
+            <a href={googleStartHref({ intent: GoogleIntent.SignUp, next: `/invite/${d.token}` })} className="block h-10 rounded-lg border border-border text-center text-[14px] font-medium leading-10 hover:bg-surface-2">Continue with Google</a>
+          ) : null}
         </div>
       ) : d.emailMatches ? (
         <Form method="post">
