@@ -1,0 +1,15 @@
+{
+  "messageType": "DATA_MESSAGE",
+  "owner": "123456789012",
+  "logGroup": "/aws/lambda/checkout-fn",
+  "logStream": "2026/11/17/[$LATEST]0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "subscriptionFilters": ["backwork"],
+  "logEvents": [
+    { "id": "37800000000000000000000000000000000000000000000001", "timestamp": 1794940801000, "message": "START RequestId: 6f1e3a8c-2b4d-4c5e-9f0a-1b2c3d4e5f60 Version: $LATEST\n" },
+    { "id": "37800000000000000000000000000000000000000000000002", "timestamp": 1794940801005, "message": "2026-11-17T18:40:01.005Z\t6f1e3a8c-2b4d-4c5e-9f0a-1b2c3d4e5f60\tINFO\tcharging order 7731\n" },
+    { "id": "37800000000000000000000000000000000000000000000003", "timestamp": 1794940801090, "message": "2026-11-17T18:40:01.090Z\t6f1e3a8c-2b4d-4c5e-9f0a-1b2c3d4e5f60\tERROR\tInvoke Error \t{\"errorType\":\"Error\",\"errorMessage\":\"card declined\"}\n" },
+    { "id": "37800000000000000000000000000000000000000000000004", "timestamp": 1794940801091, "message": "{\"timestamp\":\"2026-11-17T18:40:01.091Z\",\"level\":\"WARN\",\"requestId\":\"6f1e3a8c-2b4d-4c5e-9f0a-1b2c3d4e5f60\",\"message\":\"retrying with backup processor\"}\n" },
+    { "id": "37800000000000000000000000000000000000000000000005", "timestamp": 1794940801095, "message": "trace_id=6503f5f183b828139d5b143365ad72fd hop=in_end hop_id=5d9e0b3347c1a2fb parent_id=b7ad6b7169203334 service=checkout-fn adapter=node-http via=http method=POST op=/checkout outcome=error status=402 duration_us=95000\n" },
+    { "id": "37800000000000000000000000000000000000000000000006", "timestamp": 1794940801100, "message": "REPORT RequestId: 6f1e3a8c-2b4d-4c5e-9f0a-1b2c3d4e5f60\tDuration: 95.12 ms\tBilled Duration: 96 ms\tMemory Size: 512 MB\tMax Memory Used: 88 MB\t\n" }
+  ]
+}

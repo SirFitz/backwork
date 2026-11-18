@@ -8,7 +8,7 @@ import { config } from "~/lib/config.server";
 import { getCompiledFilter, getControls } from "~/lib/controls.server";
 import { getExcludedPathMatcher } from "~/lib/excluded-paths.server";
 import { enforceStreams, streamSwitches, type EnforceContext, type LokiStream } from "~/lib/ingest/enforce.server";
-import { toNdjson, toRecordEvents } from "~/lib/ingest/records.server";
+import { MAX_LINES, linesToStreams, toNdjson, toRecordEvents, type IntakeLine } from "~/lib/ingest/records.server";
 import { afterStored, type IngestTenant } from "~/lib/ingest/stored.server";
 import { serviceNamesWithin } from "~/lib/service-names.server";
 import { tenantOf } from "~/lib/tenant.server";
@@ -74,4 +74,26 @@ export function outcomeResponse(o: IntakeOutcome): Response {
     return new Response(`ingest backend error: ${o.reason ?? "collector failed"}`, { status: 502, headers: { "content-type": "text/plain" } });
   }
   return new Response(JSON.stringify({ accepted: o.accepted, dropped: o.dropped }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+/**
+ * Intake lines in batches of at most MAX_LINES (BAC-99), for senders whose one request can carry
+ * more (a Firehose batch). Stops at the first collector failure: earlier batches stay stored, so
+ * a retried request can repeat them.
+ */
+export async function intakeLines(
+  tenant: IngestTenant,
+  lines: readonly IntakeLine[],
+  nowNs: bigint,
+  store: (streams: LokiStream[]) => Promise<IntakeOutcome> = (streams) => intakeStreams(tenant, streams),
+): Promise<IntakeOutcome> {
+  const total: IntakeOutcome = { status: IntakeStatus.NothingKept, accepted: 0, dropped: 0 };
+  for (let i = 0; i < lines.length; i += MAX_LINES) {
+    const o = await store(linesToStreams(lines.slice(i, i + MAX_LINES), { service: null, host: null }, nowNs + BigInt(i)));
+    total.dropped += o.dropped;
+    if (o.status === IntakeStatus.CollectorFailed) return { ...total, status: IntakeStatus.CollectorFailed, reason: o.reason };
+    total.accepted += o.accepted;
+    if (o.status === IntakeStatus.Stored) total.status = IntakeStatus.Stored;
+  }
+  return total;
 }

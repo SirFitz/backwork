@@ -103,6 +103,11 @@ anything is saved. Hop records are kept 30 days, ordinary lines 7.
   Logpush gzip NDJSON) with the token as a header (Basic from the URL for Heroku). One parser per
   platform in `dashboard/app/lib/ingest/drains/`, service/host/level/time from the platform, then
   the records intake. Setup steps on the Projects page. Render and Railway have no HTTP push.
+- Cloud push (BAC-99): `POST /ingest/cloud/aws/firehose` is an Amazon Data Firehose HTTP endpoint
+  (CloudWatch Logs subscription filter -> Firehose; access key = project token; the delivery
+  spec's JSON answers, requestId echoed, CONTROL_MESSAGE skipped, retried request IDs not stored
+  twice). `POST /ingest/cloud/gcp/<token>` takes Pub/Sub push deliveries from a Cloud Logging
+  sink (LogEntry in base64, wrapped or unwrapped). No cloud credentials stored.
 - Agents on hosts that run services under PM2 read PM2's log files too
   (`--pm2-logs <dir>`, found automatically under `~/.pm2/logs`).
 - Test fixtures: `qa/fixtures/` (emitters for two sample requests; the local

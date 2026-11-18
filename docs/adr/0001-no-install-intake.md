@@ -112,3 +112,32 @@ secret Vercel generates per drain, which backwork would have to store; the beare
 check. Render (syslog over TLS to custom endpoints, HTTPS only for Datadog and Loggly) and Railway
 (no drain) have no HTTP push; a TLS syslog listener for Render would need a public TCP port on
 the stack and is not built.
+
+## Addendum: cloud push (BAC-99)
+
+AWS: CloudWatch Logs subscription filter -> Amazon Data Firehose -> HTTP endpoint destination
+`POST /ingest/cloud/aws/firehose`, implementing Firehose's HTTP endpoint delivery spec: the
+project token is the access key (`X-Amz-Firehose-Access-Key`); every answer, failures included,
+is `application/json` `{requestId, timestamp[, errorMessage]}` with the request ID echoed and no
+compression; 200 only once the lines are stored; 413 (which Firehose treats as permanent) only
+over the size limits (8 MiB body, 64 MiB of unpacked logs, 100,000 events; the setup steps set a
+1 MiB buffer). Records are gzip CloudWatch messages (plain JSON with Firehose decompression, bare
+lines with message extraction); CONTROL_MESSAGE records are acknowledged and not stored. Service
+= the log group's last part (the function for `/aws/lambda/<fn>`) or a `service` common attribute;
+host = the log stream's last part; Lambda's text format gives level and request ID. Firehose
+resends a batch with the same request ID; IDs stored in the last 30 minutes are answered 200
+without storing again (in memory, best effort per dashboard process). A request past 20,000
+lines is stored in batches (`intakeLines`); a collector failure part-way answers 500 and the
+retry can repeat the batches already stored.
+
+GCP: Cloud Logging sink -> Pub/Sub topic -> push subscription to `POST /ingest/cloud/gcp/<token>`.
+The token is a path segment because a push subscription cannot set headers and its Authorization
+header carries Google's OIDC token when push authentication is on; that header is ignored. The
+OIDC token is not verified (optional hardening: verify it against Google's keys with an audience
+and service account configured per project). One LogEntry per message (wrapped envelope or
+unwrapped body); service from the resource labels (Cloud Run service/job, function, App Engine
+module, GKE container), host from the instance, pod or revision, level from severity, time from
+the entry, trace ID kept. 204 acknowledges, also for a message that is not a log entry
+(redelivery would not help); 401 and 502 are redelivered.
+
+backwork stores no cloud credentials for either: the customer's cloud pushes with the token.
