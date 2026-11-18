@@ -8,6 +8,9 @@ if (process.env.NODE_ENV === "production" && SESSION_SECRET === DEV_SESSION_SECR
   throw new Error("SESSION_SECRET must be set in production (refusing to use the dev default).");
 }
 
+/** Other signed cookies (the Google sign-in state) sign with the same secret. */
+export const signingSecret = SESSION_SECRET;
+
 const storage = createCookieSessionStorage({
   cookie: {
     name: "backwork_auth",

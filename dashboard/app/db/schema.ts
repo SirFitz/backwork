@@ -15,13 +15,19 @@ export const users = pgTable("users", {
   id: id(),
   email: text("email").notNull(),
   name: text("name").notNull().default(""),
-  passwordHash: text("password_hash").notNull(),
+  /** Null for someone who signed up with Google and has not set a password (BAC-101). */
+  passwordHash: text("password_hash"),
+  /** Google account id (the ID token `sub`), set the first time they sign in with Google. */
+  googleSub: text("google_sub"),
   isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
   tokenVersion: integer("token_version").notNull().default(0),
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   ...ts(),
-}, (t) => ({ emailUniq: uniqueIndex("users_email_uniq").on(sql`lower(${t.email})`) }));
+}, (t) => ({
+  emailUniq: uniqueIndex("users_email_uniq").on(sql`lower(${t.email})`),
+  googleSubUniq: uniqueIndex("users_google_sub_uniq").on(t.googleSub).where(sql`${t.googleSub} is not null`),
+}));
 
 export const orgs = pgTable("orgs", {
   id: id(),

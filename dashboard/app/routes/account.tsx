@@ -15,7 +15,7 @@ import { assertSameOrigin } from "~/lib/auth/security.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user } = await requireUser(request);
-  return json({ name: user.name, email: user.email });
+  return json({ name: user.name, email: user.email, hasPassword: !!user.passwordHash });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -31,18 +31,20 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "password") {
+    const hasPassword = !!user.passwordHash;
     const current = String(fd.get("current") || "");
     const next = String(fd.get("next") || "");
     const confirm = String(fd.get("confirm") || "");
-    if (!(await verifyPassword(user.passwordHash, current))) return json({ error: "Current password is incorrect.", scope: "password" }, { status: 400 });
+    // Someone who signed up with Google has no password yet, so there is nothing to confirm.
+    if (user.passwordHash && !(await verifyPassword(user.passwordHash, current))) return json({ error: "Current password is incorrect.", scope: "password" }, { status: 400 });
     const pwErr = passwordError(next);
     if (pwErr) return json({ error: pwErr, scope: "password" }, { status: 400 });
     if (next !== confirm) return json({ error: "New passwords don't match.", scope: "password" }, { status: 400 });
-    if (next === current) return json({ error: "New password must be different from the current one.", scope: "password" }, { status: 400 });
+    if (hasPassword && next === current) return json({ error: "New password must be different from the current one.", scope: "password" }, { status: 400 });
     const newVersion = user.tokenVersion + 1; // invalidate other devices' sessions
     await db.update(users).set({ passwordHash: await hashPassword(next), tokenVersion: newVersion, updatedAt: new Date() }).where(eq(users.id, user.id));
     void logAudit({ request, actorUserId: user.id, action: "auth.password_change" });
-    return json({ ok: "Password changed. Other devices have been signed out.", scope: "password" }, { headers: { "Set-Cookie": await reissueTokenVersion(request, newVersion) } });
+    return json({ ok: hasPassword ? "Password changed. Other devices have been signed out." : "Password set. Other devices have been signed out.", scope: "password" }, { headers: { "Set-Cookie": await reissueTokenVersion(request, newVersion) } });
   }
 
   return json({ error: "Unknown action.", scope: "" }, { status: 400 });
@@ -78,14 +80,14 @@ export default function Account() {
       </Card>
 
       <Card>
-        <CardHead title="Change password" sub="you'll stay signed in on this device" />
+        <CardHead title={d.hasPassword ? "Change password" : "Set a password"} sub={d.hasPassword ? "you'll stay signed in on this device" : "you signed up with Google; a password lets you sign in with your email too"} />
         <Form method="post" className="space-y-3 p-4" key={data?.scope === "password" && "ok" in data ? "reset" : "form"}>
           <input type="hidden" name="intent" value="password" />
-          <input name="current" type="password" autoComplete="current-password" required placeholder="Current password" className={FIELD} />
+          {d.hasPassword ? <input name="current" type="password" autoComplete="current-password" required placeholder="Current password" className={FIELD} /> : null}
           <input name="next" type="password" autoComplete="new-password" required placeholder="New password (10+ chars, a letter & a number)" className={FIELD} />
           <input name="confirm" type="password" autoComplete="new-password" required placeholder="Confirm new password" className={FIELD} />
           {msg("password")}
-          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60"><KeyRound className="h-4 w-4" /> {savingPassword ? "Saving…" : "Change password"}</button>
+          <button type="submit" disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[13px] font-medium text-brand-fg hover:opacity-90 disabled:opacity-60"><KeyRound className="h-4 w-4" /> {savingPassword ? "Saving…" : d.hasPassword ? "Change password" : "Set password"}</button>
         </Form>
       </Card>
     </div>

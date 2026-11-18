@@ -1,11 +1,27 @@
 import { config } from "../config.server";
 
-// Same-origin, path-only redirect target — prevents open redirects via ?next=.
+// Same-origin, path-only redirect target: prevents open redirects via ?next=.
+// Browsers strip tabs and newlines and treat a backslash as a slash, so "/\t/evil.com" or
+// "/\\evil.com" would leave the site. Only a single leading "/" followed by a safe character passes.
 export function safeRedirect(to: unknown, fallback = "/"): string {
   if (typeof to !== "string" || !to) return fallback;
-  // must be a relative path; reject //evil.com, /\evil.com, and absolute URLs
-  if (!to.startsWith("/") || to.startsWith("//") || to.startsWith("/\\")) return fallback;
-  return to;
+  let decoded = to;
+  try {
+    decoded = decodeURIComponent(to);
+  } catch {
+    return fallback;
+  }
+  for (const candidate of [to, decoded]) {
+    if (/[\u0000-\u001f\u007f-\u009f\\]/.test(candidate)) return fallback;
+    if (!/^\/(?![/\\])/.test(candidate)) return fallback;
+  }
+  try {
+    const u = new URL(to, "https://x.invalid");
+    if (u.origin !== "https://x.invalid") return fallback;
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return fallback;
+  }
 }
 
 export function clientIp(request: Request): string {

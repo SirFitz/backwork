@@ -84,10 +84,17 @@ services:
       VM_URL: http://victoriametrics:8428
       DATA_DIR: /data
       INGEST_TOKEN: ${INGEST_TOKEN:-}
-      PUBLIC_URL: ${PUBLIC_URL:-https://backwork.dev}
+      # Left empty when unset: the app falls back to https://backwork.dev, but Google sign-in then needs
+      # GOOGLE_SIGNIN_REDIRECT_URI (or an explicit PUBLIC_URL) so a staging deploy never calls back to production.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GOOGLE_SIGNIN_REDIRECT_URI: ${GOOGLE_SIGNIN_REDIRECT_URI:-}
       DATABASE_URL: postgresql://backwork:${PG_PASSWORD:-backwork_dev_pw}@postgres:5432/backwork
       SESSION_SECRET: ${SESSION_SECRET:-backwork-dev-session-secret-change-me}
       AUTH_PEPPER: ${AUTH_PEPPER:-backwork-dev-pepper-change-me}
+      # Sign in with Google (BAC-101). Off while the client id is empty. Redirect URI to register:
+      # https://backwork.dev/auth/google/callback
+      GOOGLE_SIGNIN_CLIENT_ID: ${GOOGLE_SIGNIN_CLIENT_ID:-}
+      GOOGLE_SIGNIN_CLIENT_SECRET: ${GOOGLE_SIGNIN_CLIENT_SECRET:-}
     volumes:
       - backwork-data:/data
     expose:
