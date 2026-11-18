@@ -9,7 +9,7 @@ import { createUserSession } from "~/lib/auth/session.server";
 import { completeAuthorization } from "~/lib/auth/google/oidc.server";
 import { safeEqual } from "~/lib/auth/google/token.server";
 import { clearStateCookie, readStateCookie, type GoogleStatePayload } from "~/lib/auth/google/state-cookie.server";
-import { drizzleGoogleStore, inviteEmail, recordGoogleSignIn, resolveGoogleUser } from "~/lib/auth/google/accounts.server";
+import { assertGoogleAuthoritative, drizzleGoogleStore, inviteEmail, recordGoogleSignIn, resolveGoogleUser } from "~/lib/auth/google/accounts.server";
 import { googleDestination, inviteTokenFromPath } from "~/lib/auth/google/destination";
 import { GoogleAuthError, GoogleErrorCode, GoogleIntent } from "~/lib/auth/google/types";
 
@@ -43,8 +43,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (!code) return failure(GoogleErrorCode.ExchangeFailed, saved);
 
   try {
-    await ensureSchema();
     const identity = await completeAuthorization(googleAuthSettings(), { code, verifier: saved.verifier, nonce: saved.nonce }, fetch);
+    assertGoogleAuthoritative(identity); // refuse custom domains without hd before any database work
+    await ensureSchema();
     // Someone already signed in who finishes a Google trip is simply sent on.
     if (await getUser(request)) return redirect(saved.next, { headers: { "Set-Cookie": await clearStateCookie() } });
 

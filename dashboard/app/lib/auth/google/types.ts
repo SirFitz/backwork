@@ -15,7 +15,7 @@ export const GoogleErrorCode = {
   TokenInvalid: "token_invalid",
   EmailUnverified: "email_unverified",
   AccountConflict: "account_conflict",
-  LinkNotAllowed: "link_not_allowed",
+  EmailNotSupported: "email_not_supported",
   InviteMismatch: "invite_mismatch",
   RateLimited: "rate_limited",
 } as const;
@@ -28,7 +28,7 @@ export const GOOGLE_ERROR_COPY: Record<GoogleErrorCode, string> = {
   [GoogleErrorCode.TokenInvalid]: "We couldn't complete sign-in with Google. Please try again.",
   [GoogleErrorCode.EmailUnverified]: "Google hasn't verified that email address, so we can't use it. Verify it with Google, or use your email and password.",
   [GoogleErrorCode.AccountConflict]: "That email belongs to a backwork account linked to a different Google account. Sign in with your email and password.",
-  [GoogleErrorCode.LinkNotAllowed]: "An account with that email already exists. Sign in with your email and password, then try Google again.",
+  [GoogleErrorCode.EmailNotSupported]: "Use your email and password for this address. Google sign-in works only with Gmail and Google Workspace addresses.",
   [GoogleErrorCode.InviteMismatch]: "That Google account isn't the one this invite was sent to. Choose the invited email address.",
   [GoogleErrorCode.RateLimited]: "Too many attempts. Please wait a few minutes and try again.",
 };

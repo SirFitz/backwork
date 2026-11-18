@@ -40,11 +40,11 @@ const user = (over: Partial<MemUser> = {}): MemUser => ({ id: "u1", email: "ada@
 const codeOf = async (p: Promise<unknown>) => ((await p.catch((e) => e)) as GoogleAuthError).code;
 
 describe("resolveGoogleUser", () => {
-  test("a new Google user is created for any verified email; only the first user becomes platform admin", async () => {
+  test("a new Google user is created for Gmail or Workspace emails; only the first user becomes platform admin", async () => {
     const store = memoryStore();
-    const first = await resolveGoogleUser(store, { ...ADA, email: "ada@corp.example" });
+    const first = await resolveGoogleUser(store, { ...ADA, email: "ada@corp.example", hostedDomain: "corp.example" });
     expect(first.created).toBe(true);
-    const second = await resolveGoogleUser(store, { sub: "g-2", email: "bob@example.com", name: "Bob", hostedDomain: null });
+    const second = await resolveGoogleUser(store, { sub: "g-2", email: "bob@gmail.com", name: "Bob", hostedDomain: null });
     expect(second.created).toBe(true);
     expect(store.admins).toEqual([first.user.id]);
   });
@@ -70,12 +70,21 @@ describe("resolveGoogleUser", () => {
     expect(store.users[0].passwordHash).toBeNull();
   });
 
-  test("a non-Gmail address without hd is never linked to an existing account, and nothing changes", async () => {
-    const store = memoryStore([user({ email: "jane@acme.com" })]);
-    const code = await codeOf(resolveGoogleUser(store, { sub: "g-9", email: "jane@acme.com", name: "Jane", hostedDomain: null }));
-    expect(code).toBe(GoogleErrorCode.LinkNotAllowed);
-    expect(store.users[0]).toMatchObject({ googleSub: null, passwordHash: "hash", tokenVersion: 0 });
-    expect(store.users.length).toBe(1);
+  test("a custom-domain address without hd is refused outright: nothing read, linked or created", async () => {
+    const calls: string[] = [];
+    const base = memoryStore([user({ email: "jane@acme.com" })]);
+    const spy: GoogleAccountStore = {
+      findBySub: async (s) => (calls.push("findBySub"), base.findBySub(s)),
+      findByEmail: async (e) => (calls.push("findByEmail"), base.findByEmail(e)),
+      linkSub: async (i, s) => (calls.push("linkSub"), base.linkSub(i, s)),
+      create: async (i) => (calls.push("create"), base.create(i)),
+    };
+    const unknown = { sub: "g-9", email: "new@acme.com", name: "New", hostedDomain: null };
+    expect(await codeOf(resolveGoogleUser(spy, { ...unknown, email: "jane@acme.com" }))).toBe(GoogleErrorCode.EmailNotSupported);
+    expect(await codeOf(resolveGoogleUser(spy, unknown))).toBe(GoogleErrorCode.EmailNotSupported);
+    expect(calls).toEqual([]);
+    expect(base.users[0]).toMatchObject({ googleSub: null, passwordHash: "hash", tokenVersion: 0 });
+    expect(base.users.length).toBe(1);
   });
 
   test("an email already tied to a different Google id is refused, even for Gmail", async () => {
@@ -104,7 +113,7 @@ describe("resolveGoogleUser", () => {
     };
     expect((await resolveGoogleUser(racing, ADA)).user.id).toBe("winner");
 
-    // the winner is a password account made by someone else on a non-Gmail address: not linked
+    // the winner is a password account made by someone else
     const store2 = memoryStore();
     const racing2: GoogleAccountStore = {
       ...store2,
@@ -113,6 +122,9 @@ describe("resolveGoogleUser", () => {
         throw new Error("duplicate key");
       },
     };
-    expect(await codeOf(resolveGoogleUser(racing2, { sub: "g-9", email: "jane@acme.com", name: "J", hostedDomain: null }))).toBe(GoogleErrorCode.LinkNotAllowed);
+    // a Workspace token links the account the other tab made (it is a password account, so it is linked, password dropped)
+    const r2 = await resolveGoogleUser(racing2, { sub: "g-9", email: "jane@acme.com", name: "J", hostedDomain: "acme.com" });
+    expect(r2.linked).toBe(true);
+    expect(store2.users.find((u) => u.id === "attacker")?.passwordHash).toBeNull();
   });
 });

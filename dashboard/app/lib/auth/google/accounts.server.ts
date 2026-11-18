@@ -33,6 +33,11 @@ export interface ResolvedGoogleUser {
   linked: boolean;
 }
 
+/** Google sign-in is used only for addresses Google itself owns (Gmail) or manages (Workspace `hd`). */
+export function assertGoogleAuthoritative(identity: GoogleIdentity): void {
+  if (!isGoogleManagedEmail(identity.email, identity.hostedDomain)) throw new GoogleAuthError(GoogleErrorCode.EmailNotSupported);
+}
+
 async function matchExisting(store: GoogleAccountStore, identity: GoogleIdentity): Promise<ResolvedGoogleUser | null> {
   const bySub = await store.findBySub(identity.sub);
   if (bySub) return { user: bySub, created: false, linked: false };
@@ -40,8 +45,6 @@ async function matchExisting(store: GoogleAccountStore, identity: GoogleIdentity
   const byEmail = await store.findByEmail(identity.email);
   if (!byEmail) return null;
   if (byEmail.googleSub && byEmail.googleSub !== identity.sub) throw new GoogleAuthError(GoogleErrorCode.AccountConflict);
-  // Only link to an existing account when Google itself vouches for owning the address.
-  if (!isGoogleManagedEmail(identity.email, identity.hostedDomain)) throw new GoogleAuthError(GoogleErrorCode.LinkNotAllowed);
   const linked = await store.linkSub(byEmail.id, identity.sub);
   if (linked) return { user: linked, created: false, linked: true };
   // Lost a race: it is fine only if the winner holds this same Google id.
@@ -55,6 +58,7 @@ async function matchExisting(store: GoogleAccountStore, identity: GoogleIdentity
  * that email (linked, under the rules above); else a new user. Sign-in and sign-up behave the same.
  */
 export async function resolveGoogleUser(store: GoogleAccountStore, identity: GoogleIdentity): Promise<ResolvedGoogleUser> {
+  assertGoogleAuthoritative(identity); // before any read or write
   const existing = await matchExisting(store, identity);
   if (existing) return existing;
   try {

@@ -137,11 +137,11 @@ The dashboard reads backend URLs from env (defaults target the compose network):
 
 Server-side OpenID Connect with PKCE: `/auth/google/start` sends the person to Google, `/auth/google/callback`
 checks `state`, swaps the code for an ID token and checks `iss`, `aud`, `exp`, `nonce` and `email_verified`.
-A verified Google email signs in to the account with that email (the Google id is then stored on the user),
-or creates the account when there is none. An existing account is linked by email only when the address is
-@gmail.com or @googlemail.com or the token carries an `hd` (Workspace) claim, and never when it already has a
-different Google id; linking removes that account's password and signs out its other sessions (set a new
-password on the Account page). Someone who signed up with Google has no password until they
+Google is used only for @gmail.com/@googlemail.com addresses or tokens carrying an `hd` (Workspace) claim; any
+other address is refused before anything is read or written and told to use email and password. A verified
+address signs in to the account with that email (the Google id is then stored on the user), or creates the
+account when there is none. Linking never happens over a different Google id, and it removes that account's
+password and signs out its other sessions (set a new password on the Account page). Someone who signed up with Google has no password until they
 set one on the Account page. To try it without Google credentials, run `node qa/google-fake-oidc.mjs` and
 start the local compose stack with `GOOGLE_SIGNIN_CLIENT_ID=fake-client GOOGLE_SIGNIN_CLIENT_SECRET=fake-secret`.
 
