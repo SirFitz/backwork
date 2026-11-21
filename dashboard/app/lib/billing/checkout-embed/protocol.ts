@@ -58,7 +58,7 @@ export const FailureCode = {
 } as const;
 export type FailureCode = (typeof FailureCode)[keyof typeof FailureCode];
 
-/** Failure codes after which the frame keeps the form up for another attempt. */
+/** Failure codes that are always retryable. `blocked` can be either: trust the message's `retryable`. */
 export const RETRYABLE_FAILURES: readonly FailureCode[] = [FailureCode.Declined, FailureCode.Invalid, FailureCode.Error];
 
 /** Host theming. All optional; anything invalid is ignored by the frame. */
