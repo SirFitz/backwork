@@ -41,6 +41,32 @@ export function apiUrl(path: string): string {
   return `${base}/api/v1${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** Inkress's buyer-facing site, where the embedded checkout is served (BAC-102). */
+export function webOrigin(): string {
+  return config.billing.mode === "live" ? "https://inkress.com" : "https://dev.inkress.com";
+}
+
+const PAYMENT_LINK_PATH = /^\/payments\/link\/([0-9A-Za-z-]{8,64})(\/|$)/;
+
+/**
+ * The embedded checkout URL for a payment-link page Inkress gave us (`…/payments/link/<uid>/card`),
+ * or null when the URL is not one. Kept on Inkress's own origin: dev and live differ.
+ */
+export function embedUrlOf(paymentUrl: string | null): string | null {
+  if (!paymentUrl) return null;
+  try {
+    const u = new URL(paymentUrl);
+    const m = PAYMENT_LINK_PATH.exec(u.pathname);
+    return u.protocol === "https:" && m ? `${u.origin}/payments/link/${m[1]}/embed` : null;
+  } catch {
+    return null;
+  }
+}
+
+export function embedUrlForLink(linkUid: string | null): string | null {
+  return linkUid && /^[0-9A-Za-z-]{8,64}$/.test(linkUid) ? `${webOrigin()}/payments/link/${linkUid}/embed` : null;
+}
+
 type Json = Record<string, unknown>;
 
 function isObject(v: unknown): v is Json {
@@ -161,7 +187,24 @@ function toOrder(raw: unknown): InkressOrder {
     id,
     status: int(raw.status) ?? 0,
     paymentUrl: urls ? (text(urls.short_link) ?? text(urls.payment_url)) : null,
+    embedUrl: urls ? embedUrlOf(text(urls.payment_url)) : null,
   };
+}
+
+/** The one-subscription token in a card-update link (`…/update-card?token=…`). */
+export function cardUpdateTokenOf(link: string): string | null {
+  try {
+    return new URL(link).searchParams.get("token");
+  } catch {
+    return null;
+  }
+}
+
+export interface CardUpdateStart {
+  reference: string;
+  embedUrl: string | null;
+  /** The hosted page, as a fallback. */
+  payUrl: string | null;
 }
 
 export interface PlanChangeResult {
@@ -186,13 +229,14 @@ export function createInkressBilling(transport: InkressTransport = httpTransport
     },
 
     /** A hosted checkout that starts the organisation's subscription; Inkress captures the card there. */
-    async subscriptionLink(input: { planUid: string; reference: string; title: string; orgId: string; returnUrl: string; customer: Customer }): Promise<InkressOrder> {
+    async subscriptionLink(input: { planUid: string; reference: string; title: string; orgId: string; returnUrl: string; embedOrigin: string; customer: Customer }): Promise<InkressOrder> {
       const result = await post("/billing_subscriptions/link", {
         plan_id: input.planUid,
         reference_id: input.reference,
         title: input.title,
-        // return_url is where the hosted checkout sends the customer afterwards.
-        meta_data: { backwork_org_id: input.orgId, return_url: input.returnUrl },
+        // return_url is where the hosted checkout sends the customer afterwards; embed_origin is the
+        // one page origin allowed to frame the checkout (INK-1765), written with our key.
+        meta_data: { backwork_org_id: input.orgId, return_url: input.returnUrl, embed_origin: input.embedOrigin },
         customer: { email: input.customer.email, first_name: input.customer.firstName, last_name: input.customer.lastName },
       });
       return toOrder(result);
@@ -228,6 +272,24 @@ export function createInkressBilling(transport: InkressTransport = httpTransport
       const result = await post(`/billing_subscriptions/${sub(uid)}/card-update-link`, {});
       const link = isObject(result) ? text(result.link) : null;
       return link ?? bad("card link");
+    },
+
+    /**
+     * Start a card check for the subscription the token names, framed by `embedOrigin` (INK-1765).
+     * Public, token-authed endpoint: the token is the credential.
+     */
+    async startCardUpdate(token: string, embedOrigin: string): Promise<CardUpdateStart> {
+      const result = await post("/subscription-card-update/start", { token, embed_origin: embedOrigin });
+      const reference = isObject(result) ? text(result.reference_id) : null;
+      if (!reference) return bad("card update");
+      const payUrl = isObject(result) ? text(result.pay_url) : null;
+      const linkUid = isObject(result) ? text(result.link_uid) : null;
+      return { reference, payUrl, embedUrl: embedUrlForLink(linkUid) ?? embedUrlOf(payUrl) };
+    },
+
+    /** Swap the subscription's card to the one the check captured. Idempotent at Inkress. */
+    async confirmCardUpdate(token: string, reference: string): Promise<void> {
+      await post("/subscription-card-update/confirm", { token, reference_id: reference });
     },
 
     /** Cancel at the end of the current period, with the latest period's cancel code. */

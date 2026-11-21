@@ -35,6 +35,8 @@ export function emptyRow(orgId: string): BillingRow {
     checkoutReference: null,
     checkoutPlan: null,
     checkoutBilling: null,
+    cardUpdateToken: null,
+    cardUpdateReference: null,
   };
 }
 

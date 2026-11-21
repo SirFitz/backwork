@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS org_billing (
   checkout_reference text, checkout_plan text, checkout_billing text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS org_billing_subscription_idx ON org_billing (subscription_uid);
+ALTER TABLE org_billing ADD COLUMN IF NOT EXISTS card_update_token text;
+ALTER TABLE org_billing ADD COLUMN IF NOT EXISTS card_update_reference text;
 
 CREATE TABLE IF NOT EXISTS billing_events (
   event_key text PRIMARY KEY, org_id text, type text NOT NULL,

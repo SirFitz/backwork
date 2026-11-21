@@ -37,6 +37,8 @@ export class FakeInkress {
   planChangeRefusal: string | null = null;
   failReads = false;
   nextOrder = 100;
+  lastEmbedOrigin: string | null = null;
+  cardConfirmError: Error | null = null;
 
   /** The pretend customer pays the checkout whose reference they were sent. */
   pay(reference: string, planUid: string, orgId: string, periodEnd: Date): InkressSubscription {
@@ -57,13 +59,22 @@ export class FakeInkress {
       this.calls.push(`link ${i.planUid}`);
       const order = { id: this.nextOrder++, status: InkressOrderStatus.Pending };
       this.orders.set(i.reference, order);
-      return { id: order.id, status: order.status, paymentUrl: `https://pay.test/${order.id}` };
+      this.lastEmbedOrigin = i.embedOrigin;
+      return { id: order.id, status: order.status, paymentUrl: `https://pay.test/${order.id}`, embedUrl: `https://pay.test/payments/link/uid-${order.id}/embed` };
     },
     subscription: async (uid) => { this.calls.push(`sub ${uid}`); const s = this.subscriptions.get(uid); if (!s) throw new Error("404"); return s; },
     subscriptionForOrder: async (orderId) => [...this.subscriptions.values()].find((s) => s.orderId === orderId) ?? null,
     periods: async () => this.periods,
-    orderByReference: async (ref) => { const o = this.orders.get(ref); return o ? { id: o.id, status: o.status, paymentUrl: null } : null; },
-    cardUpdateLink: async (uid) => `https://card.test/${uid}`,
+    orderByReference: async (ref) => { const o = this.orders.get(ref); return o ? { id: o.id, status: o.status, paymentUrl: null, embedUrl: null } : null; },
+    cardUpdateLink: async (uid) => `https://card.test/subscriptions/update-card?token=tok-${uid}`,
+    startCardUpdate: async (token, embedOrigin) => {
+      this.calls.push(`card-start ${token} ${embedOrigin}`);
+      return { reference: `cardupd-sub-v1-${token}`, payUrl: "https://pay.test/c", embedUrl: "https://pay.test/payments/link/uid-card/embed" };
+    },
+    confirmCardUpdate: async (token, reference) => {
+      this.calls.push(`card-confirm ${token} ${reference}`);
+      if (this.cardConfirmError) throw this.cardConfirmError;
+    },
     cancel: async (uid, code) => {
       this.calls.push(`cancel ${uid} ${code}`);
       const s = this.subscriptions.get(uid);

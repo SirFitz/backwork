@@ -7,6 +7,6 @@ import { dbStore } from "./store.server";
 let instance: BillingService | null = null;
 
 export function billing(): BillingService {
-  instance ??= createBilling({ inkress: createInkressBilling(), store: dbStore, now: () => new Date(), configured: billingConfigured(), returnUrl: `${config.publicUrl}/billing` });
+  instance ??= createBilling({ inkress: createInkressBilling(), store: dbStore, now: () => new Date(), configured: billingConfigured(), returnUrl: `${config.publicUrl}/billing`, embedOrigin: new URL(config.publicUrl).origin });
   return instance;
 }
