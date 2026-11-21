@@ -40,6 +40,8 @@ function toRow(r: typeof orgBilling.$inferSelect): BillingRow {
     checkoutReference: r.checkoutReference,
     checkoutPlan: isPaidPlanId(r.checkoutPlan) ? r.checkoutPlan : null,
     checkoutBilling: isBilling(r.checkoutBilling) ? r.checkoutBilling : null,
+    cardUpdateToken: r.cardUpdateToken,
+    cardUpdateReference: r.cardUpdateReference,
   };
 }
 

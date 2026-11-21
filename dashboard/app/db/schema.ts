@@ -256,6 +256,8 @@ export const orgBilling = pgTable("org_billing", {
   checkoutReference: text("checkout_reference"),
   checkoutPlan: text("checkout_plan"),
   checkoutBilling: text("checkout_billing"),
+  cardUpdateToken: text("card_update_token"),
+  cardUpdateReference: text("card_update_reference"),
   ...ts(),
 }, (t) => ({ subIdx: index("org_billing_subscription_idx").on(t.subscriptionUid) }));
 

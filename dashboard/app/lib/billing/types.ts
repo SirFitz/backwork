@@ -78,6 +78,32 @@ export interface InkressOrder {
   id: number;
   status: number;
   paymentUrl: string | null;
+  /** The embedded checkout for this order (BAC-102), when Inkress gave its payment-link page. */
+  embedUrl: string | null;
+}
+
+/** What an embedded checkout is for. */
+export enum CheckoutPurpose {
+  Subscribe = "subscribe",
+  CardUpdate = "card_update",
+}
+
+/** A checkout the Billing page frames. Only `embedUrl` and `fallbackUrl` reach the browser. */
+export interface CheckoutSession {
+  purpose: CheckoutPurpose;
+  embedUrl: string | null;
+  /** The hosted page, for browsers that cannot show the frame. */
+  fallbackUrl: string | null;
+}
+
+/** The answer to "look again at Inkress" after the frame says it is done. */
+export enum ConfirmState {
+  /** Inkress has it: the subscription is active, or the new card is on file. */
+  Done = "done",
+  /** Not visible at Inkress yet; ask again shortly. */
+  Pending = "pending",
+  /** The checkout ended without a payment. */
+  Failed = "failed",
 }
 
 /** The `org_billing` row. */
@@ -98,6 +124,9 @@ export interface BillingRow {
   checkoutReference: string | null;
   checkoutPlan: PaidPlanId | null;
   checkoutBilling: Billing | null;
+  /** An embedded card update in progress (BAC-102): Inkress's one-subscription token and the check's reference. */
+  cardUpdateToken: string | null;
+  cardUpdateReference: string | null;
 }
 
 export interface Customer {

@@ -1,3 +1,4 @@
+import { webOrigin } from "~/lib/billing/inkress.server";
 import { PassThrough } from "node:stream";
 import type { AppLoadContext, EntryContext } from "@remix-run/node";
 import { createReadableStreamFromReadable } from "@remix-run/node";
@@ -30,6 +31,8 @@ function setSecurityHeaders(h: Headers) {
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
+      // BAC-102: the Billing page frames the Inkress embedded checkout (and nothing else).
+      `frame-src ${webOrigin()}`,
       "frame-ancestors 'none'",
     ].join("; ")
   );

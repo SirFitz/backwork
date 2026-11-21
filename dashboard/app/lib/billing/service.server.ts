@@ -5,14 +5,17 @@
 import { ulid } from "ulid";
 import { Billing, PlanId } from "~/components/site/plans";
 import { UNMETERED } from "~/lib/plans/limits";
-import type { InkressBilling } from "./inkress.server";
+import { InkressBillingError, cardUpdateTokenOf, type InkressBilling } from "./inkress.server";
 import { effectivePlan, emptyRow, inkressPlanFor, priceMatches, trialEnd, trialExpired } from "./rules";
 import type { BillingStore } from "./store.server";
 import {
   AccountStatus,
+  CheckoutPurpose,
+  ConfirmState,
   InkressOrderStatus,
   InkressSubscriptionStatus,
   type BillingRow,
+  type CheckoutSession,
   type Customer,
   type InkressPeriod,
   type InkressPlan,
@@ -35,6 +38,8 @@ export interface BillingDeps {
   configured: boolean;
   /** Where the hosted checkout returns the customer to (the Billing page). */
   returnUrl: string;
+  /** The Billing page's origin: the only page allowed to frame our checkouts (BAC-102). */
+  embedOrigin: string;
 }
 
 const REFERENCE_PREFIX = "bw-";
@@ -151,8 +156,8 @@ export function createBilling(deps: BillingDeps) {
       return settle({ ...row, status: AccountStatus.Trialing, trialPlan: plan, trialEndsAt: trialEnd(now) });
     },
 
-    /** A hosted Inkress checkout for a paid plan. Returns where to send the owner. */
-    async checkout(orgId: string, plan: PaidPlanId, billing: Billing, customer: Customer): Promise<{ url: string }> {
+    /** An Inkress checkout for a paid plan, framed on the Billing page (hosted page as the fallback). */
+    async checkout(orgId: string, plan: PaidPlanId, billing: Billing, customer: Customer): Promise<CheckoutSession> {
       requireConfigured();
       await requireOrg(orgId);
       const row = await reconcile(orgId);
@@ -170,11 +175,62 @@ export function createBilling(deps: BillingDeps) {
         title: `backwork ${plan === PlanId.Team ? "Team" : "Business"} (${billing})`,
         orgId,
         returnUrl: deps.returnUrl,
+        embedOrigin: deps.embedOrigin,
         customer,
       });
-      if (!order.paymentUrl) throw new BillingRefusal("Inkress did not return a checkout page. Try again.");
+      if (!order.paymentUrl && !order.embedUrl) throw new BillingRefusal("Inkress did not return a checkout page. Try again.");
       await settle({ ...row, checkoutReference: reference, checkoutPlan: plan, checkoutBilling: billing });
-      return { url: order.paymentUrl };
+      return { purpose: CheckoutPurpose.Subscribe, embedUrl: order.embedUrl, fallbackUrl: order.paymentUrl };
+    },
+
+    /**
+     * "Look again at Inkress" after the frame says the payment went through. The frame's word is
+     * never enough: only a paid order with its subscription, read here with our key, counts.
+     */
+    async confirmCheckout(orgId: string): Promise<{ state: ConfirmState; row: BillingRow }> {
+      requireConfigured();
+      const before = await store.get(orgId);
+      const row = await reconcile(orgId);
+      const active = row.status === AccountStatus.Active || row.status === AccountStatus.PastDue;
+      if (active && row.checkoutReference === null) return { state: ConfirmState.Done, row };
+      if (row.checkoutReference !== null) return { state: ConfirmState.Pending, row };
+      // The checkout was cleared without a subscription: Inkress marked it failed or cancelled.
+      return { state: before?.checkoutReference ? ConfirmState.Failed : ConfirmState.Pending, row };
+    },
+
+    /** A card check framed on the Billing page that replaces the subscription's card (BAC-102). */
+    async startCardUpdate(orgId: string): Promise<CheckoutSession> {
+      requireConfigured();
+      const row = await store.get(orgId);
+      if (!row?.subscriptionUid) throw new BillingRefusal("There is no subscription.");
+      const link = await inkress.cardUpdateLink(row.subscriptionUid);
+      const token = cardUpdateTokenOf(link);
+      if (!token) return { purpose: CheckoutPurpose.CardUpdate, embedUrl: null, fallbackUrl: link };
+      const started = await inkress.startCardUpdate(token, deps.embedOrigin);
+      await store.save({ ...row, cardUpdateToken: token, cardUpdateReference: started.reference });
+      // The fallback is the check's own pay page, not the token link: the token stays on our server,
+      // which confirms the swap itself.
+      return { purpose: CheckoutPurpose.CardUpdate, embedUrl: started.embedUrl, fallbackUrl: started.payUrl };
+    },
+
+    /** After the frame's card check: ask Inkress to swap the card, then read the subscription back. */
+    async confirmCardUpdate(orgId: string): Promise<{ state: ConfirmState; row: BillingRow }> {
+      requireConfigured();
+      const row = await store.get(orgId);
+      if (!row?.cardUpdateToken || !row.cardUpdateReference) throw new BillingRefusal("There is no card update to confirm.");
+      try {
+        await inkress.confirmCardUpdate(row.cardUpdateToken, row.cardUpdateReference);
+      } catch (error) {
+        // The check's result can reach Inkress a moment after the frame: ask again.
+        if (error instanceof InkressBillingError && /card_not_captured/.test(error.message)) return { state: ConfirmState.Pending, row };
+        if (error instanceof InkressBillingError && error.status >= 400 && error.status < 500) {
+          await store.save({ ...row, cardUpdateToken: null, cardUpdateReference: null });
+          return { state: ConfirmState.Failed, row };
+        }
+        throw error;
+      }
+      await store.save({ ...row, cardUpdateToken: null, cardUpdateReference: null });
+      return { state: ConfirmState.Done, row: await reconcile(orgId) };
     },
 
     /** Move a paying organisation to another plan or cycle at the end of its paid period. */

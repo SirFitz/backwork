@@ -1,8 +1,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { defer, json, redirect } from "@remix-run/node";
-import { Form, Link, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, Link, useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
 import { isBusy, isSubmittingOwn } from "~/lib/pending";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { Card, CardHead, PageTitle } from "~/components/ui";
 import { Deferred, RowsSkeleton } from "~/components/defer";
@@ -15,7 +15,8 @@ import { dbStore } from "~/lib/billing/store.server";
 import { BillingRefusal } from "~/lib/billing/service.server";
 import { InkressBillingError } from "~/lib/billing/inkress.server";
 import { effectivePlan, isBilling, isPaidPlanId, trialDaysLeft } from "~/lib/billing/rules";
-import { AccountStatus, InkressOrderStatus, type BillingRow, type InkressPeriod } from "~/lib/billing/types";
+import { AccountStatus, CheckoutPurpose, ConfirmState, InkressOrderStatus, type BillingRow, type CheckoutSession, type InkressPeriod, type PaidPlanId } from "~/lib/billing/types";
+import { CheckoutPanel } from "~/components/billing/CheckoutPanel";
 import { UNMETERED } from "~/lib/plans/limits";
 import { billingConfigured, safe } from "~/lib/config.server";
 import { cn } from "~/lib/utils";
@@ -27,6 +28,15 @@ enum Intent {
   KeepPlan = "keep_plan",
   Cancel = "cancel",
   CardUpdate = "card_update",
+  /** After the embedded checkout says it is done: read it back from Inkress (BAC-102). */
+  ConfirmCheckout = "confirm_checkout",
+  ConfirmCardUpdate = "confirm_card_update",
+}
+
+/** The checkout the page frames. Built on the server; holds no secret. */
+interface SessionView extends CheckoutSession {
+  plan: PaidPlanId | null;
+  billing: Billing | null;
 }
 
 function isIntent(v: string): v is Intent {
@@ -136,9 +146,20 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       case Intent.Checkout: {
         if (!isPaidPlanId(planValue) || !isBilling(billingValue)) return json({ error: "Choose a plan and a billing period." }, { status: 400 });
-        const { url } = await service.checkout(orgId, planValue, billingValue, customerOf(ctx));
+        const session = await service.checkout(orgId, planValue, billingValue, customerOf(ctx));
         await logAudit({ request, orgId, actorUserId: ctx.user.id, action: "billing.checkout_opened", target: { plan: planValue, billing: billingValue } });
-        return redirect(url);
+        // No embeddable page from Inkress: the hosted page, as before.
+        if (!session.embedUrl && session.fallbackUrl) return redirect(session.fallbackUrl);
+        return json({ session: { ...session, plan: planValue, billing: billingValue } satisfies SessionView });
+      }
+      case Intent.ConfirmCheckout: {
+        const { state } = await service.confirmCheckout(orgId);
+        return json({ confirm: state });
+      }
+      case Intent.ConfirmCardUpdate: {
+        const { state } = await service.confirmCardUpdate(orgId);
+        if (state === ConfirmState.Done) await logAudit({ request, orgId, actorUserId: ctx.user.id, action: "billing.card_updated" });
+        return json({ confirm: state });
       }
       case Intent.ChangePlan: {
         if (!isPaidPlanId(planValue) || !isBilling(billingValue)) return json({ error: "Choose a plan and a billing period." }, { status: 400 });
@@ -157,7 +178,9 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect("/billing");
       }
       case Intent.CardUpdate: {
-        return redirect(await service.cardUpdateUrl(orgId));
+        const session = await service.startCardUpdate(orgId);
+        if (!session.embedUrl && session.fallbackUrl) return redirect(session.fallbackUrl);
+        return json({ session: { ...session, plan: null, billing: null } satisfies SessionView });
       }
     }
   } catch (error) {
@@ -190,7 +213,20 @@ function IntentForm({ intent, plan, billing: cycle, label, className, confirm }:
   );
 }
 
-function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: boolean; configured: boolean }) {
+/** Opens an embedded checkout (BAC-102): asks our server for it, then the page frames it. */
+type Starter = { start: (intent: Intent.Checkout | Intent.CardUpdate, plan?: PlanId, billing?: Billing) => void; busy: boolean; pending: { intent: string; plan?: string; billing?: string } | null };
+
+function StartButton({ starter, intent, plan, billing: cycle, label, className }: { starter: Starter; intent: Intent.Checkout | Intent.CardUpdate; plan?: PlanId; billing?: Billing; label: string; className: string }) {
+  const nav = useNavigation();
+  const mine = starter.pending?.intent === intent && starter.pending?.plan === plan && starter.pending?.billing === cycle;
+  return (
+    <button type="button" disabled={starter.busy || isBusy(nav)} onClick={() => starter.start(intent, plan, cycle)} className={className}>
+      {mine ? "Opening checkout…" : label}
+    </button>
+  );
+}
+
+function CurrentPlan({ a, canManage, configured, starter }: { a: AccountView; canManage: boolean; configured: boolean; starter: Starter }) {
   const paying = a.status === AccountStatus.Active || a.status === AccountStatus.PastDue;
   const cycle = a.billing === Billing.Yearly ? "year" : "month";
   let line: string;
@@ -210,7 +246,7 @@ function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: 
         right={
           canManage && paying ? (
             <div className="flex gap-2">
-              {configured ? <IntentForm intent={Intent.CardUpdate} label="Update card" className={btnSecondary} /> : null}
+              {configured ? <StartButton starter={starter} intent={Intent.CardUpdate} label="Update card" className={btnSecondary} /> : null}
               {!a.cancelAtPeriodEnd ? <IntentForm intent={Intent.Cancel} label="Cancel plan" className={btnSecondary} confirm="Cancel at the end of the paid period? You keep your plan until then, then move to Free." /> : null}
             </div>
           ) : null
@@ -230,7 +266,7 @@ function CurrentPlan({ a, canManage, configured }: { a: AccountView; canManage: 
   );
 }
 
-function PlanButton({ plan, a, cycle, canManage, configured }: { plan: Plan; a: AccountView; cycle: Billing; canManage: boolean; configured: boolean }) {
+function PlanButton({ plan, a, cycle, canManage, configured, starter }: { plan: Plan; a: AccountView; cycle: Billing; canManage: boolean; configured: boolean; starter: Starter }) {
   const paying = a.status === AccountStatus.Active || a.status === AccountStatus.PastDue;
   if (plan.id === PlanId.Enterprise) return <a href={plan.cta.href} className={btnSecondary}>{plan.cta.label}</a>;
   if (plan.id === PlanId.Free) {
@@ -252,12 +288,12 @@ function PlanButton({ plan, a, cycle, canManage, configured }: { plan: Plan; a: 
   return (
     <div className="flex flex-wrap gap-2">
       {!a.everTrialled && !a.unmetered ? <IntentForm intent={Intent.StartTrial} plan={plan.id} label="Start 14-day trial" className={btnSecondary} /> : null}
-      <IntentForm intent={Intent.Checkout} plan={plan.id} billing={cycle} label={trialing ? "Subscribe" : "Subscribe and pay"} className={btnPrimary} />
+      <StartButton starter={starter} intent={Intent.Checkout} plan={plan.id} billing={cycle} label={trialing ? "Subscribe" : "Subscribe and pay"} className={btnPrimary} />
     </div>
   );
 }
 
-function Plans({ a, canManage, configured }: { a: AccountView; canManage: boolean; configured: boolean }) {
+function Plans({ a, canManage, configured, starter }: { a: AccountView; canManage: boolean; configured: boolean; starter: Starter }) {
   const [cycle, setCycle] = useState<Billing>(a.billing ?? Billing.Monthly);
   return (
     <Card>
@@ -290,7 +326,7 @@ function Plans({ a, canManage, configured }: { a: AccountView; canManage: boolea
                 {plan.retention ? <li className="flex gap-1.5"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ok" />Kept {plan.retention.requestPathsDays} days</li> : null}
                 {plan.features.slice(0, 3).map((f) => <li key={f} className="flex gap-1.5"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ok" />{f}</li>)}
               </ul>
-              <div className="mt-auto pt-1"><PlanButton plan={plan} a={a} cycle={cycle} canManage={canManage} configured={configured} /></div>
+              <div className="mt-auto pt-1"><PlanButton plan={plan} a={a} cycle={cycle} canManage={canManage} configured={configured} starter={starter} /></div>
             </div>
           );
         })}
@@ -325,25 +361,80 @@ function Invoices({ items }: { items: InvoiceView[] }) {
   );
 }
 
+function summaryOf(session: SessionView, a: AccountView): { title: string; price: string | null; lines: string[]; done: string } {
+  if (session.purpose === CheckoutPurpose.CardUpdate) {
+    return {
+      title: "Update card",
+      price: null,
+      lines: ["A US$1 hold checks the new card and is released right away", `Your ${planName(a.paidPlan)} plan and renewal date stay the same`, "Renewals are charged to the new card"],
+      done: "Your card is updated.",
+    };
+  }
+  const plan = PLANS.find((p) => p.id === session.plan) as Plan | undefined;
+  const cycle = session.billing ?? Billing.Monthly;
+  const price = plan ? priceFor(plan, cycle) : null;
+  return {
+    title: `Subscribe to ${plan?.name ?? "a plan"}`,
+    price: price === null ? null : `${formatMoney(price)} ${cycle === Billing.Yearly ? "a year" : "a month"}`,
+    lines: [
+      ...(plan?.allowance ? [`${plan.allowance.requestsPerMonth.toLocaleString("en-GB")} requests, ${plan.allowance.logGbPerMonth} GB a month`] : []),
+      `Renews ${cycle === Billing.Yearly ? "every year" : "every month"} on this card`,
+      "Cancel any time; the plan runs to the end of the paid period",
+    ],
+    done: `You're on ${plan?.name ?? "your new plan"}.`,
+  };
+}
+
 export default function BillingPage() {
   const d = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
+  const starterFetcher = useFetcher<typeof action>();
+  const [session, setSession] = useState<SessionView | null>(null);
+  useEffect(() => {
+    const data = starterFetcher.data;
+    if (starterFetcher.state === "idle" && data && "session" in data) setSession(data.session);
+  }, [starterFetcher.state, starterFetcher.data]);
+  const pendingForm = starterFetcher.state !== "idle" ? starterFetcher.formData : undefined;
+  const starter: Starter = {
+    busy: starterFetcher.state !== "idle",
+    pending: pendingForm ? { intent: String(pendingForm.get("intent") ?? ""), plan: (pendingForm.get("plan") as string | null) ?? undefined, billing: (pendingForm.get("billing") as string | null) ?? undefined } : null,
+    start: (intent, plan, cycle) => {
+      const form: Record<string, string> = { intent };
+      if (plan) form.plan = plan;
+      if (cycle) form.billing = cycle;
+      starterFetcher.submit(form, { method: "post" });
+    },
+  };
+  const startError = starterFetcher.state === "idle" && starterFetcher.data && "error" in starterFetcher.data ? starterFetcher.data.error : null;
+  const error = startError ?? (result && "error" in result ? result.error : null);
+  const checkingOut = !!session?.embedUrl;
+  const page = (a: AccountView) => (
+    <>
+      <CurrentPlan a={a} canManage={d.canManage} configured={d.configured} starter={checkingOut ? { ...starter, busy: true } : starter} />
+      {checkingOut ? null : <Plans a={a} canManage={d.canManage} configured={d.configured} starter={starter} />}
+    </>
+  );
+  // Outside <Deferred>, so the revalidation after a confirmed payment never remounts the frame.
+  const summary = session ? summaryOf(session, d.initial) : null;
   return (
     <div className="space-y-4">
       <PageTitle title="Billing" sub="Your plan, payments and invoices. Payments are handled by Inkress." />
-      {result && "error" in result ? <p role="alert" className="rounded-lg border border-border bg-surface px-4 py-2.5 text-[13px] text-err">{result.error}</p> : null}
+      {error ? <p role="alert" className="rounded-lg border border-border bg-surface px-4 py-2.5 text-[13px] text-err">{error}</p> : null}
       {!d.canManage ? <p className="text-[13px] text-muted">Only owners and admins can change the plan.</p> : null}
-      <Deferred
-        resolve={d.account}
-        fallback={<><CurrentPlan a={d.initial} canManage={d.canManage} configured={d.configured} /><Plans a={d.initial} canManage={d.canManage} configured={d.configured} /></>}
-      >
-        {(live) => (
-          <>
-            <CurrentPlan a={live.data} canManage={d.canManage} configured={d.configured} />
-            <Plans a={live.data} canManage={d.canManage} configured={d.configured} />
-          </>
-        )}
+      <Deferred resolve={d.account} fallback={page(d.initial)}>
+        {(live) => page(live.data)}
       </Deferred>
+      {session?.embedUrl && summary ? (
+        <CheckoutPanel
+          key={session.embedUrl}
+          purpose={session.purpose}
+          embedUrl={session.embedUrl}
+          fallbackUrl={session.fallbackUrl}
+          summary={{ title: summary.title, price: summary.price, lines: summary.lines }}
+          doneText={summary.done}
+          onClose={() => setSession(null)}
+        />
+      ) : null}
       <Card>
         <CardHead title="Invoices" />
         <Deferred resolve={d.invoices} fallback={<RowsSkeleton rows={3} />}>{(r) => <Invoices items={r.data} />}</Deferred>

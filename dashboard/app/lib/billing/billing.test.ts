@@ -5,7 +5,8 @@ import { effectivePlan, emptyRow, sellsOf, trialDaysLeft } from "./rules";
 import { BillingRefusal, createBilling, orgOfReference } from "./service.server";
 import { FakeInkress, MemoryStore } from "./testkit";
 import { handleBillingWebhook } from "./webhook.server";
-import { AccountStatus, InkressOrderStatus, TRIAL_DAYS } from "./types";
+import { AccountStatus, CheckoutPurpose, ConfirmState, InkressOrderStatus, TRIAL_DAYS } from "./types";
+import { InkressBillingError, cardUpdateTokenOf, embedUrlOf } from "./inkress.server";
 
 const ORG = "01HZZZZZZZZZZZZZZZZZZZZZZA";
 const CUSTOMER = { email: "o@example.com", firstName: "Olu", lastName: "Owner" };
@@ -14,7 +15,7 @@ const DAY = 86_400_000;
 let clock = new Date("2026-11-13T12:00:00Z");
 let store: MemoryStore;
 let inkress: FakeInkress;
-const make = (configured = true) => createBilling({ inkress: inkress.api, store, now: () => clock, configured, returnUrl: "https://bw.test/billing" });
+const make = (configured = true) => createBilling({ inkress: inkress.api, store, now: () => clock, configured, returnUrl: "https://bw.test/billing", embedOrigin: "https://bw.test" });
 
 beforeEach(() => {
   clock = new Date("2026-11-13T12:00:00Z");
@@ -85,8 +86,11 @@ describe("trial", () => {
 describe("checkout and subscription", () => {
   test("sends the owner to Inkress, then a paid checkout makes the org a subscriber", async () => {
     const b = make();
-    const { url } = await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
-    expect(url).toMatch(/^https:\/\/pay\.test\//);
+    const session = await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
+    expect(session.fallbackUrl).toMatch(/^https:\/\/pay\.test\//);
+    expect(session.embedUrl).toMatch(/\/payments\/link\/[^/]+\/embed$/);
+    // The checkout is bound to the Billing page's origin, and only that one.
+    expect(inkress.lastEmbedOrigin).toBe("https://bw.test");
     const row = await store.get(ORG);
     expect(row?.checkoutReference).toStartWith(`bw-${ORG}-`);
     // Not paid yet: still Free.
@@ -102,8 +106,8 @@ describe("checkout and subscription", () => {
   test("a subscriber during a trial gets the paid plan, and the trial ending changes nothing", async () => {
     const b = make();
     await b.startTrial(ORG, PlanId.Business);
-    const { url } = await b.checkout(ORG, PlanId.Team, Billing.Yearly, CUSTOMER);
-    expect(url).toBeTruthy();
+    const { embedUrl } = await b.checkout(ORG, PlanId.Team, Billing.Yearly, CUSTOMER);
+    expect(embedUrl).toBeTruthy();
     const ref = (await store.get(ORG))!.checkoutReference!;
     inkress.pay(ref, "p-team-y", ORG, new Date(clock.getTime() + 365 * DAY));
     await b.reconcile(ORG);
@@ -145,6 +149,55 @@ describe("checkout and subscription", () => {
   });
 });
 
+describe("embedded checkout confirmation (BAC-102)", () => {
+  test("the frame saying done changes nothing until Inkress has the paid order and its subscription", async () => {
+    const b = make();
+    await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
+    // The browser claims success; Inkress has not seen a payment.
+    expect((await b.confirmCheckout(ORG)).state).toBe(ConfirmState.Pending);
+    expect(store.orgPlans.get(ORG)).toBe("free");
+    const ref = (await store.get(ORG))!.checkoutReference!;
+    inkress.pay(ref, "p-team-m", ORG, new Date(clock.getTime() + 30 * DAY));
+    const done = await b.confirmCheckout(ORG);
+    expect(done.state).toBe(ConfirmState.Done);
+    expect(done.row.plan).toBe(PlanId.Team);
+    expect(store.orgPlans.get(ORG)).toBe("team");
+  });
+  test("a checkout Inkress failed is reported as failed", async () => {
+    const b = make();
+    await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
+    const ref = (await store.get(ORG))!.checkoutReference!;
+    inkress.orders.get(ref)!.status = InkressOrderStatus.Failed;
+    expect((await b.confirmCheckout(ORG)).state).toBe(ConfirmState.Failed);
+  });
+  test("a card update binds the check to our origin, keeps its token server-side, and confirms with Inkress", async () => {
+    const b = make();
+    await b.checkout(ORG, PlanId.Team, Billing.Monthly, CUSTOMER);
+    inkress.pay((await store.get(ORG))!.checkoutReference!, "p-team-m", ORG, new Date(clock.getTime() + 30 * DAY));
+    await b.reconcile(ORG);
+    const session = await b.startCardUpdate(ORG);
+    expect(session.purpose).toBe(CheckoutPurpose.CardUpdate);
+    expect(session.embedUrl).toMatch(/\/embed$/);
+    expect(JSON.stringify(session)).not.toContain("tok-");
+    const uid = (await store.get(ORG))!.subscriptionUid!;
+    expect(inkress.calls).toContain(`card-start tok-${uid} https://bw.test`);
+    inkress.cardConfirmError = new InkressBillingError("card_not_captured", 422);
+    expect((await b.confirmCardUpdate(ORG)).state).toBe(ConfirmState.Pending);
+    inkress.cardConfirmError = null;
+    expect((await b.confirmCardUpdate(ORG)).state).toBe(ConfirmState.Done);
+    expect((await store.get(ORG))!.cardUpdateToken).toBeNull();
+    await expect(b.confirmCardUpdate(ORG)).rejects.toBeInstanceOf(BillingRefusal);
+  });
+  test("embed URLs are derived only from Inkress payment-link pages", () => {
+    expect(embedUrlOf("https://inkress.com/payments/link/0b524d38-ba78-4503-9bd8-95dd9a6f46c8/card")).toBe("https://inkress.com/payments/link/0b524d38-ba78-4503-9bd8-95dd9a6f46c8/embed");
+    expect(embedUrlOf("https://dev.inkress.com/payments/link/7f5665fd-b108-4e1f-a3d0-1942956a654f/fac")).toBe("https://dev.inkress.com/payments/link/7f5665fd-b108-4e1f-a3d0-1942956a654f/embed");
+    expect(embedUrlOf("https://flatl.ink/1lB6")).toBeNull();
+    expect(embedUrlOf("http://inkress.com/payments/link/0b524d38-ba78/card")).toBeNull();
+    expect(embedUrlOf(null)).toBeNull();
+    expect(cardUpdateTokenOf("https://inkress.com/subscriptions/update-card?token=abc.def")).toBe("abc.def");
+  });
+});
+
 describe("changing and ending", () => {
   async function subscribed() {
     const b = make();
@@ -179,7 +232,7 @@ describe("changing and ending", () => {
   });
   test("the card update link comes from Inkress", async () => {
     const b = await subscribed();
-    expect(await b.cardUpdateUrl(ORG)).toBe("https://card.test/sub-100");
+    expect(await b.cardUpdateUrl(ORG)).toBe("https://card.test/subscriptions/update-card?token=tok-sub-100");
   });
 });
 
