@@ -38,6 +38,8 @@ import { safe } from "~/lib/config.server";
 import { DeployAuditAction, deleteDeploy, listDeploys } from "~/lib/deploys.server";
 import { markerLabel, type Deploy } from "~/lib/deploys";
 import { Ago } from "~/components/time";
+import { trackServer } from "~/lib/analytics/server.server";
+import { ServerEvent } from "~/lib/analytics/events";
 
 /** Deploys listed on the page for admins (BAC-73). */
 const RECENT_DEPLOYS = 5;
@@ -127,7 +129,9 @@ export async function action({ request }: ActionFunctionArgs) {
       if (i > 50) { slug = `${slugify(name)}-${ulid().slice(-5).toLowerCase()}`; break; }
     }
     const token = newToken();
+    const hadProjects = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, ctx.org.id)).limit(1)).length > 0;
     await db.insert(projects).values({ id: ulid(), orgId: ctx.org.id, name, slug, ingestTokenHash: hashToken(token) });
+    trackServer(ServerEvent.ProjectCreated, { first: !hadProjects });
     invalidate(envOptionsKey(ctx.org.id)); // the environment picker lists it at once
     void logAudit({ request, orgId: ctx.org.id, actorUserId: ctx.user.id, action: "project.create", target: { name, slug } });
     return redirectWithToken(token, slug);

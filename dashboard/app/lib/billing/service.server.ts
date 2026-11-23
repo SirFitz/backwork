@@ -40,6 +40,8 @@ export interface BillingDeps {
   returnUrl: string;
   /** The Billing page's origin: the only page allowed to frame our checkouts (BAC-102). */
   embedOrigin: string;
+  /** Told about every change a billing action or a look at Inkress made to the row (analytics, BAC-103). */
+  observe?: (before: BillingRow, after: BillingRow) => void;
 }
 
 const REFERENCE_PREFIX = "bw-";
@@ -89,7 +91,8 @@ export function createBilling(deps: BillingDeps) {
 
   /** Read the organisation's subscription (or its open checkout) at Inkress and bring the row up to date. */
   async function reconcile(orgId: string): Promise<BillingRow> {
-    let row = (await store.get(orgId)) ?? emptyRow(orgId);
+    const before = (await store.get(orgId)) ?? emptyRow(orgId);
+    let row = before;
 
     if (deps.configured) {
       // A checkout that was paid: its subscription becomes ours (replacing a cancelled one).
@@ -134,7 +137,17 @@ export function createBilling(deps: BillingDeps) {
 
     // A trial that ran out without a subscription ends (the trial plan is kept as a record of it).
     if (trialExpired(row, deps.now()) && !row.subscriptionUid) row = { ...row, status: AccountStatus.None };
-    return settle(row);
+    return observed(before, await settle(row));
+  }
+
+  /** Tell the observer what changed, then hand the row back. Never lets the observer break billing. */
+  function observed(before: BillingRow, after: BillingRow): BillingRow {
+    try {
+      deps.observe?.(before, after);
+    } catch {
+      // analytics must never break billing
+    }
+    return after;
   }
 
   return {
@@ -153,7 +166,7 @@ export function createBilling(deps: BillingDeps) {
       const row = (await store.get(orgId)) ?? emptyRow(orgId);
       if (row.trialPlan !== null || row.plan !== null) throw new BillingRefusal("This organisation has already had a trial or a paid plan.");
       const now = deps.now();
-      return settle({ ...row, status: AccountStatus.Trialing, trialPlan: plan, trialEndsAt: trialEnd(now) });
+      return observed(row, await settle({ ...row, status: AccountStatus.Trialing, trialPlan: plan, trialEndsAt: trialEnd(now) }));
     },
 
     /** An Inkress checkout for a paid plan, framed on the Billing page (hosted page as the fallback). */
@@ -179,7 +192,7 @@ export function createBilling(deps: BillingDeps) {
         customer,
       });
       if (!order.paymentUrl && !order.embedUrl) throw new BillingRefusal("Inkress did not return a checkout page. Try again.");
-      await settle({ ...row, checkoutReference: reference, checkoutPlan: plan, checkoutBilling: billing });
+      observed(row, await settle({ ...row, checkoutReference: reference, checkoutPlan: plan, checkoutBilling: billing }));
       return { purpose: CheckoutPurpose.Subscribe, embedUrl: order.embedUrl, fallbackUrl: order.paymentUrl };
     },
 

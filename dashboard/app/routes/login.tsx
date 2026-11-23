@@ -13,6 +13,8 @@ import { AuthCard, AUTH_FIELD } from "~/components/authcard";
 import { GoogleButton } from "~/components/google-button";
 import { googleAuthConfigured } from "~/lib/config.server";
 import { GoogleIntent, googleErrorMessage } from "~/lib/auth/google/types";
+import { trackServer } from "~/lib/analytics/server.server";
+import { AuthMethod, LoginFailure, ServerEvent, SignupFailure } from "~/lib/analytics/events";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   if (await getUser(request)) throw redirect("/");
@@ -26,17 +28,26 @@ export async function action({ request }: ActionFunctionArgs) {
   const email = String(fd.get("email") || "").trim().toLowerCase();
   const password = String(fd.get("password") || "");
   const next = safeRedirect(fd.get("next"));
-  if (!email || !password) return json({ error: "Email and password are required." }, { status: 400 });
+  if (!email || !password) {
+    trackServer(ServerEvent.LoginFailed, { method: AuthMethod.Email, reason: LoginFailure.MissingFields });
+    return json({ error: "Email and password are required." }, { status: 400 });
+  }
 
   const ip = clientIp(request);
   const limited = !rateLimit(`login:ip:${ip}`, 20, 10 * 60 * 1000).ok || !rateLimit(`login:email:${email}`, 8, 10 * 60 * 1000).ok;
-  if (limited) return json({ error: "Too many attempts. Please wait a few minutes and try again." }, { status: 429 });
+  if (limited) {
+    trackServer(ServerEvent.LoginFailed, { method: AuthMethod.Email, reason: LoginFailure.RateLimited });
+    return json({ error: "Too many attempts. Please wait a few minutes and try again." }, { status: 429 });
+  }
 
   const rows = await db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
   const user = rows[0];
   // A Google-only account has no password, so it fails like any wrong password.
   const ok = user?.passwordHash ? await verifyPassword(user.passwordHash, password) : false;
-  if (!user || !ok) return json({ error: "Invalid email or password." }, { status: 400 });
+  if (!user || !ok) {
+    trackServer(ServerEvent.LoginFailed, { method: AuthMethod.Email, reason: LoginFailure.InvalidCredentials });
+    return json({ error: "Invalid email or password." }, { status: 400 });
+  }
 
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   const mem = await db.select({ orgId: memberships.orgId }).from(memberships).where(eq(memberships.userId, user.id)).limit(1);

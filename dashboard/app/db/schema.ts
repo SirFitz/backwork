@@ -90,6 +90,8 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   ingestTokenHash: text("ingest_token_hash"),
+  /** When the project's first lines arrived (BAC-103); null until then. Written once, by the first ingest. */
+  firstDataAt: timestamp("first_data_at", { withTimezone: true }),
   ...ts(),
 }, (t) => ({
   orgSlugUniq: uniqueIndex("projects_org_slug_uniq").on(t.orgId, t.slug),

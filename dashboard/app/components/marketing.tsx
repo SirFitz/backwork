@@ -3,6 +3,8 @@ import { Link } from "@remix-run/react";
 import { ArrowRight, Check, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "~/lib/utils";
+import { track } from "~/lib/analytics/client";
+import { ClientEvent, CtaLocation } from "~/lib/analytics/events";
 
 export const SITE = "https://backwork.dev";
 export const CONTACT = "hello@backwork.dev";
@@ -82,7 +84,7 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
             ) : (
               <>
                 <Link to="/login" className="hidden text-[14px] font-medium text-muted hover:text-fg sm:inline">Sign in</Link>
-                <Link to="/register" className={cn(btnPrimary, "hidden h-9 px-3.5 text-[14px] sm:inline-flex")}>Start free</Link>
+                <Link to="/register" onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.Nav })} className={cn(btnPrimary, "hidden h-9 px-3.5 text-[14px] sm:inline-flex")}>Start free</Link>
               </>
             )}
             <button type="button" className="grid h-9 w-9 place-items-center rounded-md border border-border md:hidden" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
@@ -97,7 +99,7 @@ export function MarketingShell({ authed, active, children }: { authed?: boolean;
             ))}
             {!authed && (
               <div className="mt-3 grid gap-2">
-                <Link to="/register" className={btnPrimary}>Start free</Link>
+                <Link to="/register" onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.MobileMenu })} className={btnPrimary}>Start free</Link>
                 <Link to="/login" className={btnSecondary}>Sign in</Link>
               </div>
             )}
@@ -199,7 +201,7 @@ export function CtaBand({ secondary = { label: "See pricing", to: "/pricing" } }
         <H2 className="mx-auto">Find the next slow request in a minute.</H2>
         <Lede className="mx-auto">Start on the free plan. No card needed.</Lede>
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-          <Link to="/register" className={btnPrimary}>Start free <ArrowRight className="h-4 w-4" /></Link>
+          <Link to="/register" onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.Footer })} className={btnPrimary}>Start free <ArrowRight className="h-4 w-4" /></Link>
           {secondary.to.startsWith("mailto:")
             ? <a href={secondary.to} className={btnSecondary}>{secondary.label}</a>
             : <Link to={secondary.to} className={btnSecondary}>{secondary.label}</Link>}

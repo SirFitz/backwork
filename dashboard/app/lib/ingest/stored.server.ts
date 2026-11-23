@@ -4,6 +4,7 @@
  * organisation's metered intake (the Usage page and, for a capped plan, the rolling window).
  * Called only after the store accepted the lines, so a retried post is not counted twice.
  */
+import { noteDataStored } from "~/lib/analytics/first-data.server";
 import { isCapped } from "~/lib/plans/limits";
 import { addToBucket, addToDaily, orgLimits } from "~/lib/plans/usage.server";
 import { derivedErrorSink } from "~/lib/errors-store.server";
@@ -18,6 +19,7 @@ export interface IngestTenant {
 }
 
 export async function afterStored(tenant: IngestTenant, result: Pick<EnforceResult, "errors" | "requests" | "bytes">): Promise<void> {
+  void noteDataStored(tenant); // first lines of a project: one activation fact (BAC-103), never awaited
   // Off the request path, never awaited; failures are counted and swallowed inside the sink.
   derivedErrorSink().submit(tenant.orgId, tenant.project, result.errors);
   const limits = await orgLimits(tenant.orgId);

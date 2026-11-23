@@ -19,6 +19,7 @@ const SECTIONS: [string, string[]][] = [
     "Account data: your name, email address, organization and team membership, and a securely hashed password. We use this to authenticate you and operate your account.",
     "Data your services send us: log lines, request paths and timings, and any IDs or fields your code chooses to record. You are the controller of this data; we process it on your behalf and keep it to your organization. Request and response bodies are never collected, and our agent removes card numbers, email addresses, phone numbers, passwords, API keys, tokens and any patterns you add before data leaves your servers.",
     "Operational data: minimal request logs and metrics about the service itself, used to keep it secure and reliable.",
+    "Product analytics: we count visits and a few steps (sign-up, first data received, upgrade) on our own site and a small set of bare dashboard screens with Flatlytics, a cookieless analytics service. It sets no cookies, stores no personal data and never sees your request paths, log lines, or the contents of your projects.",
   ]],
   ["Cookies", [
     "We use only essential cookies: a signed, HttpOnly session cookie to keep you logged in, and a small cookie that remembers your light/dark theme. We do not use advertising or third-party tracking cookies.",

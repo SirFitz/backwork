@@ -23,6 +23,8 @@ import { fmtCount, fmtRuleValue, previewLine } from "~/lib/alert-message";
 import { cn } from "~/lib/utils";
 import { isDigestIntent } from "~/lib/digest/settings";
 import { defaultDigestActionDeps, handleDigestAction, loadDigestCard } from "~/lib/digest/card.server";
+import { trackServer } from "~/lib/analytics/server.server";
+import { ServerEvent } from "~/lib/analytics/events";
 
 /** "14 Nov 14:02 UTC", rendered on the server so the page hydrates the same text. */
 function utcText(ms: number): string {
@@ -196,6 +198,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const id = ulid();
     await alerts.insertRule(orgId, { ...draft.rule, id, enabled: true });
     audit(alerts.AlertAudit.RuleAdd, { ruleId: id, name: draft.rule.name, metric: draft.rule.metric, service: draft.rule.service });
+    trackServer(ServerEvent.AlertCreated, { metric: draft.rule.metric });
   } else if (intent === "toggle") {
     const id = String(fd.get("id"));
     const rule = await alerts.toggleRule(orgId, id);
