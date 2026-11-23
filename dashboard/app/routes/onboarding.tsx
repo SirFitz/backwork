@@ -14,6 +14,8 @@ import { PlanId } from "~/components/site/plans";
 import { billing } from "~/lib/billing/index.server";
 import { isPaidPlanId } from "~/lib/billing/rules";
 import { billingConfigured } from "~/lib/config.server";
+import { trackServer } from "~/lib/analytics/server.server";
+import { ServerEvent } from "~/lib/analytics/events";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, memberships: mems } = await requireUser(request);
@@ -44,6 +46,7 @@ export async function action({ request }: ActionFunctionArgs) {
   await db.insert(orgs).values({ id: orgId, name, slug: await uniqueSlug(name), plan: PlanId.Free });
   await db.insert(memberships).values({ id: ulid(), userId: user.id, orgId, role: "owner" });
   const wanted = new URL(request.url).searchParams.get("plan");
+  trackServer(ServerEvent.OrganizationCreated, { plan_requested: isPaidPlanId(wanted) });
   if (isPaidPlanId(wanted) && billingConfigured()) await billing().startTrial(orgId, wanted).catch(() => undefined);
   return setActiveOrg(request, orgId, "/");
 }

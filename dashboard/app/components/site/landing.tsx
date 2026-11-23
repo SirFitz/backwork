@@ -4,6 +4,8 @@ import { cn } from "~/lib/utils";
 import { CtaBand, Eyebrow, H2, JsonLd, Lede, MarketingShell, NavKey, SITE, Ticks, Wrap, btnPrimary, btnSecondary } from "~/components/marketing";
 import { AGENT, CodeTabs, INSTALL, Runtime } from "~/components/site/code-tabs";
 import { RequestPreview, RequestPreviewCompact } from "~/components/site/request-preview";
+import { track } from "~/lib/analytics/client";
+import { ClientEvent, CtaLocation } from "~/lib/analytics/events";
 
 const SVC = {
   api: "oklch(0.62 0.12 240)",
@@ -37,7 +39,7 @@ function Hero() {
             request passed through, how long each step took, and exactly where it stopped.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Link to="/register" className={btnPrimary}>Start free <ArrowRight className="h-4 w-4" /></Link>
+            <Link to="/register" onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.Hero })} className={btnPrimary}>Start free <ArrowRight className="h-4 w-4" /></Link>
             <Link to="/docs" className={btnSecondary}>Read the docs</Link>
           </div>
           <p className="mt-3.5 text-[13px] text-faint">Free plan · No card needed · Set up in a minute</p>

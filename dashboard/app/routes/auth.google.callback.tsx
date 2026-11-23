@@ -12,10 +12,13 @@ import { clearStateCookie, readStateCookie, type GoogleStatePayload } from "~/li
 import { assertGoogleAuthoritative, drizzleGoogleStore, inviteEmail, recordGoogleSignIn, resolveGoogleUser } from "~/lib/auth/google/accounts.server";
 import { googleDestination, inviteTokenFromPath } from "~/lib/auth/google/destination";
 import { GoogleAuthError, GoogleErrorCode, GoogleIntent } from "~/lib/auth/google/types";
+import { trackServer } from "~/lib/analytics/server.server";
+import { AuthMethod, ServerEvent } from "~/lib/analytics/events";
 
 /** Back to the page they started on, with one plain message and the state cookie cleared. */
 async function failure(code: GoogleErrorCode, saved: GoogleStatePayload | null): Promise<Response> {
   const q = new URLSearchParams({ google: code });
+  trackServer(saved?.intent === GoogleIntent.SignUp ? ServerEvent.SignupFailed : ServerEvent.LoginFailed, { method: AuthMethod.Google, reason: code });
   let page = "/login";
   if (saved && inviteTokenFromPath(saved.next)) {
     page = saved.next; // an invitee goes back to their invite, not to the general pages
@@ -58,6 +61,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const { user, created, linked } = await resolveGoogleUser(drizzleGoogleStore, identity);
     const orgId = await recordGoogleSignIn(user.id);
+    if (created) trackServer(ServerEvent.SignupCompleted, { method: AuthMethod.Google, plan_requested: saved.plan !== null });
     void logAudit({ request, orgId, actorUserId: user.id, action: "auth.login", target: { method: "google", created, linked } });
     const response = await createUserSession(user.id, orgId, googleDestination({ hasMembership: !!orgId, next: saved.next, plan: saved.plan }), user.tokenVersion);
     response.headers.append("Set-Cookie", await clearStateCookie());

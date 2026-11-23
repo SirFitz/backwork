@@ -6,6 +6,8 @@ import { ArrowRight, Info } from "lucide-react";
 import { MarketingShell, NavKey, seo } from "~/components/marketing";
 import { $, AGENT, CodeBlock, CodeTabs, CodeTone, INSTALL, Runtime, c, p } from "~/components/site/code-tabs";
 import { getUser } from "~/lib/auth/context.server";
+import { track } from "~/lib/analytics/client";
+import { ClientEvent, CtaLocation } from "~/lib/analytics/events";
 
 export const meta: MetaFunction = () =>
   seo({
@@ -235,7 +237,7 @@ export default function Docs() {
             <H2 id="organisations">Organisations and roles</H2>
             <P>Each organisation's data is kept apart from every other's. Invite people with a role (owner, admin, member or viewer), group them into teams, and give each project its own ingest token. See <Link to="/security" className="text-brand hover:underline">Security</Link> for how data is kept apart.</P>
 
-            <Link to="/register" className="mt-14 inline-grid min-w-[300px] grid-cols-[1fr_auto] items-center gap-x-5 gap-y-0.5 rounded-xl border border-border px-5 py-4 hover:bg-surface">
+            <Link to="/register" onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.Docs })} className="mt-14 inline-grid min-w-[300px] grid-cols-[1fr_auto] items-center gap-x-5 gap-y-0.5 rounded-xl border border-border px-5 py-4 hover:bg-surface">
               <span className="text-[12.5px] text-faint">Ready?</span>
               <b className="col-start-1 text-[15.5px] font-semibold">Create your first project</b>
               <ArrowRight className="col-start-2 row-span-2 row-start-1 h-4 w-4 text-brand" />

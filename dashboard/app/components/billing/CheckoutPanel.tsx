@@ -9,6 +9,8 @@ import { InkressCheckout, type InkressCheckoutHandle } from "~/components/billin
 import { CheckoutPurpose, ConfirmState } from "~/lib/billing/types";
 import { FailureCode, CheckoutStep } from "~/lib/billing/checkout-embed/protocol";
 import type { CheckoutEvent } from "~/lib/billing/checkout-embed/client";
+import { track } from "~/lib/analytics/client";
+import { ClientEvent, CtaLocation } from "~/lib/analytics/events";
 
 /** What the page shows next to the frame. */
 export interface CheckoutSummary {
@@ -115,6 +117,7 @@ export function CheckoutPanel({ purpose, embedUrl, fallbackUrl, summary, doneTex
           startConfirming();
           break;
         case "failed":
+          track(ClientEvent.CheckoutFrameFailed, { code: e.code, retryable: e.retryable });
           if (e.code === FailureCode.AlreadyPaid) startConfirming();
           else if (!e.retryable) {
             setPhase(Phase.Failed);

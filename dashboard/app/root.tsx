@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import { PreventFlashOnWrongTheme, Theme, ThemeProvider, useTheme } from "remix-themes";
 import tailwind from "~/tailwind.css?url";
+import { Analytics } from "~/components/Analytics";
+import { analyticsConfig, publicConfig } from "~/lib/analytics/config.server";
 import { themeSessionResolver } from "~/lib/theme.server";
 import { startBackgroundJobs } from "~/lib/jobs.server";
 import { requireOrg, getUser } from "~/lib/auth/context.server";
@@ -85,14 +87,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const isPublic = PUBLIC_PATHS.has(path) || path.startsWith("/invite") || path.startsWith("/reset");
   const { getTheme } = await themeSessionResolver(request);
   const theme = getTheme() ?? Theme.LIGHT;
-  if (isPublic || MARKETING_PATHS.has(path)) return json({ theme, auth: null as AuthData });
+  const analytics = publicConfig(analyticsConfig());
+  if (isPublic || MARKETING_PATHS.has(path)) return json({ theme, analytics, auth: null as AuthData });
   // "/" is dual: the marketing landing for logged-out visitors, the dashboard for
   // signed-in users. Only fall through to requireOrg (app shell) when signed in.
-  if (path === "/" && !(await getUser(request))) return json({ theme, auth: null as AuthData });
+  if (path === "/" && !(await getUser(request))) return json({ theme, analytics, auth: null as AuthData });
   const ctx = await requireOrg(request); // redirects to /login or /onboarding
   const scope = await resolveScope(request, ctx.org.id);
   return json({
     theme,
+    analytics,
     auth: {
       user: { name: ctx.user.name, email: ctx.user.email },
       org: ctx.org,
@@ -729,6 +733,7 @@ export default function AppWithProviders() {
   return (
     <ThemeProvider specifiedTheme={data.theme} themeAction="/action/set-theme">
       <Document ssrTheme={Boolean(data.theme)}>
+        {data.analytics ? <Analytics {...data.analytics} /> : null}
         {data.auth ? (
           <Shell auth={data.auth}>
             <Outlet />

@@ -7,6 +7,8 @@ import { getUser } from "~/lib/auth/context.server";
 import { CONTACT, CtaBand, JsonLd, MarketingShell, NavKey, SITE, Wrap, btnPrimary, btnSecondary, seo } from "~/components/marketing";
 import { Billing, EVERY_PLAN, PLANS, PlanId, cheapest, estimateOn, formatMoney, formatRequests, planById, priceFor, type Plan } from "~/components/site/plans";
 import { cn } from "~/lib/utils";
+import { track } from "~/lib/analytics/client";
+import { ClientEvent, CtaLocation } from "~/lib/analytics/events";
 
 export const meta: MetaFunction = () =>
   seo({
@@ -46,7 +48,7 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
         {price !== null && price > 0 && <span className="text-[14px] text-muted">{billing === Billing.Yearly ? "/ year" : "/ month"}</span>}
       </div>
       <p className="mb-6 mt-2.5 min-h-[44px] text-[14.5px] text-muted">{plan.tagline}</p>
-      {href.startsWith("mailto:") ? <a href={href} className={ctaClass}>{plan.cta.label}</a> : <Link to={href} className={ctaClass}>{plan.cta.label}</Link>}
+      {href.startsWith("mailto:") ? <a href={href} className={ctaClass}>{plan.cta.label}</a> : <Link to={href} onClick={() => track(ClientEvent.CtaClicked, { location: CtaLocation.Pricing, plan: plan.id })} className={ctaClass}>{plan.cta.label}</Link>}
       <ul className="mt-6 grid gap-2.5 border-t border-border pt-5">
         {lines.map((l) => <li key={l} className="grid grid-cols-[18px_1fr] gap-2.5 text-[14px]"><Check className="mt-[3px] h-4 w-4 text-ok" /><span>{l}</span></li>)}
       </ul>

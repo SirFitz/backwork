@@ -1,3 +1,4 @@
+import { withAnalyticsOrigin } from "~/lib/analytics/csp.server";
 import { webOrigin } from "~/lib/billing/inkress.server";
 import { PassThrough } from "node:stream";
 import type { AppLoadContext, EntryContext } from "@remix-run/node";
@@ -19,23 +20,21 @@ function setSecurityHeaders(h: Headers) {
   h.set("Referrer-Policy", "strict-origin-when-cross-origin");
   h.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
   h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  h.set(
-    "Content-Security-Policy",
-    [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self' data:",
-      "connect-src 'self'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      // BAC-102: the Billing page frames the Inkress embedded checkout (and nothing else).
-      `frame-src ${webOrigin()}`,
-      "frame-ancestors 'none'",
-    ].join("; ")
-  );
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    // BAC-102: the Billing page frames the Inkress embedded checkout (and nothing else).
+    `frame-src ${webOrigin()}`,
+    "frame-ancestors 'none'",
+  ].join("; ");
+  h.set("Content-Security-Policy", withAnalyticsOrigin(csp));
 }
 
 export default function handleRequest(

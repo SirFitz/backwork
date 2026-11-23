@@ -16,6 +16,8 @@ import { googleAuthConfigured } from "~/lib/config.server";
 import { GoogleIntent, googleErrorMessage } from "~/lib/auth/google/types";
 import { isPaidPlanId } from "~/lib/billing/rules";
 import type { PaidPlanId } from "~/lib/billing/types";
+import { trackServer } from "~/lib/analytics/server.server";
+import { AuthMethod, LoginFailure, ServerEvent, SignupFailure } from "~/lib/analytics/events";
 
 /** The plan a pricing-page button asked for (?plan=team), if it is one we sell. */
 function wantedPlan(request: Request): PaidPlanId | null {
@@ -33,22 +35,35 @@ export async function action({ request }: ActionFunctionArgs) {
   if (await getUser(request)) throw redirect("/"); // guard the action, not just the loader (login-CSRF / session swap)
   await ensureSchema();
   const ip = clientIp(request);
-  if (!rateLimit(`register:ip:${ip}`, 10, 60 * 60 * 1000).ok) return json({ error: "Too many sign-ups from this network. Please try again later." }, { status: 429 });
+  if (!rateLimit(`register:ip:${ip}`, 10, 60 * 60 * 1000).ok) {
+    trackServer(ServerEvent.SignupFailed, { method: AuthMethod.Email, reason: SignupFailure.RateLimited });
+    return json({ error: "Too many sign-ups from this network. Please try again later." }, { status: 429 });
+  }
   const fd = await request.formData();
   const name = String(fd.get("name") || "").trim();
   const email = String(fd.get("email") || "").trim().toLowerCase();
   const password = String(fd.get("password") || "");
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Enter a valid email address." }, { status: 400 });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    trackServer(ServerEvent.SignupFailed, { method: AuthMethod.Email, reason: SignupFailure.InvalidEmail });
+    return json({ error: "Enter a valid email address." }, { status: 400 });
+  }
   const pwErr = passwordError(password);
-  if (pwErr) return json({ error: pwErr }, { status: 400 });
+  if (pwErr) {
+    trackServer(ServerEvent.SignupFailed, { method: AuthMethod.Email, reason: SignupFailure.WeakPassword });
+    return json({ error: pwErr }, { status: 400 });
+  }
 
   const existing = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`).limit(1);
-  if (existing.length) return json({ error: "An account with that email already exists." }, { status: 400 });
+  if (existing.length) {
+    trackServer(ServerEvent.SignupFailed, { method: AuthMethod.Email, reason: SignupFailure.EmailTaken });
+    return json({ error: "An account with that email already exists." }, { status: 400 });
+  }
 
   const id = ulid();
   // first user ever bootstraps as platform admin (decided under a lock in insertUserFirstAdmin)
   await insertUserFirstAdmin({ id, email, name, passwordHash: await hashPassword(password), emailVerifiedAt: new Date() }, { id: users.id });
   const plan = wantedPlan(request);
+  trackServer(ServerEvent.SignupCompleted, { method: AuthMethod.Email, plan_requested: plan !== null });
   return createUserSession(id, null, plan ? `/onboarding?plan=${plan}` : "/onboarding", 0);
 }
 

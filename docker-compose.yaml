@@ -91,6 +91,10 @@ services:
       DATABASE_URL: postgresql://backwork:${PG_PASSWORD:-backwork_dev_pw}@postgres:5432/backwork
       SESSION_SECRET: ${SESSION_SECRET:-backwork-dev-session-secret-change-me}
       AUTH_PEPPER: ${AUTH_PEPPER:-backwork-dev-pepper-change-me}
+      # Product analytics (BAC-103): all optional; unset means no tracker and no server events.
+      FLATLYTICS_SITE_KEY: ${FLATLYTICS_SITE_KEY:-}
+      FLATLYTICS_SECRET_KEY: ${FLATLYTICS_SECRET_KEY:-}
+      FLATLYTICS_SCRIPT_URL: ${FLATLYTICS_SCRIPT_URL:-}
       # Sign in with Google (BAC-101). Off while the client id is empty. Redirect URI to register:
       # https://backwork.dev/auth/google/callback
       GOOGLE_SIGNIN_CLIENT_ID: ${GOOGLE_SIGNIN_CLIENT_ID:-}
